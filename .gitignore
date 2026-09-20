@@ -9,7 +9,15 @@ android/local.properties
 firmware/build/
 firmware/sdkconfig
 firmware/sdkconfig.old
+firmware/sdkconfig.prototype_c3
 firmware/managed_components/
+
+# PlatformIO generated files
+.pio/
+firmware/.pio/
+sdkconfig.prototype_c3
+CMakeLists.txt
+simulator/native/CMakeLists.txt
 
 # Host test output
 build/

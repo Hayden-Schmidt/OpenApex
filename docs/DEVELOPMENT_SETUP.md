@@ -42,10 +42,21 @@ BLE publishing are the next implementation slice.
 ### ESP-IDF
 
 PlatformIO's `espressif32` platform already bundles `framework-espidf` plus the RISC-V/Xtensa
-toolchains — a separate Espressif installer is not required. `idf.py` is still the documented
-build entry point (`.vscode/tasks.json` "Firmware: build C3", `firmware/README.md`) because
-`firmware/` is a hand-rolled ESP-IDF CMake project rather than a PlatformIO-owned project
-structure. If `idf.py` isn't already on PATH from a prior ESP-IDF install, export it from the
+toolchains — a separate Espressif installer is not required. `idf.py` is the documented build
+entry point (`.vscode/tasks.json` "Firmware: build C3", `firmware/README.md`) because `firmware/`
+is a hand-rolled ESP-IDF CMake project. PlatformIO can also build it directly, through a second,
+nested project at `firmware/platformio.ini` (kept separate from the repo-root `platformio.ini`
+because PlatformIO only supports one `src_dir` per project, and the C3/native targets compile
+disjoint source trees):
+
+```powershell
+pio run -d firmware -e prototype_c3
+```
+
+Use this path for the PlatformIO IDE's IntelliSense/upload UI; use `idf.py` for the canonical
+CI/task build. Keep both working — do not let them diverge.
+
+If `idf.py` isn't already on PATH from a prior ESP-IDF install, export it from the
 PlatformIO-bundled copy instead of installing a second toolchain:
 
 ```powershell
