@@ -24,12 +24,18 @@ import java.nio.charset.StandardCharsets
  * | 19     | 16   | distance_str     | android.shortCriticalText              |
  * | 35     | 32   | eta_str          | android.subText                        |
  * | 67     | 64   | title_str        | android.title (maneuver text)          |
- * | 131    | 1    | reserved         | padding (0)                            |
+ * | 131    | 6    | accel_mg         | 3x int16 LE, milli-g, 0x7FFF = unknown |
+ * | 137    | 6    | gyro_mdps        | 3x int16 LE, milli-deg/s, 0x7FFF = unk |
+ * | 143    | 1    | reserved         | padding (0)                            |
  * --------------------------------------------------------------------------------------------
- * Total: 132 bytes. One BLE notification after MTU negotiation (ESP32 central requests MTU >= 185).
+ * Total: 144 bytes. One BLE notification after MTU negotiation (ESP32 central requests MTU >= 185).
+ *
+ * accel_mg/gyro_mdps are raw phone motion samples for terminal-side diagnostics/future use only —
+ * they are never classified or fed into the normalized navigation/countdown model (that stays the
+ * ESP32 normalizer's job per docs/OpenApex_SPEC.md §2.4).
  */
-const val RAW_NOTIF_PACKET_SIZE = 132
-const val RAW_NOTIF_VERSION = 1
+const val RAW_NOTIF_PACKET_SIZE = 144
+const val RAW_NOTIF_VERSION = 2
 
 private const val DIST_STR_BYTES = 16
 private const val ETA_STR_BYTES = 32
@@ -38,6 +44,7 @@ private const val TITLE_STR_BYTES = 64
 private const val U16_UNKNOWN = 0xFFFF
 private const val U8_UNKNOWN = 0xFF
 private const val U32_UNKNOWN = -1 // encodes as 0xFFFFFFFF
+private const val I16_UNKNOWN = 0x7FFF
 
 /** Raw Maps notification extras, verbatim. Null = field absent from the notification. */
 data class RawNavNotification(
@@ -56,7 +63,21 @@ data class GnssTelemetry(
     val batteryPercent: Int?,
 )
 
-fun packRawNotifPacket(sequence: Int, nav: RawNavNotification, gnss: GnssTelemetry): ByteArray {
+/**
+ * Raw phone motion samples (most recent SensorManager readings), in SI units. Null = no reading
+ * yet. Passed through verbatim — never classified on the phone (see class KDoc above).
+ */
+data class MotionTelemetry(
+    val accelMs2: FloatArray?, // [x, y, z], m/s^2
+    val gyroRadS: FloatArray?, // [x, y, z], rad/s
+)
+
+fun packRawNotifPacket(
+    sequence: Int,
+    nav: RawNavNotification,
+    gnss: GnssTelemetry,
+    motion: MotionTelemetry = MotionTelemetry(null, null),
+): ByteArray {
     val p = ByteArray(RAW_NOTIF_PACKET_SIZE)
     p[0] = RAW_NOTIF_VERSION.toByte()
     p[1] = if (gnss.fixValid) 0x01 else 0x00
@@ -71,8 +92,29 @@ fun packRawNotifPacket(sequence: Int, nav: RawNavNotification, gnss: GnssTelemet
     putString(p, 19, DIST_STR_BYTES, nav.distanceText)
     putString(p, 35, ETA_STR_BYTES, nav.etaText)
     putString(p, 67, TITLE_STR_BYTES, nav.title)
-    // p[131] reserved stays 0
+
+    // accel: m/s^2 -> milli-g. gyro: rad/s -> milli-degrees/s.
+    putMotionVector(p, 131, motion.accelMs2, scale = 1000.0 / MS2_PER_G)
+    putMotionVector(p, 137, motion.gyroRadS, scale = 1000.0 * RAD_PER_S_TO_DEG_PER_S)
+    // p[143] reserved stays 0
     return p
+}
+
+private const val MS2_PER_G = 9.80665
+private const val RAD_PER_S_TO_DEG_PER_S = 180.0 / Math.PI
+
+// Packs a 3-axis reading as round(value * scale) milli-units, or I16_UNKNOWN per axis when absent.
+private fun putMotionVector(buf: ByteArray, offset: Int, values: FloatArray?, scale: Double) {
+    for (axis in 0..2) {
+        val raw = values?.getOrNull(axis)
+        val milli = raw?.let { Math.round(it * scale).toInt().coerceIn(-0x7FFE, 0x7FFE) } ?: I16_UNKNOWN
+        putI16(buf, offset + axis * 2, milli)
+    }
+}
+
+private fun putI16(buf: ByteArray, offset: Int, value: Int) {
+    buf[offset] = (value and 0xFF).toByte()
+    buf[offset + 1] = ((value shr 8) and 0xFF).toByte()
 }
 
 private fun putString(buf: ByteArray, offset: Int, max: Int, value: String?) {

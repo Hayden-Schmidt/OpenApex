@@ -38,6 +38,11 @@ static void build_packet(uint8_t *p, const char *title, const char *eta, const c
     if (dist != NULL) strncpy((char *)&p[19], dist, RAW_DIST_STR_LEN - 1);
     if (eta != NULL) strncpy((char *)&p[35], eta, RAW_ETA_STR_LEN - 1);
     if (title != NULL) strncpy((char *)&p[67], title, RAW_TITLE_STR_LEN - 1);
+    // Motion fields default to the unknown sentinel (0x7FFF) in every fixture built here.
+    for (int i = 0; i < 6; i++) {
+        p[131 + i * 2] = 0xFF;
+        p[131 + i * 2 + 1] = 0x7F;
+    }
 }
 
 static void test_decode_rejects_malformed(void) {
@@ -107,6 +112,20 @@ static void test_normalize_unknown_uses_sentinels(void) {
     assert(!m.gnss_fix_valid);
 }
 
+static void test_decode_motion_samples(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    build_packet(p, "Continue straight", NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    // accel z = 1000 milli-g at offset 135.
+    p[135] = 0xE8;
+    p[136] = 0x03;
+
+    raw_notif_t raw;
+    assert(packet_decode(p, sizeof(p), &raw));
+    assert(raw.accel_mg[0] == RAW_I16_UNKNOWN);
+    assert(raw.accel_mg[2] == 1000);
+    assert(raw.gyro_mdps[0] == RAW_I16_UNKNOWN);
+}
+
 static void test_normalize_roundabout_and_sharp(void) {
     uint8_t p[RAW_NOTIF_PACKET_SIZE];
 
@@ -128,6 +147,7 @@ int main(void) {
     test_normalize_turn_right();
     test_normalize_arrived();
     test_normalize_unknown_uses_sentinels();
+    test_decode_motion_samples();
     test_normalize_roundabout_and_sharp();
     puts("packet + normalize tests passed");
     return 0;

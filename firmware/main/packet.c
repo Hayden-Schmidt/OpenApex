@@ -10,6 +10,10 @@ static uint32_t read_u32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+static int16_t read_i16(const uint8_t *p) {
+    return (int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
 static void copy_str(char *dst, size_t dst_len, const uint8_t *src) {
     // Copy at most dst_len - 1 bytes and force a terminator. Source strings from the relay are
     // already truncated+terminated; this is the defensive terminal-side bound.
@@ -44,5 +48,12 @@ bool packet_decode(const uint8_t *data, size_t len, raw_notif_t *out) {
     copy_str(out->distance_str, RAW_DIST_STR_LEN, &data[19]);
     copy_str(out->eta_str, RAW_ETA_STR_LEN, &data[35]);
     copy_str(out->title_str, RAW_TITLE_STR_LEN, &data[67]);
+
+    out->accel_mg[0] = read_i16(&data[131]);
+    out->accel_mg[1] = read_i16(&data[133]);
+    out->accel_mg[2] = read_i16(&data[135]);
+    out->gyro_mdps[0] = read_i16(&data[137]);
+    out->gyro_mdps[1] = read_i16(&data[139]);
+    out->gyro_mdps[2] = read_i16(&data[141]);
     return true;
 }

@@ -25,6 +25,9 @@ class NavNotificationRelayService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         RelayStateHolder.noteListenerConnected()
+        // A navigation notification already posted before this listener (re)connected never
+        // fires onNotificationPosted again on its own — seed from whatever is currently active.
+        activeNotifications?.firstOrNull { it.packageName == MAPS_PACKAGE }?.let { relayIfNav(it) }
     }
 
     override fun onListenerDisconnected() {
@@ -33,6 +36,10 @@ class NavNotificationRelayService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        relayIfNav(sbn)
+    }
+
+    private fun relayIfNav(sbn: StatusBarNotification) {
         if (sbn.packageName != MAPS_PACKAGE) return
         val extras = sbn.notification.extras
         val nav = RawNavNotification(

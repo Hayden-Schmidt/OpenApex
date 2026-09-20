@@ -10,6 +10,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.Location
 import android.os.Build
 import android.os.IBinder
@@ -32,6 +36,7 @@ class RelayService : Service() {
 
     private lateinit var ble: RelayBleServer
     private lateinit var fused: FusedLocationProviderClient
+    private lateinit var sensorManager: SensorManager
     private var locationCallback: LocationCallback? = null
     private var speedKmh: Float? = null
     private var headingDeg: Int? = null
@@ -42,18 +47,35 @@ class RelayService : Service() {
     private val sequence = AtomicInteger(0)
     private var latestPacket: ByteArray = ByteArray(RAW_NOTIF_PACKET_SIZE)
 
+    // Latest raw motion samples. Diagnostic/future-use passthrough only — never classified here;
+    // see RawNotifPacket.kt KDoc and docs/OpenApex_SPEC.md §2.4.
+    private var lastAccel: FloatArray? = null
+    private var lastGyro: FloatArray? = null
+    private val motionListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            when (event.sensor.type) {
+                Sensor.TYPE_ACCELEROMETER -> lastAccel = event.values.copyOf()
+                Sensor.TYPE_GYROSCOPE -> lastGyro = event.values.copyOf()
+            }
+        }
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+
     override fun onCreate() {
         super.onCreate()
         ble = RelayBleServer(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         startForegroundWithNotification()
         RelayStateHolder.attach { event -> handle(event) }
         ble.start()
         startGnss()
+        startMotionSensors()
     }
 
     override fun onDestroy() {
         stopGnss()
+        sensorManager.unregisterListener(motionListener)
         ble.stop()
         RelayStateHolder.detach()
         super.onDestroy()
@@ -80,7 +102,8 @@ class RelayService : Service() {
             fixValid = fixValid,
             batteryPercent = batteryPercent(),
         )
-        val packet = packRawNotifPacket(sequence.incrementAndGet(), currentNav, telemetry)
+        val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
+        val packet = packRawNotifPacket(sequence.incrementAndGet(), currentNav, telemetry, motion)
         latestPacket = packet
         RelayStateHolder.setLatestPacket(packet)
         if (subscriberCount > 0) {
@@ -111,6 +134,13 @@ class RelayService : Service() {
     private fun stopGnss() {
         locationCallback?.let { fused.removeLocationUpdates(it) }
         locationCallback = null
+    }
+
+    private fun startMotionSensors() {
+        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        accel?.let { sensorManager.registerListener(motionListener, it, SensorManager.SENSOR_DELAY_GAME) }
+        gyro?.let { sensorManager.registerListener(motionListener, it, SensorManager.SENSOR_DELAY_GAME) }
     }
 
     private fun batteryPercent(): Int? {

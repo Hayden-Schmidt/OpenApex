@@ -1,3 +1,4 @@
+#include "ble_central.h"
 #include "countdown.h"
 #include "packet.h"
 #include "pipeline.h"
@@ -41,24 +42,8 @@ static void view_state_snapshot(terminal_view_state_t *out) {
     }
 }
 
-// BLE service/characteristic the phone advertises (matches the Android relay).
-// Open decision: BLE central stack init is pinned once the ESP-IDF version is chosen.
-// static const char *SERVICE_UUID = "c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f";
-// static const char *CHAR_UUID = "c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f";
-
 uint32_t platform_now_ms(void) {
     return (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-static void ble_handler_task(void *argument) {
-    (void)argument;
-    // Phase 1 TODO (Slice C, blocked on ESP-IDF version): initialize NimBLE central, scan and
-    // connect to the phone GATT server, subscribe to the nav characteristic, and push decoded
-    // raw_notif_t packets into raw_packet_queue. The decode/normalize/countdown pipeline below
-    // is complete and host-tested; only the GATT stack integration remains.
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
 }
 
 static void countdown_task(void *argument) {
@@ -106,7 +91,9 @@ void app_main(void) {
     raw_packet_queue = xQueueCreate(RAW_PACKET_QUEUE_LEN, sizeof(raw_notif_t));
     view_mutex = xSemaphoreCreateMutex();
 
-    xTaskCreate(ble_handler_task, "ble_handler_task", 4096, NULL, 4, NULL);
+    // ble_central_init spawns NimBLE's own host task (single-producer into raw_packet_queue);
+    // there is no separate ble_handler_task to create.
+    ble_central_init(raw_packet_queue);
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
 }

@@ -45,6 +45,33 @@ class RawNotifPacketTest {
     }
 
     @Test
+    fun `motion samples pack as milli-units and default to unknown`() {
+        val withMotion = packRawNotifPacket(
+            sequence = 1,
+            nav = RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null),
+            gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+            motion = MotionTelemetry(accelMs2 = floatArrayOf(0f, 0f, 9.80665f), gyroRadS = floatArrayOf(0f, 0f, 0f)),
+        )
+        assertEquals(RAW_NOTIF_PACKET_SIZE, withMotion.size)
+        assertEquals(1000, readI16(withMotion, 135)) // 1 g on z axis = 1000 milli-g
+        assertEquals(0, readI16(withMotion, 137)) // gyro x = 0
+
+        val withoutMotion = packRawNotifPacket(
+            sequence = 1,
+            nav = RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null),
+            gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+        )
+        assertEquals(0x7FFF, readI16(withoutMotion, 131))
+        assertEquals(0x7FFF, readI16(withoutMotion, 141))
+    }
+
+    private fun readI16(buf: ByteArray, offset: Int): Int {
+        val lo = buf[offset].toInt() and 0xFF
+        val hi = buf[offset + 1].toInt()
+        return (hi shl 8) or lo
+    }
+
+    @Test
     fun `unknown fields use max sentinels not zero`() {
         val packet = packRawNotifPacket(
             sequence = 1,

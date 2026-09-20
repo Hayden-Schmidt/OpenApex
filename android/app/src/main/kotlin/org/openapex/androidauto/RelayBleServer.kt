@@ -41,6 +41,13 @@ class RelayBleServer(private val context: Context) {
             BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
             BluetoothGattCharacteristic.PERMISSION_READ,
         )
+        // Central-mode subscribers (the ESP32) discover and write this CCCD to enable
+        // notifications; without it there is nothing for descriptor discovery to find.
+        val cccd = android.bluetooth.BluetoothGattDescriptor(
+            CCCD_UUID,
+            android.bluetooth.BluetoothGattDescriptor.PERMISSION_READ or android.bluetooth.BluetoothGattDescriptor.PERMISSION_WRITE,
+        )
+        char.addDescriptor(cccd)
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         service.addCharacteristic(char)
 
@@ -83,8 +90,11 @@ class RelayBleServer(private val context: Context) {
         gattServer = server
         running = true
 
+        // No device name: a 128-bit service UUID (18 bytes with AD header) plus a device name
+        // plus mandatory flags (3 bytes) overflows the 31-byte legacy advertising payload,
+        // causing startAdvertising to fail silently (ADVERTISE_FAILED_DATA_TOO_LARGE). The ESP32
+        // central only filters on the service UUID, so the name isn't needed.
         val advData = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .build()
         val settings = AdvertiseSettings.Builder()
@@ -114,10 +124,10 @@ class RelayBleServer(private val context: Context) {
     fun notify(packet: ByteArray) {
         val server = gattServer ?: return
         val char = characteristic ?: return
-        if (!server.getConnectedDevices().isNullOrEmpty()) {
-            char.value = packet
-            server.notifyCharacteristicChanged(server.getConnectedDevices()[0], char, false)
-        }
+        val devices = bluetoothManager?.getConnectedDevices(android.bluetooth.BluetoothProfile.GATT)
+        val device = devices?.firstOrNull() ?: return
+        char.value = packet
+        server.notifyCharacteristicChanged(device, char, false)
     }
 
     private fun hasPermissions(): Boolean {
@@ -125,11 +135,16 @@ class RelayBleServer(private val context: Context) {
         return true
     }
 
-    private val advertiseCallback = object : AdvertiseCallback() {}
+    private val advertiseCallback = object : AdvertiseCallback() {
+        override fun onStartFailure(errorCode: Int) {
+            android.util.Log.e("RelayBleServer", "startAdvertising failed: errorCode=$errorCode")
+        }
+    }
 
     companion object {
         // Fixed OpenApex BLE identifiers — see docs/OpenApex_SPEC.md §5.3.
         val SERVICE_UUID: UUID = UUID.fromString("c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f")
         val CHAR_UUID: UUID = UUID.fromString("c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f")
+        val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 }
