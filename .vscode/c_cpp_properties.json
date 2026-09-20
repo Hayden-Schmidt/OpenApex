@@ -1,0 +1,33 @@
+//
+// !!! WARNING !!! AUTO-GENERATED FILE!
+// PLEASE DO NOT MODIFY IT AND USE "platformio.ini":
+// https://docs.platformio.org/page/projectconf/section_env_build.html#build-flags
+//
+{
+    "configurations": [
+        {
+            "name": "PlatformIO",
+            "includePath": [
+                "c:/Dev/projects/active/OpenApex/src",
+                ""
+            ],
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true,
+                "path": [
+                    "c:/Dev/projects/active/OpenApex/src",
+                    ""
+                ]
+            },
+            "defines": [
+                "PLATFORMIO=60200",
+                ""
+            ],
+            "cppStandard": "c++17",
+            "compilerPath": "gcc",
+            "compilerArgs": [
+                ""
+            ]
+        }
+    ],
+    "version": 4
+}

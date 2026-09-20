@@ -13,6 +13,11 @@ firmware/managed_components/
 
 # Host test output
 build/
+*.obj
+*.pdb
+
+# Firecrawl / web research scratch
+.firecrawl/
 
 # Local tooling
 .venv/

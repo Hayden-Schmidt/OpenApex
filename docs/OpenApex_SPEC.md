@@ -23,16 +23,21 @@ locations, or perform map matching in the first development pass.
 |        |                                                        |
 | phone GNSS: speed, heading, fix state                          |
 |        |                                                        |
-| normalized BLE navigation + telemetry packet                   |
+| raw-notification + telemetry packet (relay only, no parsing)   |
 +-----------------------------+-----------------------------------+
                               | BLE
                               v
 +---------------------- Motorcycle terminal ----------------------+
-| BLE parser -> local countdown processor -> LVGL renderer         |
+| packet decoder -> normalizer -> countdown -> C++ LVGL renderer   |
 | optional board sensors: GNSS, IMU, RTC, buttons, touch           |
 | high-contrast maneuver, distance, speed, connection UI           |
 +------------------------------------------------------------------+
 ```
+
+The phone is a **dumb relay**: it forwards raw navigation notification fields and GNSS telemetry
+without interpreting them. All text parsing (maneuver type, street name, distance) happens on the
+terminal in a single pure-C normalizer shared by both the Android and iOS/ANCS paths. See
+§2.4 "Normalization ownership".
 
 ## 2. Phase 1: C3 Notification and GNSS Passthrough POC
 
@@ -80,6 +85,31 @@ Both source paths must produce the same normalized navigation model before BLE t
 GNSS-only source can provide telemetry and diagnostics but cannot populate the maneuver display
 without a navigation notification.
 
+### 2.4 Normalization ownership (architectural decision)
+
+**Decision:** normalization lives on the **ESP32 terminal**, not the phone. The phone is a dumb
+relay that forwards raw notification fields and GNSS telemetry; it does no text parsing,
+classification, or street extraction.
+
+**Rationale:**
+
+- iOS/ANCS delivers notification text directly to the terminal (the terminal is the BLE GATT
+  client to the iPhone; there is no phone-side app to parse). C-side normalization is therefore
+  unavoidable for the iOS path. Writing it once on the terminal and routing Android through it is
+  the only way to get a single implementation instead of two (one Kotlin, one C) that would drift.
+- The locale/phrasing matching is exactly the fragile part the spec flags (§3). Duplicating it in
+  two languages guarantees divergence; one C normalizer is a single source of truth.
+- The C normalizer is host-testable (like `countdown.c`): pure function, no BLE/LVGL dependency,
+  exercised under the native/host test harness, not only on the C3.
+
+**Consequences:**
+
+- The BLE payload carries a bounded raw title string (and optional numeric distance/remaining
+  fields) rather than a pre-classified maneuver enum.
+- The terminal pipeline is a clean chain: `packet decoder -> normalizer -> countdown -> renderer`.
+  The iOS/ANCS path adds a raw-text input stage in front of the same decoder/normalizer; the
+  decode/countdown/render stages are shared and unchanged.
+
 ## 3. Notification Normalization
 
 Notification text is inconsistent across applications and locales. Source adapters must normalize
@@ -95,6 +125,8 @@ typedef enum {
     NAV_ICON_TURN_RIGHT,
     NAV_ICON_SLIGHT_LEFT,
     NAV_ICON_SLIGHT_RIGHT,
+    NAV_ICON_SHARP_LEFT,
+    NAV_ICON_SHARP_RIGHT,
     NAV_ICON_ROUNDABOUT,
     NAV_ICON_U_TURN,
     NAV_ICON_ARRIVED,
@@ -384,9 +416,48 @@ remain smartphone-side features.
 3. Confirm the iOS ANCS subscription and notification-attribute flow on the intended iPhone.
 4. Finalize packet version 1 byte layout, sentinels, and whether source identifiers fit in the first
    packet or use a second characteristic.
-5. Choose the ESP-IDF version and LVGL major version for the firmware project.
+5. ~~Choose the ESP-IDF version and LVGL major version for the firmware project.~~ **RESOLVED**
+   (see §16.2): ESP-IDF 5.x + LVGL 9.
 6. Confirm dock pin count, wake/ID pin requirements, and external buck converter packaging.
 7. Decide whether the embedded project remains under `firmware/` in this repository.
+
+## 16. Architecture Decision Records
+
+Consolidated decisions that shape the implementation. These are authoritative; where they revise
+an earlier section, they supersede it.
+
+### 16.1 Normalization on the terminal (see §2.4)
+
+The phone is a dumb relay; the ESP32 normalizes notification text into the maneuver model. One C
+normalizer serves both Android and iOS/ANCS.
+
+### 16.2 Firmware language split
+
+**Decision:** hybrid C/C++ with a fixed boundary.
+
+- **C** — hardware drivers, protocol (BLE GATT, packet decoder), and pure domain logic
+  (`normalize.c`, `countdown.c`, `pipeline.c`). No `extern "C"` wrapper fatigue; straight ESP-IDF
+  APIs.
+- **C++** — LVGL UI screens (`NavScreen`, `IdleScreen`, etc.) and view-state encapsulation. RAII
+  for mutex guards.
+- **Disciplined constraints:** `-fno-exceptions`, `-fno-rtti`, no heap-heavy STL inside the render
+  loop; `std::array` and fixed pools only. (These are ESP-IDF defaults; do not add conflicting
+  `build_flags`.)
+- **Boundary:** POD C structs (`nav_payload_t`, `terminal_view_state_t`) cross the C→C++ seam.
+
+The pure C modules (`packet`, `normalize`, `countdown`, `pipeline`) are host-testable under the
+native/MSVC test harness independent of ESP-IDF.
+
+### 16.3 Toolchain
+
+- PlatformIO (`espressif32` platform) drives the ESP-IDF CMake build; no custom toolchain.
+- Framework: **ESP-IDF 5.x** (required by LVGL 9), **LVGL 9**.
+- BLE: **NimBLE** (lightweight, correct fit for single-core C3).
+
+### 16.4 Hardware-free development path
+
+The browser simulator (`simulator/index.html`) and PlatformIO `native` target share the same
+`countdown.c`/`normalize.c` sources. Browser = visual target; `native` + host tests = code target.
 
 ## 14. Source and Licensing Notes
 

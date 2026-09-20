@@ -28,6 +28,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.car.app:app:1.7.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 
     testImplementation("junit:junit:4.13.2")
 }
