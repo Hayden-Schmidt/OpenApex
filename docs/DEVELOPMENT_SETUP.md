@@ -41,9 +41,18 @@ BLE publishing are the next implementation slice.
 
 ### ESP-IDF
 
-Install ESP-IDF 5.x using Espressif's official Windows installer or VS Code ESP-IDF extension.
-Load the ESP-IDF export environment in the terminal so `idf.py` is available, then configure and
-build the C3 target:
+PlatformIO's `espressif32` platform already bundles `framework-espidf` plus the RISC-V/Xtensa
+toolchains — a separate Espressif installer is not required. `idf.py` is still the documented
+build entry point (`.vscode/tasks.json` "Firmware: build C3", `firmware/README.md`) because
+`firmware/` is a hand-rolled ESP-IDF CMake project rather than a PlatformIO-owned project
+structure. If `idf.py` isn't already on PATH from a prior ESP-IDF install, export it from the
+PlatformIO-bundled copy instead of installing a second toolchain:
+
+```powershell
+& "$env:PLATFORMIO_CORE_DIR\packages\framework-espidf\export.ps1"
+```
+
+Then configure and build the C3 target:
 
 ```powershell
 .\scripts\setup-firmware.ps1
@@ -52,6 +61,20 @@ build the C3 target:
 The firmware skeleton targets `esp32c3` and intentionally contains no S3-only assumptions. Add
 board profiles and display drivers after the C3 prototype pinout is confirmed.
 
+**Windows path-with-space warning:** ESP-IDF's CMake build refuses to run if *any* path involved
+— project dir, toolchain dir, or PlatformIO core dir — contains a space. If your Windows user
+folder has a space in it (e.g. `C:\Users\First Last\`), the default `%USERPROFILE%\.platformio`
+core dir will break every espidf build with `Error: Detected a whitespace character in project
+paths.`, even from a clean, space-free project directory. Fix: relocate PlatformIO's core dir to a
+space-free path once, globally:
+
+```powershell
+setx PLATFORMIO_CORE_DIR "C:\PlatformIO"
+```
+
+Re-open your terminal/VS Code after setting this so the new session picks it up. The `espressif32`
+platform and its packages will re-download under the new location on first use.
+
 ### Host countdown test
 
 A native C compiler is required for the pure countdown test. Install LLVM/Clang or MinGW, then run:
@@ -59,6 +82,14 @@ A native C compiler is required for the pure countdown test. Install LLVM/Clang 
 ```powershell
 .\scripts\build-countdown.ps1
 ```
+
+`build-countdown.ps1` falls back to MSVC (`vcvars64.bat`) when no `cc`/`gcc`/`clang` is on PATH, so
+it works without installing MinGW. The PlatformIO `native` simulator environment (below) does need
+a real g++, since PlatformIO's `native` platform only drives GCC/Clang, not MSVC.
+
+If you hit the same space-in-username problem with a per-user MinGW install (e.g. winget installing
+to `C:\Users\First Last\AppData\...`, which breaks `ld.exe` the same way), install MinGW to a
+space-free path instead, e.g. `C:\mingw64`, and add `C:\mingw64\bin` to your user `PATH`.
 
 No Python virtual environment is currently required. Python becomes necessary only if we add
 asset-generation, packet-fixture, or firmware tooling that uses Python.
