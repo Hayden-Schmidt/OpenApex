@@ -29,11 +29,18 @@ You can prototype before the C3 arrives:
 - Run the VS Code task `Simulator: open round display`.
 - Run the PlatformIO native environment with `pio run -e native` once the PlatformIO extension has
     installed/activated its CLI.
+- Run `pio run -d firmware/sim_lvgl -e sim_lvgl` for the real LVGL GUI: it opens an SDL2 window at
+    the exact target resolution (`board_profile.h`) and renders the same screen-building code
+    (`firmware/gui/gui_screens.c`) that ships to the C3, so LVGL widget/style work transfers
+    directly to hardware.
 
 The native target and browser simulator use the same countdown implementation from
-`firmware/main/countdown.c`. The browser is the visual target; PlatformIO native is the code/test
-target. The C3 environment is ready for the physical board once its pin profile and display driver
-are added.
+`firmware/main/countdown.c`. The browser is the visual target for the countdown model; `sim_lvgl` is
+the visual target for the actual LVGL UI; PlatformIO native is the code/test target. The C3
+environment builds and boots on a bare dev board today (BLE central + packet decode confirmed
+end-to-end against a live Android relay); it's ready for the physical display driver once the
+GC9A01 module is in hand. See [docs/OpenApex_SPEC.md](docs/OpenApex_SPEC.md) §11 for full status
+and next steps.
 
 ## Hardware path
 

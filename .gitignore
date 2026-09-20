@@ -30,3 +30,10 @@ build/
 # Local tooling
 .venv/
 .env
+
+# Ad-hoc serial/debug capture logs (e.g. c3log*.txt captures)
+/logs/
+
+# Local agent/tool state, not project source
+/.claude/
+/.serena/

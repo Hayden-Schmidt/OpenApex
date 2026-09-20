@@ -380,18 +380,62 @@ switched motorcycle 12 V -> 2 A fuse -> external waterproof 12-to-5 V buck
 
 ## 11. Development Roadmap
 
+### Current status (2026-09-21)
+
+Confirmed working end-to-end on real hardware (bare ESP32-C3 dev board on COM5, no display module
+yet, plus a OnePlus 15 running the Android relay app):
+
+- NimBLE central (`firmware/main/ble_central.c`) scans, connects, subscribes, and decodes
+  `RawNotifPacket` frames from the Android peripheral. Verified via serial log against a live
+  Google Maps navigation session: sustained `decoded packet seq=... title="..."` lines across
+  multiple connect/reconnect cycles.
+- Android relay (`RelayBleServer.kt`, `NavNotificationRelayService.kt`, `RelayService.kt`) fixed and
+  confirmed: GATT server notify crash fixed, CCCD descriptor added so the C3 can subscribe, and
+  `NotificationListenerService` now seeds from `activeNotifications` on listener connect so an
+  already-posted Maps notification isn't missed.
+- `firmware/sim_lvgl` (PlatformIO native + SDL2) added as the LVGL GUI design/iteration surface:
+  opens a real SDL window at the exact `board_profile.h` resolution (240x240) and renders the
+  shared `firmware/gui/gui_screens.c` widget code, driven by a scripted fixture sequence in the
+  absence of live hardware/data. Screen-building code lives in `firmware/gui/`, not
+  `firmware/main/`, so it never gets pulled into the real ESP-IDF `prototype_c3` build.
+- `pio run -e native`, `pio run -d firmware -e prototype_c3`, and the new `sim_lvgl` env all build
+  clean.
+
+**Known open issue:** the BLE connection between the C3 (central) and the Android peripheral drops
+every ~9-30s (NimBLE disconnect reason 531, "remote user terminated"), then reconnects
+automatically. Root cause is unconfirmed but suspected to be an OnePlus/ColorOS peripheral-role
+Bluetooth stack quirk; a `ble_gap_update_params()` fix attempt made it worse and was reverted (see
+§13 item 8). Data still reaches the C3 reliably within each connection window, but this churn should
+be root-caused before Phase 1 is considered exit-ready.
+
+### Recommended next steps
+
+1. Diagnose the ~9-30s BLE disconnect churn (§13 item 8) — likely needs phone-side HCI/btsnoop
+   capture to see which side actually initiates the disconnect, since app-level logcat alone hasn't
+   pinned it down.
+2. Wire the LVGL screens already prototyped in `firmware/sim_lvgl` into the real `gui_task` on the
+   C3 firmware, driven by the now-working `ble_central`/`countdown` pipeline instead of the
+   simulator's scripted fixture.
+3. Source and wire the physical GC9A01 display module once available; port the SPI display driver
+   (deferred — no module in hand as of this status update).
+4. Implement the iOS/ANCS source adapter (Android-only so far).
+5. Add phone motion/GNSS telemetry (fused location + fused orientation + raw accel/gyro) per the
+   Phase 1 roadmap below — not yet started.
+
 ### Phase 1: C3 notification/GNSS display POC
 
-- Confirm the C3 board variant, pins, touch option, reset, backlight, and brownout behavior.
-- Create ESP-IDF project structure and compile-time C3 profile.
-- Disable unused audio and unrelated silicon where present.
-- Implement BLE reception and normalized packet decoding.
-- Implement Android NotificationListenerService source adapter for Google Maps.
-- Implement the iOS/ANCS source contract and adapter path for Apple Maps.
-- Pass phone GNSS speed, heading, validity, and freshness through the packet.
-- Implement C3-side speed smoothing and distance countdown between notifications.
-- Implement the basic LVGL maneuver/distance/speed/stale UI.
-- Build the first weather-resistant mechanical prototype only after the display path works.
+- [x] Confirm the C3 board variant, pins, touch option, reset, backlight, and brownout behavior
+      (bare dev board confirmed; display module not yet in hand).
+- [x] Create ESP-IDF project structure and compile-time C3 profile.
+- [x] Disable unused audio and unrelated silicon where present.
+- [x] Implement BLE reception and normalized packet decoding.
+- [x] Implement Android NotificationListenerService source adapter for Google Maps.
+- [ ] Implement the iOS/ANCS source contract and adapter path for Apple Maps.
+- [ ] Pass phone GNSS speed, heading, validity, and freshness through the packet.
+- [x] Implement C3-side speed smoothing and distance countdown between notifications.
+- [ ] Implement the basic LVGL maneuver/distance/speed/stale UI on-device (prototyped in
+      `firmware/sim_lvgl`, not yet wired into `firmware/main/main.c`'s `gui_task`).
+- [ ] Build the first weather-resistant mechanical prototype only after the display path works.
 
 **Phase 1 exit test:** Google Maps navigation notification plus phone GNSS data reaches the C3,
 the screen renders the maneuver and distance, the distance counts down smoothly between source
@@ -443,6 +487,10 @@ remain smartphone-side features.
    (see §16.2): ESP-IDF 5.x + LVGL 9.
 6. Confirm dock pin count, wake/ID pin requirements, and external buck converter packaging.
 7. Decide whether the embedded project remains under `firmware/` in this repository.
+8. Root-cause the ~9-30s BLE central/peripheral disconnect churn (NimBLE reason 531) observed
+   between the C3 and an Android peripheral (tested on a OnePlus 15). A `ble_gap_update_params()`
+   call from the central made disconnects happen faster and was reverted; suspected OEM
+   (OnePlus/ColorOS) peripheral-stack issue, not yet confirmed with a packet-level capture.
 
 ## 16. Architecture Decision Records
 
