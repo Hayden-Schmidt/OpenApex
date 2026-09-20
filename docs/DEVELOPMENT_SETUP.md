@@ -102,6 +102,15 @@ If you hit the same space-in-username problem with a per-user MinGW install (e.g
 to `C:\Users\First Last\AppData\...`, which breaks `ld.exe` the same way), install MinGW to a
 space-free path instead, e.g. `C:\mingw64`, and add `C:\mingw64\bin` to your user `PATH`.
 
+**After changing PATH, the PlatformIO IDE extension needs its background Home server killed, not
+just VS Code restarted.** The extension spawns a persistent `pio home` server process
+(`python.exe ... --port 45824`, visible in Task Manager) that outlives individual VS Code restarts
+and keeps whatever PATH it was first launched with. If PlatformIO IDE builds still can't find
+`g++`/`gcc` after a PATH change even from a fully-quit-and-reopened VS Code, kill any `python.exe`
+processes running from your `PLATFORMIO_CORE_DIR` (e.g. `C:\PlatformIO\penv\...`) and retry — the
+extension respawns the server fresh with the current environment. A plain integrated terminal
+doesn't have this problem since it's a new process each time.
+
 No Python virtual environment is currently required. Python becomes necessary only if we add
 asset-generation, packet-fixture, or firmware tooling that uses Python.
 
@@ -124,6 +133,14 @@ The PlatformIO `native` environment compiles `firmware/main/countdown.c` directl
 The native target prints a deterministic countdown trace; the browser target supplies visual
 feedback. PlatformIO's CLI may be exposed only inside the VS Code PlatformIO terminal, even when
 `pio` is not available in an ordinary PowerShell session.
+
+## Verified working (2026-09-21)
+
+- `pio run -e native` (root project): builds and runs the native simulator via g++/MinGW.
+- `pio run -d firmware -e prototype_c3`: builds the C3 firmware through PlatformIO's espidf
+  framework (RAM 3.3%, Flash 14.3% of an esp32c3-devkitm-1).
+- `idf.py -C firmware build`: builds the same C3 firmware directly.
+- A physical ESP32-C3 (no display, dev board only) is reachable on COM5 for flashing.
 
 ## Phase 1 boundary
 
