@@ -1,0 +1,527 @@
+# MotoNav Technical Specification
+
+**Status:** Active specification  
+**Scope:** Phone navigation-source adapters and a BLE motorcycle terminal  
+**First hardware:** Generic ESP32-C3 1.28-inch GC9A01 round display  
+**Reference hardware:** Waveshare ESP32-S3-Touch-AMOLED-1.75 and GPS variant
+
+## 1. System Boundary
+
+MotoNav is a high-visibility, weather-sealed handlebar display. A paired smartphone remains
+responsible for heavy navigation work and navigation-app integration. The terminal receives
+navigation events and phone GNSS telemetry over Bluetooth Low Energy, performs small amounts of
+local display processing, and renders a high-contrast vector UI.
+
+The terminal is not a phone replacement. It does not load maps, calculate routes, geocode
+locations, or perform map matching in the first development pass.
+
+```text
++--------------------------- Smartphone --------------------------+
+| Google Maps / Apple Maps / Waze                                 |
+|        |                                                        |
+| Android NotificationListenerService / iOS ANCS                 |
+|        |                                                        |
+| phone GNSS: speed, heading, fix state                          |
+|        |                                                        |
+| normalized BLE navigation + telemetry packet                   |
++-----------------------------+-----------------------------------+
+                              | BLE
+                              v
++---------------------- Motorcycle terminal ----------------------+
+| BLE parser -> local countdown processor -> LVGL renderer         |
+| optional board sensors: GNSS, IMU, RTC, buttons, touch           |
+| high-contrast maneuver, distance, speed, connection UI           |
++------------------------------------------------------------------+
+```
+
+## 2. Phase 1: C3 Notification and GNSS Passthrough POC
+
+Phase 1 is the first implementation target and is intentionally narrow.
+
+### 2.1 Phase 1 does
+
+- Targets the incoming generic ESP32-C3 1.28-inch GC9A01 round display.
+- Proves BLE connectivity and live rendering on the C3 screen.
+- Reads Google Maps, Apple Maps, and later Waze navigation notifications through phone-side
+  platform adapters.
+- Normalizes notification data into a common maneuver/distance/street model.
+- Passes phone GNSS-derived speed, heading, fix state, and freshness data to the terminal.
+- Performs local distance countdown processing on the C3 between notification updates.
+- Renders maneuver icon, distance to maneuver, speed, connection state, and stale-data state.
+- Supports touch and non-touch C3 board variants through compile-time configuration.
+
+### 2.2 Phase 1 explicitly does not do
+
+- No local mapping of any kind.
+- No map tiles, raster maps, vector maps, route polylines, or road-context geometry.
+- No route calculation, rerouting, geocoding, or map matching on the phone companion layer or C3.
+- No terminal-side navigation authority.
+- No onboard terminal GNSS as a second navigation source.
+- No terminal IMU fusion into the navigation solution.
+- No offline map or offline routing data.
+- No audio, microphone, speaker, or codec feature.
+- No persistent ride history or route storage.
+
+Phase 1 is a notification and phone-GNSS passthrough proof of concept. The terminal is proving the
+BLE, parser, countdown, and display mechanisms, not proving local navigation.
+
+### 2.3 Platform source adapters
+
+**Android:** A companion/background helper uses `NotificationListenerService` to observe supported
+navigation notifications from Google Maps, Apple Maps where available, Waze, and later OsmAnd.
+The helper extracts title, subtitle, message, source application, and notification update time.
+
+**iOS:** The terminal can use Apple Notification Center Service (ANCS) as a BLE client to receive
+supported notification events from the iPhone. The firmware or an iOS-side adapter filters active
+navigation applications and extracts notification attributes. A custom iOS app is not required for
+basic ANCS events, but richer GNSS and normalization behavior may require an iOS companion later.
+
+Both source paths must produce the same normalized navigation model before BLE transmission. A
+GNSS-only source can provide telemetry and diagnostics but cannot populate the maneuver display
+without a navigation notification.
+
+## 3. Notification Normalization
+
+Notification text is inconsistent across applications and locales. Source adapters must normalize
+it before transmission where practical; the C3 parser must remain small and deterministic.
+
+The normalized model is:
+
+```c
+// Values are stable protocol values, not platform enum ordinals.
+typedef enum {
+    NAV_ICON_STRAIGHT = 0,
+    NAV_ICON_TURN_LEFT,
+    NAV_ICON_TURN_RIGHT,
+    NAV_ICON_SLIGHT_LEFT,
+    NAV_ICON_SLIGHT_RIGHT,
+    NAV_ICON_ROUNDABOUT,
+    NAV_ICON_U_TURN,
+    NAV_ICON_ARRIVED,
+    NAV_ICON_UNKNOWN
+} nav_icon_t;
+
+typedef struct {
+    nav_icon_t icon_type;
+    char distance_str[16];
+    char street_name[64];
+    uint32_t distance_meters;
+    uint16_t current_speed_kmh;
+    uint16_t heading_degrees;
+    uint8_t gnss_fix_valid;
+    uint8_t phone_battery_percent;
+    uint32_t notification_age_ms;
+    uint32_t sequence;
+} nav_payload_t;
+```
+
+Unknown numeric values use explicit sentinels. A missing field must never become a fabricated zero.
+The source application and source platform should be included in the packet or diagnostics data.
+
+The initial POC may use compact binary payloads. JSON is acceptable between a phone helper and an
+intermediate service, but the terminal link should use a bounded binary representation for reliable
+BLE notifications and simple C3 parsing.
+
+## 4. C3 Countdown Processing
+
+Notification distances update discretely. The terminal must continue showing a slowly decreasing
+value between notification updates instead of freezing the last displayed number.
+
+On every valid navigation update, the C3 stores:
+
+- notification distance in metres;
+- local monotonic timestamp;
+- latest phone GNSS speed;
+- speed validity and freshness;
+- maneuver sequence number.
+
+While the maneuver sequence is unchanged, it estimates:
+
+```text
+estimated_distance_m = max(
+    0,
+    notification_distance_m - integrated_speed_mps * elapsed_seconds
+)
+```
+
+Requirements:
+
+- Convert phone speed from km/h to m/s before integration.
+- Smooth speed changes to avoid visible jumps.
+- Apply a maximum elapsed-time hold window; do not count down forever on stale data.
+- Clamp the estimate at zero.
+- Replace the baseline when a new notification distance arrives.
+- Reset the baseline when the maneuver or source navigation state changes.
+- Mark the estimate stale when BLE, notification, or GNSS freshness expires.
+- Never use a missing speed as zero motion without exposing the stale/unknown state.
+- Do not claim this is dead reckoning or route navigation; it is display interpolation only.
+
+The phone remains authoritative for the next maneuver and notification distance. The C3 only makes
+the visible countdown smoother between authoritative updates.
+
+## 5. BLE Architecture
+
+The final architecture supports both platform paths while keeping the terminal firmware source-
+agnostic.
+
+### 5.1 Android path
+
+The Android helper publishes a custom GATT service containing a navigation characteristic. The C3
+terminal connects as the BLE central and subscribes to notifications. This path is preferred for
+the first C3 integration because the phone helper can normalize notification and GNSS data before
+transmission.
+
+### 5.2 iOS/ANCS path
+
+For ANCS, the C3 acts as a BLE GATT client subscribing to the iPhone's notification source. The
+terminal filters supported navigation applications and maps notification attributes into the same
+normalized model. Phone GNSS telemetry may be supplied by a later iOS companion path or a platform-
+specific telemetry characteristic.
+
+### 5.3 Project BLE identifiers
+
+The Android implementation currently defines:
+
+- Service UUID: `c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f`
+- Navigation characteristic UUID: `c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f`
+
+The terminal must reject unsupported protocol versions and malformed lengths. BLE callbacks must
+not block on rendering. Parsed packets are copied into a bounded queue or immutable state buffer.
+
+### 5.4 Future polyline stream
+
+Route context is Phase 2 or later. A future smartphone companion may downsample a 500 m to 1 km
+route-ahead buffer into local `(delta_x, delta_y)` points and stream them in BLE chunks every 1-2
+seconds. This is explicitly excluded from Phase 1.
+
+## 6. Hardware Profiles
+
+Firmware uses compile-time profiles. Board-specific pins and drivers must not leak into the
+navigation model or packet decoder. Every profile declares its SoC, display, touch, GNSS, IMU, RTC,
+PMIC, buttons, memory, and power capabilities.
+
+### 6.1 Phase 1 prototype: `PROTOTYPE_C3_GC9A01` generic C3 round display
+
+Target listing: AliExpress item `1005006194839720`.
+
+- ESP32-C3, single-core RISC-V target. Seller descriptions calling it dual-core are incorrect.
+- 1.28-inch round 240x240 GC9A01 IPS LCD.
+- Touch and non-touch product variants.
+- No onboard GNSS or IMU assumed.
+- Phone GNSS passthrough is therefore the only Phase 1 telemetry source.
+
+Buyer-reported touch-variant pins are provisional until checked against the delivered board:
+
+| Function | Reported pin |
+|---|---:|
+| GC9A01 SCLK | GPIO6 |
+| GC9A01 MOSI | GPIO7 |
+| GC9A01 DC | GPIO2 |
+| GC9A01 CS | GPIO10 |
+| GC9A01 reset | board-dependent / not confirmed |
+| LCD backlight | GPIO3 |
+| CST816/CST816D SDA | GPIO4 |
+| CST816/CST816D SCL | GPIO5 |
+| CST816/CST816D interrupt | GPIO0 |
+| CST816/CST816D reset | GPIO1 |
+
+The touch driver must compile out for the non-touch variant. GPIO maps must remain configurable.
+Brownout behavior, reset behavior, backlight control, and actual display orientation are Phase 1
+bring-up checks.
+
+### 6.2 Single-core expansion targets
+
+The firmware architecture must also support other single-core ESP32 families, including ESP32-C6,
+through separate profiles such as `GENERIC_C6_GC9A01`. C3/C6 support is not allowed to assume dual-
+core scheduling or S3-only peripherals. Unsupported peripherals must compile out cleanly.
+
+### 6.3 Reference production target: Waveshare 1.75 AMOLED
+
+Target board: `ESP32-S3-Touch-AMOLED-1.75` and `ESP32-S3-Touch-AMOLED-1.75-G` GPS variant.
+
+- ESP32-S3R8, Xtensa LX7 dual-core, up to 240 MHz.
+- 8 MB stacked PSRAM and 16 MB external NOR flash.
+- 1.75-inch circular AMOLED, 466x466, approximately 700 cd/m2.
+- CO5300 display driver over QSPI.
+- CST9217 capacitive touch over I2C.
+- QMI8658 6-axis IMU over I2C.
+- PCF85063 RTC with backup power path.
+- AXP2101 power-management IC.
+- TF/microSD slot for later logging or data features.
+- GPS variant includes onboard Quectel LC76G and IPEX1 antenna connection.
+
+The GPS variant is not required for Phase 1. Its GNSS driver belongs to the later telemetry phase.
+
+## 7. Optional GNSS and Sensor Hardware
+
+### 7.1 Terminal GNSS
+
+Some profiles may enable `GNSS_LC76G_UART` or `GNSS_EXTERNAL_NMEA_UART`. The LC76G supports
+GPS, GLONASS, Galileo, and BeiDou reception. Terminal GNSS is supplemental telemetry and later
+verification input; it is not the Phase 1 navigation authority.
+
+### 7.2 Heading
+
+QMI8658 is a 6-axis accelerometer/gyroscope and is not an absolute compass. Absolute heading is
+provided by phone magnetometer data or GNSS course-over-ground while moving above approximately
+3 km/h. Below that threshold, heading is unknown or held with an explicit stale indicator.
+
+### 7.3 Dormant audio and peripherals
+
+The 1.75 board contains ES7210/ES8311-class audio hardware, microphones, echo-cancellation
+circuitry, and speaker connections. Audio is permanently disabled in firmware configuration. It is
+not initialized, scheduled, rendered, or used for navigation.
+
+## 8. Firmware Runtime
+
+Use ESP-IDF and FreeRTOS. Feature tasks compile out when their hardware provider is disabled.
+
+| Task | Priority | Core | Responsibility | Phase 1 |
+|---|---:|---:|---|---:|
+| `gui_task` | 5 | profile-defined | LVGL rendering and display flush | yes |
+| `ble_handler_task` | 4 | profile-defined | BLE connection, packet reception, parsing | yes |
+| `countdown_task` | 4 | profile-defined | speed smoothing and distance interpolation | yes |
+| `gnss_parser_task` | 3 | profile-defined | terminal NMEA input | no |
+| `sensor_fusion_task` | 3 | profile-defined | IMU/motion/COG processing | no |
+| `system_manager_task` | 2 | profile-defined | PMIC, buttons, watchdog, diagnostics | yes |
+
+The GUI reads a `TerminalViewState`; it never calls BLE, UART, I2C, or GNSS APIs directly.
+
+## 9. Display Behavior
+
+The Phase 1 C3 renderer is a high-contrast dial:
+
+- Idle/waiting: connection state and no fabricated navigation values.
+- Active: large maneuver icon, countdown distance, speed, and optional street text.
+- Close turn: visual countdown emphasis as distance approaches zero.
+- Stale: last-known maneuver de-emphasized with a stale-link or stale-GNSS indicator.
+- Arrived: completion glyph when the source notification indicates arrival.
+- Diagnostics: source platform/application, packet age, GNSS validity, speed, heading, and profile.
+
+The C3 UI should use partial redraws and bounded memory. The 1.75 AMOLED may use larger type,
+double buffering in PSRAM, and later road-context graphics, but it must share the same normalized
+navigation model.
+
+## 10. Power and Mechanical Design
+
+```text
+switched motorcycle 12 V -> 2 A fuse -> external waterproof 12-to-5 V buck
+                         -> weather-sealed handlebar pogo dock -> terminal
+```
+
+- No buck converter or voltage transformation occurs inside the sealed terminal.
+- Power is coupled to switched ignition; key-off removes dock power.
+- Use a 2-pin or 4-pin recessed spring-loaded pogo interface. Mechanical bayonet or twist-lock
+  retention carries wind and vibration loads; pogo contacts carry electrical current only.
+- Use a dummy cap or low-side MOSFET arrangement to prevent wet exposed contacts shorting.
+- The terminal has no internal LiPo requirement. The 3.7 V battery header on some development
+  boards is not part of the motorcycle terminal assembly.
+- Immediate power loss must be safe. Active navigation uses RAM state and does not require a
+  shutdown sequence or filesystem transaction.
+- ASA or polycarbonate is preferred for the shell. A metal bezel requires an RF-transparent window
+  over the ESP32 antenna region.
+- A 10 mm sun hood may reduce overhead glare but must not block the display, antenna, touch surface,
+  or dock retention.
+
+## 11. Development Roadmap
+
+### Phase 1: C3 notification/GNSS display POC
+
+- Confirm the C3 board variant, pins, touch option, reset, backlight, and brownout behavior.
+- Create ESP-IDF project structure and compile-time C3 profile.
+- Disable unused audio and unrelated silicon where present.
+- Implement BLE reception and normalized packet decoding.
+- Implement Android NotificationListenerService source adapter for Google Maps.
+- Implement the iOS/ANCS source contract and adapter path for Apple Maps.
+- Pass phone GNSS speed, heading, validity, and freshness through the packet.
+- Implement C3-side speed smoothing and distance countdown between notifications.
+- Implement the basic LVGL maneuver/distance/speed/stale UI.
+- Build the first weather-resistant mechanical prototype only after the display path works.
+
+**Phase 1 exit test:** Google Maps navigation notification plus phone GNSS data reaches the C3,
+the screen renders the maneuver and distance, the distance counts down smoothly between source
+updates, stale/disconnect states are visible, and the board recovers from power removal. No map,
+tile, route, polyline, local navigation, or terminal GNSS dependency is permitted.
+
+### Phase 2: advanced telemetry and production reference board
+
+- Add the Waveshare 1.75 AMOLED S3 profile and CO5300/CST9217 drivers.
+- Add LC76G UART support on the 1.75-GPS variant.
+- Add QMI8658 motion wake, tilt, and optional COG smoothing.
+- Add PCF85063 RTC and AXP2101 power controls where needed.
+- Add optional phone/terminal telemetry comparison and diagnostics.
+- Add dock power testing and weather/UV/vibration enclosure testing.
+
+### Phase 3: road context
+
+Only after Phase 1 display reliability and Phase 2 hardware support are complete:
+
+- stream downsampled vector route coordinates from the smartphone;
+- draw a heading-relative road-context line on the terminal;
+- negotiate/version polyline chunks separately from the core notification packet.
+
+Full offline maps remain out of scope for the terminal. Offline routing and map selection, if used,
+remain smartphone-side features.
+
+## 12. Acceptance Criteria
+
+- The C3 prototype builds with touch enabled or disabled without changing navigation logic.
+- Android Google Maps notification data can drive the C3 maneuver display.
+- Apple Maps ANCS data maps to the same normalized maneuver model when the iOS path is enabled.
+- Phone GNSS speed and heading arrive with validity and freshness information.
+- The C3 countdown continues between notifications without pretending stale data is fresh.
+- Unsupported, malformed, or stale packets cannot produce a false zero-distance maneuver.
+- No map, route, tile, polyline, or local navigation code is required for Phase 1.
+- A BLE disconnect, phone GNSS loss, or abrupt power cut does not crash the display.
+- C3, C6, and S3 profiles do not assume the same core count, peripherals, memory, or pins.
+- The production reference target keeps audio disabled and preserves RF antenna clearance.
+
+## 13. Open Decisions
+
+1. Confirm the exact C3 board revision and delivered touch/non-touch pinout.
+2. Confirm Android notification formats and localization behavior for Google Maps, Apple Maps, and
+   Waze test fixtures.
+3. Confirm the iOS ANCS subscription and notification-attribute flow on the intended iPhone.
+4. Finalize packet version 1 byte layout, sentinels, and whether source identifiers fit in the first
+   packet or use a second characteristic.
+5. Choose the ESP-IDF version and LVGL major version for the firmware project.
+6. Confirm dock pin count, wake/ID pin requirements, and external buck converter packaging.
+7. Decide whether the embedded project remains under `firmware/` in this repository.
+
+## 14. Source and Licensing Notes
+
+- MotoNav application and firmware code are intended to remain under the repository's chosen open
+  source license.
+- The terminal renders data received from supported smartphone navigation applications; it does not
+  reproduce their maps or perform local map extraction in Phase 1.
+- OpenStreetMap attribution is required for any OSM-backed phone-side service used later.
+- Platform notification APIs, ANCS, and navigation-application terms must be reviewed before public
+  distribution. The Phase 1 notification path is a technical proof of concept and must not assume
+  that every application permits redistribution or persistent storage of its notification data.
+
+## 15. Existing Code Porting References
+
+This section maps the Phase 1 work onto code preserved in the historical
+[MotoNav repository](https://github.com/Hayden-Schmidt/MotoNav). File links are references for
+implementation, not claims that the old code already satisfies this specification.
+
+### 15.1 BLE transport and packet precedent
+
+- [BleLink.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/BleLink.kt) contains the existing Android
+  GATT server, service/characteristic UUIDs, notification subscription handling, advertising, and
+  packet publication lifecycle. Reuse its permission checks and lifecycle shape where the Android
+  helper remains the GATT server.
+- [RideStatePacket.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/RideStatePacket.kt) contains the
+  existing versioned 12-byte little-endian packet packer, explicit unknown sentinels, clamping, and
+  byte-layout documentation. Adapt the model for normalized notification fields and GNSS freshness;
+  do not silently change the existing packet meaning.
+- [RideStatePacketTest.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/test/java/com/motonav/app/ride/RideStatePacketTest.kt) is the
+  pattern for pure JVM wire-format tests. Add fixtures for Google Maps, Apple Maps/ANCS, idle,
+  arrived, stale GNSS, malformed packets, and countdown baselines.
+- [RideSessionService.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/RideSessionService.kt) owns the
+  existing long-lived foreground-service lifecycle and currently starts BLE, sensors, and packet
+  publication. Reuse its lifecycle/wake-lock lessons, but do not copy its Ferrostar route ownership
+  into the Phase 1 notification adapter.
+
+### 15.2 Phone GNSS and heading
+
+- [RideSessionService.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/RideSessionService.kt) already
+  requests fused location updates, converts location speed from m/s to km/h, and combines sensor
+  values before BLE publication. This is the starting point for the phone GNSS passthrough path.
+- [RideSensorsStateHolder.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/location/RideSensorsStateHolder.kt)
+  is the existing small shared holder for nullable speed and heading. Extend the data contract with
+  fix validity and freshness rather than fabricating zeros.
+- [CompassTracker.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/location/CompassTracker.kt) contains
+  phone rotation-vector heading, magnetic-declination correction, smoothing, and GPS-bearing fallback.
+  Reuse the heading math for phone telemetry; the terminal QMI8658 is not an equivalent absolute
+  compass.
+- [CompassMath.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/location/CompassMath.kt) and its tests are
+  the pure-math reference for wrap-safe angle smoothing.
+
+### 15.3 Notification scraping gap
+
+There is currently **no active NotificationListenerService or ANCS implementation** in the main
+source tree. The earlier notification-era architecture was removed or archived during the OSM
+rebuild. A developer implementing Phase 1 must add a new source-adapter boundary rather than
+assuming a parser already exists.
+
+Recommended ownership:
+
+- Android `NotificationListenerService`: phone-side source adapter for Google Maps, Apple Maps,
+  Waze, and later OsmAnd.
+- iOS ANCS: terminal-side BLE client path or a future iOS companion adapter, depending on the
+  chosen phone/terminal division.
+- Shared normalization: pure parser/model code with fixture tests, independent of Android UI and
+  ESP-IDF headers.
+- BLE publisher: reuse the existing `BleLink` lifecycle, but publish normalized notification plus
+  GNSS telemetry rather than Ferrostar-only `RideState`.
+
+Do not revive the archived notification implementation without checking its assumptions. It was
+notification-era exploratory code, not a verified production parser or a current Phase 1 contract.
+
+### 15.4 C3 terminal countdown and renderer
+
+There is no ESP32 firmware in the repository yet. The following phone UI code is still useful for
+the embedded renderer contract:
+
+- [NavDial.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ui/dial/NavDial.kt) defines the existing idle,
+  active, rerouting, arrived, speed, and stale-display concepts to port as behavior, not as Compose
+  code.
+- [DialLayout.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ui/dial/DialLayout.kt) stores fractional
+  layout constants suitable for transcription into C/LVGL profile-independent constants.
+- [NavDialConfig.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ui/dial/NavDialConfig.kt) shows the
+  existing display-toggle model for speed and other elements.
+- [RouteLine.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ui/dial/RouteLine.kt) and
+  [RouteGeometry.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/nav/RouteGeometry.kt) are **not Phase 1
+  dependencies**. They belong to the later vector road-context phase and must not pull route
+  geometry into the C3 POC.
+
+The new firmware should add a pure host-testable countdown module. Its inputs are normalized
+notification distance, phone speed, packet age, maneuver sequence, and local monotonic time. Its
+output is estimated distance plus freshness/state flags. Keep this math independent of LVGL and BLE.
+
+### 15.5 Offline maps and routing: existing code, explicitly later
+
+Offline functionality exists in the Android app, but none of it belongs in Phase 1 or the C3:
+
+- [OfflineMapTiles.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/map/OfflineMapTiles.kt) implements the
+  phone-side MapLibre `pmtiles://file://` loading path for the route-selection map.
+- [RouteSelectionMapScreen.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/map/RouteSelectionMapScreen.kt)
+  is the phone-side route-selection map UI, not a terminal navigation surface.
+- [OfflineTileDownloader.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/OfflineTileDownloader.kt)
+  downloads the phone-side Valhalla tile tarball using a temporary file and atomic rename.
+- [LocalRouteProvider.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/LocalRouteProvider.kt) is the
+  phone-side local Valhalla bridge. It is not firmware code and must not be ported to the C3.
+- [OfflineMapTilesTest.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/test/java/com/motonav/app/map/OfflineMapTilesTest.kt) is the
+  reference for testing the phone-side PMTiles path.
+
+These files are references for later smartphone offline work only. Phase 1 must not import their
+dependencies, data formats, tile files, or route geometry into the embedded project.
+
+### 15.6 Navigation models and later migration
+
+- [Maneuver.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/nav/Maneuver.kt) contains the current maneuver
+  bucketing concept. Reuse the stable bucket meanings when mapping notification text, but do not
+  rely on Kotlin enum ordinals as the long-term wire contract.
+- [Geocoding.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/nav/Geocoding.kt) is phone-side destination
+  search logic and is out of Phase 1.
+- [Elevation.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/nav/Elevation.kt) is phone-side Valhalla
+  elevation logic and is out of Phase 1.
+- [RouterBackend.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/ride/RouterBackend.kt) and
+  [SettingsStore.kt](https://github.com/Hayden-Schmidt/MotoNav/blob/main/app/src/main/java/com/motonav/app/settings/SettingsStore.kt) describe
+  configurable phone routing providers. They are later phone-app references, not C3 requirements.
+
+### 15.7 Porting rule
+
+When implementing Phase 1, the dependency direction must remain:
+
+```text
+phone source adapter -> normalized notification/GNSS model -> BLE packet
+                                                        -> C3 decoder
+                                                        -> C3 countdown processor
+                                                        -> LVGL renderer
+```
+
+Routing, maps, geocoding, PMTiles, Valhalla, Ferrostar, and route geometry must remain outside this
+path. A future developer should be able to build and test the C3 POC without downloading map data
+or understanding the phone's later offline-routing implementation.
