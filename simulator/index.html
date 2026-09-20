@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenApex Terminal Simulator</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111; color: #eee; }
+    main { width: min(92vw, 760px); display: grid; gap: 18px; justify-items: center; }
+    h1 { font-size: 1.1rem; letter-spacing: .08em; text-transform: uppercase; color: #f5c542; }
+    canvas { width: min(82vw, 540px); height: min(82vw, 540px); background: #000; border-radius: 50%; box-shadow: 0 0 0 12px #252525, 0 0 45px #000; }
+    .controls { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    label { display: grid; gap: 6px; color: #aaa; font-size: .8rem; }
+    input, button { min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid #444; border-radius: 6px; background: #1d1d1d; color: #fff; }
+    button { cursor: pointer; border-color: #f5c542; color: #f5c542; }
+    .status { color: #999; font-size: .85rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>OpenApex C3 Terminal Simulator</h1>
+  <canvas id="screen" width="466" height="466" aria-label="Round terminal screen"></canvas>
+  <section class="controls">
+    <label>Distance (m)<input id="distance" type="number" min="0" value="250"></label>
+    <label>Speed (km/h)<input id="speed" type="number" min="0" value="54"></label>
+    <label>Maneuver<select id="maneuver"><option>TURN RIGHT</option><option>TURN LEFT</option><option>STRAIGHT</option><option>U-TURN</option><option>ARRIVED</option></select></label>
+  </section>
+  <section class="controls">
+    <button id="update">New notification</button>
+    <button id="pause">Pause GNSS</button>
+    <button id="reset">Reset</button>
+  </section>
+  <div class="status" id="status">Notification fresh · GNSS valid · BLE connected</div>
+</main>
+<script>
+  const canvas = document.getElementById('screen');
+  const ctx = canvas.getContext('2d');
+  const distanceInput = document.getElementById('distance');
+  const speedInput = document.getElementById('speed');
+  const maneuverInput = document.getElementById('maneuver');
+  const status = document.getElementById('status');
+  let baselineDistance = 250;
+  let baselineTime = performance.now();
+  let speed = 54;
+  let gnssValid = true;
+  let sequence = 1;
+
+  function estimatedDistance() {
+    const elapsedSeconds = (performance.now() - baselineTime) / 1000;
+    const heldSeconds = Math.min(elapsedSeconds, 10);
+    return Math.max(0, Math.round(baselineDistance - speed / 3.6 * heldSeconds));
+  }
+
+  function arrow(kind, cx, cy) {
+    ctx.save(); ctx.translate(cx, cy); ctx.strokeStyle = '#f5c542'; ctx.fillStyle = '#f5c542'; ctx.lineWidth = 15; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (kind === 'TURN LEFT') { ctx.rotate(-Math.PI / 2); }
+    if (kind === 'TURN RIGHT') { ctx.rotate(Math.PI / 2); }
+    if (kind === 'U-TURN') { ctx.rotate(Math.PI); }
+    if (kind === 'STRAIGHT') { ctx.beginPath(); ctx.moveTo(0, 72); ctx.lineTo(0, -62); ctx.stroke(); }
+    else if (kind === 'ARRIVED') { ctx.font = '92px system-ui'; ctx.textAlign = 'center'; ctx.fillText('OK', 0, 30); }
+    else { ctx.beginPath(); ctx.moveTo(0, 75); ctx.lineTo(0, -58); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-45, -12); ctx.lineTo(0, -65); ctx.lineTo(45, -12); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  function render() {
+    const distance = estimatedDistance();
+    ctx.clearRect(0, 0, 466, 466); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 466, 466);
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 10; ctx.beginPath(); ctx.arc(233, 233, 211, 0, Math.PI * 2); ctx.stroke();
+    const ratio = Math.min(1, distance / Math.max(400, baselineDistance));
+    ctx.strokeStyle = distance < 100 ? '#e34b4b' : '#f5c542'; ctx.lineWidth = 10; ctx.beginPath(); ctx.arc(233, 233, 211, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio); ctx.stroke();
+    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui'; ctx.textAlign = 'center'; ctx.fillText(gnssValid ? 'GNSS ' + Math.round(speed) + ' km/h' : 'GNSS STALE', 233, 52);
+    arrow(maneuverInput.value, 233, 190);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 54px system-ui'; ctx.fillText(distance < 1000 ? distance + ' m' : (distance / 1000).toFixed(1) + ' km', 233, 345);
+    ctx.fillStyle = '#999'; ctx.font = '18px system-ui'; ctx.fillText(maneuverInput.value, 233, 385);
+    status.textContent = `${distance} m · ${gnssValid ? 'GNSS valid' : 'GNSS stale'} · sequence ${sequence}`;
+    requestAnimationFrame(render);
+  }
+
+  document.getElementById('update').onclick = () => { baselineDistance = Number(distanceInput.value) || 0; speed = Number(speedInput.value) || 0; baselineTime = performance.now(); sequence++; gnssValid = true; };
+  document.getElementById('pause').onclick = (event) => { gnssValid = !gnssValid; event.target.textContent = gnssValid ? 'Pause GNSS' : 'Resume GNSS'; };
+  document.getElementById('reset').onclick = () => { baselineDistance = 250; speed = 54; distanceInput.value = 250; speedInput.value = 54; baselineTime = performance.now(); sequence = 1; gnssValid = true; };
+  render();
+</script>
+</body>
+</html>

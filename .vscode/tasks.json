@@ -25,6 +25,23 @@
       "args": ["-C", "${workspaceFolder}/firmware", "build"],
       "group": "build",
       "problemMatcher": []
+    },
+    {
+      "label": "Simulator: open round display",
+      "type": "shell",
+      "command": "Start-Process",
+      "args": ["${workspaceFolder}/simulator/index.html"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Simulator: PlatformIO native",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "native"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
     }
   ]
 }

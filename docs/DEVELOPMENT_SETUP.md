@@ -4,6 +4,7 @@
 
 - `android/`: minimal Android Auto host-facing app module.
 - `firmware/`: ESP-IDF C3 terminal skeleton and profile-independent countdown module.
+- `simulator/`: hardware-free browser display and PlatformIO native harness.
 - `scripts/`: setup and host-test helpers.
 - `docs/OpenApex_SPEC.md`: active architecture and Phase 1 contract.
 
@@ -67,6 +68,20 @@ asset-generation, packet-fixture, or firmware tooling that uses Python.
 - `Android Auto: assembleDebug`
 - `Firmware: host countdown test`
 - `Firmware: build C3`
+- `Simulator: open round display`
+- `Simulator: PlatformIO native`
+
+## Hardware-free screen development
+
+Open `simulator/index.html` directly or run `Simulator: open round display`. It provides a round
+466x466 canvas with maneuver, distance, speed, GNSS validity, pause/resume, and new-notification
+controls. This is the fastest way to iterate on the C3 dial before the board arrives.
+
+The PlatformIO `native` environment compiles `firmware/main/countdown.c` directly through
+`simulator/native/countdown_bridge.cpp`, so the countdown logic is shared rather than copied.
+The native target prints a deterministic countdown trace; the browser target supplies visual
+feedback. PlatformIO's CLI may be exposed only inside the VS Code PlatformIO terminal, even when
+`pio` is not available in an ordinary PowerShell session.
 
 ## Phase 1 boundary
 
