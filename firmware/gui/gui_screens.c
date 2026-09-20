@@ -1,5 +1,6 @@
 #include "gui_screens.h"
 
+#include "board_profile.h"
 #include "lvgl.h"
 
 #include <stdio.h>
@@ -55,6 +56,21 @@ void gui_screens_init(void) {
     s_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_screen, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
+    // The target panel (GC9A01) is round; drawing a ring the size of the visible glass makes that
+    // obvious in a plain square simulator window. Not using style radius + clip_corner on the
+    // screen itself here: on this LVGL 9.6.0 build that combination corrupts/drops sibling label
+    // content (verified -- lines vanished and glyphs rendered garbled), a renderer mask-stacking
+    // bug, not a layout issue worth working around by hand.
+    lv_obj_t *ring = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(ring);
+    lv_obj_set_size(ring, BOARD_DISP_WIDTH, BOARD_DISP_HEIGHT);
+    lv_obj_center(ring);
+    lv_obj_set_style_radius(ring, BOARD_DISP_WIDTH / 2, 0);
+    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(ring, lv_color_hex(0x303030), 0);
+    lv_obj_set_style_border_width(ring, 2, 0);
+    lv_obj_set_style_border_opa(ring, LV_OPA_COVER, 0);
+    lv_obj_set_clickable(ring, false);
 
     s_state_label = lv_label_create(s_screen);
     lv_obj_set_style_text_color(s_state_label, lv_color_hex(0x808080), 0);
