@@ -8,13 +8,14 @@ extern "C" {
 
 int main() {
     countdown_reset();
-    countdown_accept(&countdown_input_t{
+    countdown_input_t seed{
         .distance_meters = 250,
         .timestamp_ms = 0,
         .speed_kmh = 54.0f,
         .speed_valid = true,
         .maneuver_sequence = 1,
-    });
+    };
+    countdown_accept(&seed);
 
     std::puts("OpenApex native terminal simulator");
     for (uint32_t elapsed = 0; elapsed <= 12000; elapsed += 1000) {
