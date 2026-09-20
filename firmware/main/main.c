@@ -15,9 +15,31 @@ static const char *TAG = "openapex";
 
 #define RAW_PACKET_QUEUE_LEN 8
 
+// Concurrency model
+// ------------------
+// raw_packet_queue: single-producer (ble_handler_task) / single-consumer (countdown_task) bounded
+//   FreeRTOS queue of decoded raw_notif_t. ble_handler_task must never block on a full queue for
+//   longer than a short bounded wait — BLE callbacks must not stall on rendering or countdown work.
+// view_mutex + shared_view: single-writer (countdown_task only) / multi-reader (gui_task, and
+//   later diagnostics/system_manager_task) shared terminal_view_state_t. countdown_task is the
+//   only task allowed to write shared_view, always under view_mutex. Any other task — gui_task
+//   included — MUST read it only through view_state_snapshot() below, never by touching
+//   shared_view directly. countdown.c's own internal state (current/filtered_speed_kmh/
+//   has_baseline) is private to countdown_task's call path and must not be called from any other
+//   task.
 static QueueHandle_t raw_packet_queue;
 static SemaphoreHandle_t view_mutex;
 static terminal_view_state_t shared_view;
+
+// Copies the latest view state under view_mutex. This is the only sanctioned read path for
+// shared_view outside of countdown_task; gui_task and any future reader task must call this
+// instead of touching shared_view directly.
+static void view_state_snapshot(terminal_view_state_t *out) {
+    if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        *out = shared_view;
+        xSemaphoreGive(view_mutex);
+    }
+}
 
 // BLE service/characteristic the phone advertises (matches the Android relay).
 // Open decision: BLE central stack init is pinned once the ESP-IDF version is chosen.
@@ -64,9 +86,13 @@ static void countdown_task(void *argument) {
 
 static void gui_task(void *argument) {
     (void)argument;
-    // Phase 1 TODO (Slice D): initialize the selected GC9A01 profile + LVGL, and render
-    // shared_view each frame. C++ screen classes live in this task's render path.
+    // Phase 1 TODO (Slice D): initialize the selected GC9A01 profile + LVGL, and render a
+    // view_state_snapshot() copy each frame. C++ screen classes live in this task's render path
+    // and must only ever see the local snapshot below, never shared_view or view_mutex directly.
     for (;;) {
+        terminal_view_state_t frame;
+        view_state_snapshot(&frame);
+        // TODO (Slice D): pass `frame` to the LVGL render path.
         vTaskDelay(pdMS_TO_TICKS(16));
     }
 }

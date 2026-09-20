@@ -319,6 +319,29 @@ Use ESP-IDF and FreeRTOS. Feature tasks compile out when their hardware provider
 
 The GUI reads a `TerminalViewState`; it never calls BLE, UART, I2C, or GNSS APIs directly.
 
+### 8.1 Concurrency model (architectural decision)
+
+**Decision:** two shared boundaries, each with exactly one writer.
+
+- `raw_packet_queue` (bounded FreeRTOS queue): single-producer (`ble_handler_task`) / single-consumer
+  (`countdown_task`) transfer of decoded `raw_notif_t`. `ble_handler_task` must never block on a full
+  queue beyond a short bounded wait — BLE callbacks must not stall on countdown or render work.
+- `shared_view` (`terminal_view_state_t`, guarded by `view_mutex`): single-writer (`countdown_task`
+  only) / multi-reader (`gui_task`, and later `system_manager_task` diagnostics). Every reader other
+  than `countdown_task` must go through a snapshot accessor (`view_state_snapshot()` on the C3) that
+  copies the struct under `view_mutex`; no task may read `shared_view` fields directly without holding
+  the mutex.
+
+**Rationale:** `countdown.c`'s own internal state (`current`, `filtered_speed_kmh`, `has_baseline`) is
+plain file-scope static state with no locking of its own. That is only safe because exactly one task
+(`countdown_task`) ever calls `countdown_accept`/`countdown_estimate`/`view_state_tick`. If a second
+task ever needs countdown state directly (rather than through the `shared_view` snapshot), it must
+gain its own queue or mutex — do not call `countdown.c` from more than one task.
+
+**Consequences:** this pattern is required for any future producer added on a second core (§10 below):
+one queue or one mutex-guarded struct per boundary, exactly one designated writer, and all other
+readers going through an explicit snapshot/copy function rather than direct field access.
+
 ## 9. Display Behavior
 
 The Phase 1 C3 renderer is a high-contrast dial:
