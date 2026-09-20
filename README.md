@@ -18,6 +18,9 @@ polylines, offline routing, or terminal-side GNSS navigation.
 See [docs/OpenApex_SPEC.md](docs/OpenApex_SPEC.md) for the complete architecture, hardware
 profiles, BLE contract, countdown model, and development roadmap.
 
+See [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md) for Android SDK, Gradle, ESP-IDF,
+host-test, and VS Code task setup.
+
 ## Hardware path
 
 - Phase 1: generic ESP32-C3, 240x240 GC9A01 round display, touch or non-touch variant.

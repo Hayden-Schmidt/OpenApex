@@ -1,0 +1,5 @@
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_FREERTOS_HZ=1000
+CONFIG_LVGL_ENABLE=y
+# Audio, microphone, and codec features are intentionally absent from Phase 1.

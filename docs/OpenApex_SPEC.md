@@ -7,7 +7,7 @@
 
 ## 1. System Boundary
 
-MotoNav is a high-visibility, weather-sealed handlebar display. A paired smartphone remains
+OpenApex is a high-visibility, weather-sealed handlebar display. A paired smartphone remains
 responsible for heavy navigation work and navigation-app integration. The terminal receives
 navigation events and phone GNSS telemetry over Bluetooth Low Energy, performs small amounts of
 local display processing, and renders a high-contrast vector UI.

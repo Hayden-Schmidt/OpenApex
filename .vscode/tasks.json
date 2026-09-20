@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android Auto: assembleDebug",
+      "type": "shell",
+      "command": "${workspaceFolder}/gradlew.bat",
+      "args": ["-p", "android", "assembleDebug"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware: host countdown test",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/build-countdown.ps1"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware: build C3",
+      "type": "shell",
+      "command": "idf.py",
+      "args": ["-C", "${workspaceFolder}/firmware", "build"],
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

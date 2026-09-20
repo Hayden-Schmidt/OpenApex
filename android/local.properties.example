@@ -1,0 +1,2 @@
+# Copy this file to local.properties and replace <user> with the Windows account name.
+sdk.dir=C:\\Users\\<user>\\AppData\\Local\\Android\\Sdk

@@ -1,0 +1,19 @@
+# Android / Gradle
+.gradle/
+**/build/
+android/local.properties
+*.iml
+.idea/
+
+# ESP-IDF generated files
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+
+# Host test output
+build/
+
+# Local tooling
+.venv/
+.env
