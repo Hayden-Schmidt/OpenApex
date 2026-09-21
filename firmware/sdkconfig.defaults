@@ -4,12 +4,16 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_LVGL_ENABLE=y
 # Audio, microphone, and codec features are intentionally absent from Phase 1.
 
-# BLE: NimBLE host, central role only (terminal connects to the Android relay's GATT server).
-# Peripheral/broadcaster roles are unused and disabled to save flash on the single-core C3.
+# BLE: NimBLE host, peripheral role (terminal advertises and hosts the nav GATT service; the
+# Android relay connects as central and writes packets in). Central/observer roles are unused for
+# now — see docs/OpenApex_SPEC.md §16.5 for why the terminal is the peripheral, not the phone.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
-CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
-CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
-CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+# Bond storage must survive reboot: the "bike on -> device boots -> phone reconnects" flow relies
+# on the terminal and phone staying bonded across power cycles, not re-pairing every boot.
+CONFIG_BT_NIMBLE_NVS_PERSIST=y

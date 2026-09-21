@@ -1,4 +1,4 @@
-#include "ble_central.h"
+#include "ble_link.h"
 #include "countdown.h"
 #include "packet.h"
 #include "pipeline.h"
@@ -91,9 +91,9 @@ void app_main(void) {
     raw_packet_queue = xQueueCreate(RAW_PACKET_QUEUE_LEN, sizeof(raw_notif_t));
     view_mutex = xSemaphoreCreateMutex();
 
-    // ble_central_init spawns NimBLE's own host task (single-producer into raw_packet_queue);
-    // there is no separate ble_handler_task to create.
-    ble_central_init(raw_packet_queue);
+    // ble_link_init spawns NimBLE's own host task (single-producer into raw_packet_queue); there
+    // is no separate ble_handler_task to create.
+    ble_link_init(raw_packet_queue);
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
 }
