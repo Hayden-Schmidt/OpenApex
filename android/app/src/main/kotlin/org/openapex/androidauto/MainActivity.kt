@@ -73,10 +73,23 @@ class MainActivity : Activity() {
         )
     }
 
+    @Suppress("DEPRECATION") // getAssociations()/startObservingDevicePresence(String) are the minSdk-26 APIs
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_ASSOCIATE) {
             Log.i("OpenApexMain", "association result: resultCode=$resultCode")
+            // associate() alone does not enable onDeviceAppeared/onDeviceDisappeared callbacks;
+            // each associated device's presence must be observed explicitly, and this registration
+            // persists with the association (survives app kill/reboot), so it only needs to run once.
+            val deviceManager = getSystemService(CompanionDeviceManager::class.java)
+            deviceManager?.associations?.forEach { mac ->
+                try {
+                    deviceManager.startObservingDevicePresence(mac)
+                    Log.i("OpenApexMain", "observing device presence: $mac")
+                } catch (e: IllegalArgumentException) {
+                    Log.w("OpenApexMain", "already observing $mac")
+                }
+            }
             finishSetup()
         }
     }

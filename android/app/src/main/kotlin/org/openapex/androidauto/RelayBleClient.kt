@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.util.Log
 import java.util.UUID
 
 /**
@@ -22,6 +23,7 @@ class RelayBleClient(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
+        Log.i(TAG, "connecting to ${device.address}")
         gatt?.close()
         gatt = device.connectGatt(context, true, callback)
     }
@@ -47,6 +49,7 @@ class RelayBleClient(private val context: Context) {
     private val callback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            Log.i(TAG, "connection state change: status=$status newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 g.discoverServices()
             } else {
@@ -57,6 +60,7 @@ class RelayBleClient(private val context: Context) {
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             characteristic = g.getService(SERVICE_UUID)?.getCharacteristic(CHAR_UUID)
+            Log.i(TAG, "services discovered: status=$status characteristicFound=${characteristic != null}")
             if (characteristic != null) {
                 RelayStateHolder.noteBleConnected()
             }
@@ -64,6 +68,8 @@ class RelayBleClient(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "RelayBleClient"
+
         // Fixed OpenApex BLE identifiers — see docs/OpenApex_SPEC.md §5.3.
         val SERVICE_UUID: UUID = UUID.fromString("c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f")
         val CHAR_UUID: UUID = UUID.fromString("c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f")
