@@ -516,22 +516,46 @@ remain smartphone-side features.
    faster and was reverted; suspected OEM (OnePlus/ColorOS) peripheral-stack issue. **Needs
    re-testing** now that the C3 is the peripheral and the phone is the central — the disconnect
    source may no longer apply, since the flaky peripheral role moved off the OEM phone stack.
-9. **CONFIRMED RISK** (was previously "needs testing"): `CompanionDeviceManager` cold-process wake
-   is unreliable on the OnePlus 15 test device. Using `scripts/test-ble-link.sh` for a controlled,
-   scripted, repeatable test: with a clean single CDM association (no duplicates) and the app
-   process fully killed (`am force-stop`, not relaunched), resetting the C3 and leaving it
-   advertising for a 90s window never fired `onDeviceAppeared` and no BLE connection occurred. The
-   one time the full chain (`onDeviceAppeared` -> `RelayService` start) was observed to work, the
-   app's own `MainActivity` had just run the association/`startObservingDevicePresence` flow
-   moments earlier in the same warm process — i.e. detection worked warm, not cold. `dumpsys
-   bluetooth_manager` confirms CDM's scan filter correctly matches the terminal's advertised service
-   UUID during the short discovery-picker scan, so the filter itself is not the problem; the
-   sustained low-power background scan CDM is supposed to run after `startObservingDevicePresence()`
-   either isn't starting, or has latency well beyond what was tested. **Practical implication:** do
-   not depend on CDM cold-wake alone for "bike on, phone reconnects with the app never opened" on
-   this device/ROM — the app likely needs to have been opened at least once since the last reboot
-   (e.g. via a "leave running" foreground service or a boot-completed receiver) until this is
-   root-caused, ideally with a phone from a different OEM as a control.
+9. **CONFIRMED RISK, root cause narrowed**: `CompanionDeviceManager` cold-process wake is unreliable
+   on the OnePlus 15 test device. Five candidate root causes were investigated and ruled out:
+   - Service UUID placed in scan response instead of the primary advert payload — ruled out;
+     `ble_gap_adv_set_fields()` is the only call setting advertising data in `ble_link.c` and it sets
+     the primary payload (no device name is included specifically so the UUID fits in the 31-byte
+     legacy primary payload).
+   - ESP32 MAC address instability (RPA/rotating address) — ruled out; the C3's MAC
+     (`88:56:a6:29:76:8a`) was identical across every reset/boot tested, and no RPA code exists in
+     the firmware (`ble_hs_util_ensure_addr`/`ble_hs_id_infer_auto` give a stable public/static
+     address).
+   - `CompanionDeviceService` manifest/binding declaration — ruled out; confirmed correct via direct
+     file read and `dumpsys activity services` showing correct binding with the right permission and
+     intent-filter.
+   - OxygenOS/ColorOS OS-level background restriction (Doze whitelist, `RUN_ANY_IN_BACKGROUND`,
+     `START_FOREGROUND`, app's own "allow background activity" toggle) — ruled out; all confirmed
+     allowed via `dumpsys deviceidle`/`dumpsys appops`, device was not in Doze during test windows,
+     and the user confirmed "allow background activity" is on with no separate "auto-launch" toggle
+     present in Settings on this device.
+   - Slow BLE advertising interval — a real bug, now fixed: `adv_params` in `start_advertising()`
+     (`firmware/main/ble_link.c`) was zero-initialized, leaving NimBLE's default (~1.28s) interval,
+     which could cause Android's low-power background scanner to miss the advertisement for multiple
+     scan cycles. Changed to `itvl_min=32`/`itvl_max=64` (20-40ms). Also found and cleaned up 10
+     duplicate CDM associations for the same MAC accumulated from repeated test-cycle relaunches
+     (`adb shell cmd companiondevice disassociate`), which could have added noise/races to the
+     presence state machine.
+   - **Re-tested after the fast-advertising fix and with a single clean association**
+     (`scripts/test-ble-link.sh COM5 90`): still fails — `onDeviceAppeared` does not fire and no BLE
+     connection occurs within a 90s cold-process window. Critically, `dumpsys companiondevice`
+     captured immediately after the window shows the terminal listed under "Nearby BLE Devices" for
+     the association — i.e. **CDM's own presence-detection engine does correctly detect the
+     terminal as nearby**, isolating the failure to one specific step: the `onDeviceAppeared`
+     wake-up broadcast to the killed app's `CompanionDeviceService` is not being delivered (or is
+     delayed well beyond 90s). This points at an OEM (OxygenOS/ColorOS)-level restriction on waking
+     third-party app components from a killed state that has no discoverable toggle in Settings or
+     `adb shell dumpsys`/`cmd` output — not a bug in this project's BLE/CDM implementation.
+   - **Practical implication (unchanged):** do not depend on CDM cold-wake alone for "bike on, phone
+     reconnects with the app never opened" on this device/ROM — the app likely needs to have been
+     opened at least once since the last reboot (e.g. via a "leave running" foreground service or a
+     boot-completed receiver) until this is root-caused further, ideally with a phone from a
+     different OEM as a control.
 
 ## 16. Architecture Decision Records
 

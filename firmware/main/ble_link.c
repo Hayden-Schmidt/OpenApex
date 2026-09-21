@@ -130,6 +130,11 @@ static void start_advertising(void) {
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    // Fast advertising interval (20-40ms) rather than the NimBLE default (~1.28s): Android's
+    // low-power background scan (used by CompanionDeviceManager observer mode) samples the air
+    // infrequently, so a slow advertiser can be missed for multiple scan windows in a row.
+    adv_params.itvl_min = 32; // 32 * 0.625ms = 20ms
+    adv_params.itvl_max = 64; // 64 * 0.625ms = 40ms
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER, &adv_params, gap_event_cb, NULL);
     if (rc != 0) {
         ESP_LOGW(TAG, "ble_gap_adv_start failed; rc=%d", rc);
