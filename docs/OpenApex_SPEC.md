@@ -198,17 +198,31 @@ agnostic.
 
 ### 5.1 Android path
 
-The Android helper publishes a custom GATT service containing a navigation characteristic. The C3
-terminal connects as the BLE central and subscribes to notifications. This path is preferred for
-the first C3 integration because the phone helper can normalize notification and GNSS data before
-transmission.
+The C3 terminal is the BLE peripheral: it advertises a custom GATT service containing a navigation
+characteristic and accepts one bonded central. The Android helper is the BLE central/GATT client —
+it associates with the terminal via `CompanionDeviceManager` (CDM) observer mode, connects, and
+writes each normalized navigation packet into the characteristic (see §16.5 for the rationale).
+
+This matches the role split used by essentially every consumer BLE accessory (fitness bands,
+earbuds, Gadgetbridge/InfiniTime-class open trackers): the small, single-purpose, battery-constrained
+device advertises and lets the phone do discovery, bonding, and reconnection management. It also
+gives the "bike on -> terminal boots -> phone reconnects automatically" UX without opening the app:
+CDM observer mode wakes a `CompanionDeviceService` from a killed process when the terminal's
+advertisement is seen again, which starts the relay and connects.
+
+It also leaves room for a later ESP32-to-ESP32 link (e.g. a handlebar terminal and a helmet or TPMS
+sensor unit): with the terminal already acting as peripheral/GATT-server, a second ESP32 can attach
+as another BLE central against the same or a second service, with no role renegotiation on the
+terminal side.
 
 ### 5.2 iOS/ANCS path
 
 For ANCS, the C3 acts as a BLE GATT client subscribing to the iPhone's notification source. The
 terminal filters supported navigation applications and maps notification attributes into the same
 normalized model. Phone GNSS telemetry may be supplied by a later iOS companion path or a platform-
-specific telemetry characteristic.
+specific telemetry characteristic. (This path keeps the terminal as central for ANCS specifically,
+since ANCS requires the terminal to be the GATT client of the iPhone's notification service; it is
+unrelated to the Android path's peripheral/central roles in §5.1.)
 
 ### 5.3 Project BLE identifiers
 
@@ -216,6 +230,11 @@ The Android implementation currently defines:
 
 - Service UUID: `c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f`
 - Navigation characteristic UUID: `c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f`
+
+The navigation characteristic is `WRITE` / `WRITE_NO_RESPONSE`, encrypted (`BLE_GATT_CHR_F_WRITE_ENC`),
+not `NOTIFY` — the phone (central) writes, the terminal (peripheral/GATT server) receives. No write
+acknowledgement is required because a stale packet is always superseded by the next update rather
+than retried.
 
 The terminal must reject unsupported protocol versions and malformed lengths. BLE callbacks must
 not block on rendering. Parsed packets are copied into a bounded queue or immutable state buffer.
@@ -311,7 +330,7 @@ Use ESP-IDF and FreeRTOS. Feature tasks compile out when their hardware provider
 | Task | Priority | Core | Responsibility | Phase 1 |
 |---|---:|---:|---|---:|
 | `gui_task` | 5 | profile-defined | LVGL rendering and display flush | yes |
-| `ble_handler_task` | 4 | profile-defined | BLE connection, packet reception, parsing | yes |
+| `ble_handler_task` | 4 | profile-defined | BLE peripheral/GATT-server connection, packet reception, parsing (see §5.1) | yes |
 | `countdown_task` | 4 | profile-defined | speed smoothing and distance interpolation | yes |
 | `gnss_parser_task` | 3 | profile-defined | terminal NMEA input | no |
 | `sensor_fusion_task` | 3 | profile-defined | IMU/motion/COG processing | no |
@@ -382,17 +401,23 @@ switched motorcycle 12 V -> 2 A fuse -> external waterproof 12-to-5 V buck
 
 ### Current status (2026-09-21)
 
+BLE roles have been flipped (see §16.5): the C3 terminal is now the BLE peripheral/GATT server, and
+the Android phone is the central/client using `CompanionDeviceManager` (CDM) observer mode. This
+replaces the previous central/peripheral assignment and the disconnect-churn issue described below
+is being re-tested under the new roles (§13 item 8).
+
 Confirmed working end-to-end on real hardware (bare ESP32-C3 dev board on COM5, no display module
 yet, plus a OnePlus 15 running the Android relay app):
 
-- NimBLE central (`firmware/main/ble_central.c`) scans, connects, subscribes, and decodes
-  `RawNotifPacket` frames from the Android peripheral. Verified via serial log against a live
-  Google Maps navigation session: sustained `decoded packet seq=... title="..."` lines across
-  multiple connect/reconnect cycles.
-- Android relay (`RelayBleServer.kt`, `NavNotificationRelayService.kt`, `RelayService.kt`) fixed and
-  confirmed: GATT server notify crash fixed, CCCD descriptor added so the C3 can subscribe, and
-  `NotificationListenerService` now seeds from `activeNotifications` on listener connect so an
-  already-posted Maps notification isn't missed.
+- NimBLE peripheral (`firmware/main/ble_link.c`) advertises the OpenApex nav service, accepts one
+  bonded central, and decodes incoming `RawNotifPacket` writes. Builds and boots cleanly (RAM 4.8%,
+  Flash 45.6%); serial log confirms clean advertising with no crashes.
+- Android central (`RelayBleClient.kt`, `OpenApexCompanionService.kt`, `NavNotificationRelayService.kt`,
+  `RelayService.kt`) associates with the terminal via CDM, registers presence observation
+  (`CompanionDeviceManager.startObservingDevicePresence`, which is required in addition to
+  `associate()` and needs the `REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE` manifest permission — see
+  §16.5), and has been observed end-to-end to fire `onDeviceAppeared` and start `RelayService` as a
+  foreground service from a killed app process on a real device reboot cycle.
 - `firmware/sim_lvgl` (PlatformIO native + SDL2) added as the LVGL GUI design/iteration surface:
   opens a real SDL window at the exact `board_profile.h` resolution (240x240) and renders the
   shared `firmware/gui/gui_screens.c` widget code, driven by a scripted fixture sequence in the
@@ -401,21 +426,19 @@ yet, plus a OnePlus 15 running the Android relay app):
 - `pio run -e native`, `pio run -d firmware -e prototype_c3`, and the new `sim_lvgl` env all build
   clean.
 
-**Known open issue:** the BLE connection between the C3 (central) and the Android peripheral drops
-every ~9-30s (NimBLE disconnect reason 531, "remote user terminated"), then reconnects
-automatically. Root cause is unconfirmed but suspected to be an OnePlus/ColorOS peripheral-role
-Bluetooth stack quirk; a `ble_gap_update_params()` fix attempt made it worse and was reverted (see
-§13 item 8). Data still reaches the C3 reliably within each connection window, but this churn should
-be root-caused before Phase 1 is considered exit-ready.
+**Open items:** the full GATT connect/write path from the Android central to the C3 peripheral
+(RelayBleClient discovering the service and writing a live packet) has not yet been observed in a
+single continuous session — see §13 items 8 and 9. The previous ~9-30s disconnect-churn issue (NimBLE
+reason 531) was observed under the old central/peripheral assignment and needs re-testing now that
+the flaky peripheral role has moved off the OEM phone Bluetooth stack.
 
 ### Recommended next steps
 
-1. Diagnose the ~9-30s BLE disconnect churn (§13 item 8) — likely needs phone-side HCI/btsnoop
-   capture to see which side actually initiates the disconnect, since app-level logcat alone hasn't
-   pinned it down.
+1. Confirm the full GATT connect/write path (phone central to C3 peripheral) with live Google Maps
+   navigation data, and re-test the disconnect-churn scenario under the new roles (§13 items 8, 9).
 2. Wire the LVGL screens already prototyped in `firmware/sim_lvgl` into the real `gui_task` on the
-   C3 firmware, driven by the now-working `ble_central`/`countdown` pipeline instead of the
-   simulator's scripted fixture.
+   C3 firmware, driven by the now-working `ble_link`/`countdown` pipeline instead of the simulator's
+   scripted fixture.
 3. Source and wire the physical GC9A01 display module once available; port the SPI display driver
    (deferred — no module in hand as of this status update).
 4. Implement the iOS/ANCS source adapter (Android-only so far).
@@ -487,10 +510,18 @@ remain smartphone-side features.
    (see §16.2): ESP-IDF 5.x + LVGL 9.
 6. Confirm dock pin count, wake/ID pin requirements, and external buck converter packaging.
 7. Decide whether the embedded project remains under `firmware/` in this repository.
-8. Root-cause the ~9-30s BLE central/peripheral disconnect churn (NimBLE reason 531) observed
-   between the C3 and an Android peripheral (tested on a OnePlus 15). A `ble_gap_update_params()`
-   call from the central made disconnects happen faster and was reverted; suspected OEM
-   (OnePlus/ColorOS) peripheral-stack issue, not yet confirmed with a packet-level capture.
+8. Root-cause the ~9-30s BLE central/peripheral disconnect churn (NimBLE reason 531) previously
+   observed between the C3 and an Android peripheral (tested on a OnePlus 15), before roles were
+   flipped in §16.5. A `ble_gap_update_params()` call from the central made disconnects happen
+   faster and was reverted; suspected OEM (OnePlus/ColorOS) peripheral-stack issue. **Needs
+   re-testing** now that the C3 is the peripheral and the phone is the central — the disconnect
+   source may no longer apply, since the flaky peripheral role moved off the OEM phone stack.
+9. Confirm the `CompanionDeviceManager` `BluetoothLeDeviceFilter`/`ScanFilter` match remains
+   reliable across OEM ROMs beyond the OnePlus 15 test device — CDM presence detection (`
+   onDeviceAppeared`) is OEM/ROM dependent and was observed to be sensitive to repeated rapid
+   app-process kill/restart cycles during manual testing (see §16.5); real-world behavior is a
+   single boot-time transition, not rapid cycling, so this is expected to be a testing-only
+   artifact but has not been fully confirmed.
 
 ## 16. Architecture Decision Records
 
@@ -529,6 +560,49 @@ native/MSVC test harness independent of ESP-IDF.
 
 The browser simulator (`simulator/index.html`) and PlatformIO `native` target share the same
 `countdown.c`/`normalize.c` sources. Browser = visual target; `native` + host tests = code target.
+
+### 16.5 BLE role flip: terminal as peripheral/GATT server, phone as central/client
+
+**Decision:** the ESP32 terminal advertises and hosts the GATT server (peripheral); the Android
+phone connects, bonds, and writes navigation packets (central/client). This reverses the original
+Phase 1 assumption in §5.1.
+
+**Why:** every surveyed open-source BLE wearable/accessory precedent (Gadgetbridge, InfiniTime/
+PineTime, and consumer earbuds/fitness bands) puts the small, battery- and memory-constrained device
+in the peripheral role and lets the phone's mature BLE stack own scanning, bonding, and reconnection
+retry logic — that logic is expensive to reimplement correctly on an ESP32 and cheap on Android.
+Peripheral-role NimBLE (advertise + accept one bonded central) is also the simpler, lower-power
+mode for a single-core C3.
+
+This also unlocks Android `CompanionDeviceManager` (CDM) observer mode: the OS can wake a
+`CompanionDeviceService` from a fully killed app process when it detects the terminal's
+advertisement, which is what gives the "bike on -> terminal boots -> phone reconnects" flow without
+the user manually opening the app. That flow is not available (or far less reliable) with the phone
+as peripheral, since CDM observer mode watches for BLE advertisements, not for GATT server clients.
+
+Bonds persist in NVS (`CONFIG_BT_NIMBLE_NVS_PERSIST=y`) so the terminal does not require re-pairing
+across power cycles. Pairing uses Just Works (`BLE_SM_IO_CAP_NO_IO`) with Secure Connections
+(`sm_sc=1`); the navigation characteristic requires an encrypted link (`BLE_GATT_CHR_F_WRITE_ENC`).
+
+**Implementation notes:**
+
+- Firmware: `firmware/main/ble_link.c`/`.h` (replaces the former `ble_central.c`/`.h`) implement the
+  peripheral/GATT-server role; `firmware/sdkconfig.defaults` sets `ROLE_PERIPHERAL`/
+  `ROLE_BROADCASTER` (not `ROLE_CENTRAL`/`ROLE_OBSERVER`).
+- Android: `RelayBleClient.kt` (replaces `RelayBleServer.kt`) implements the GATT client;
+  `OpenApexCompanionService.kt` is the CDM observer entry point; `MainActivity.kt` builds the CDM
+  `AssociationRequest` and — critically — must also call
+  `CompanionDeviceManager.startObservingDevicePresence(macAddress)` for each associated device.
+  `associate()` alone does not enable `onDeviceAppeared`/`onDeviceDisappeared` callbacks. This call
+  requires the `android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE` manifest permission
+  (normal protection level, no runtime grant needed) — omitting it throws a `SecurityException` at
+  the call site on modern Android (confirmed on a OnePlus 15, Android 15/16-era ROM).
+- This structure leaves room for a later second BLE central (e.g. an ESP32-to-ESP32 sensor link)
+  connecting to the same terminal peripheral without any role renegotiation (see §5.1).
+- Validated end-to-end on real hardware (C3 + OnePlus 15): CDM association approved, presence
+  observed, `OpenApexCompanionService.onDeviceAppeared` fired, `RelayService` started as a
+  foreground service. Full GATT connect/write path from the phone to the C3 and item 8's disconnect-
+  churn re-test are tracked as open items (§13.8, §13.9).
 
 ## 14. Source and Licensing Notes
 
