@@ -52,6 +52,9 @@ class NavNotificationRelayService : NotificationListenerService() {
         if (nav.title.isNullOrBlank() && nav.distanceText.isNullOrBlank() && nav.progress == null) {
             return // not a navigation notification worth relaying
         }
+        if (extras.getString("android.template") == "android.app.Notification\$ProgressStyle") {
+            Log.d(TAG, "nav notification using ProgressStyle template")
+        }
         Log.d(TAG, "relay nav: title=${nav.title} dist=${nav.distanceText} progress=${nav.progress}/${nav.progressMax}")
         RelayStateHolder.updateNav(nav)
     }
