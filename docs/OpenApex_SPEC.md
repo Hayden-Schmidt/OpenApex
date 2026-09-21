@@ -516,12 +516,22 @@ remain smartphone-side features.
    faster and was reverted; suspected OEM (OnePlus/ColorOS) peripheral-stack issue. **Needs
    re-testing** now that the C3 is the peripheral and the phone is the central — the disconnect
    source may no longer apply, since the flaky peripheral role moved off the OEM phone stack.
-9. Confirm the `CompanionDeviceManager` `BluetoothLeDeviceFilter`/`ScanFilter` match remains
-   reliable across OEM ROMs beyond the OnePlus 15 test device — CDM presence detection (`
-   onDeviceAppeared`) is OEM/ROM dependent and was observed to be sensitive to repeated rapid
-   app-process kill/restart cycles during manual testing (see §16.5); real-world behavior is a
-   single boot-time transition, not rapid cycling, so this is expected to be a testing-only
-   artifact but has not been fully confirmed.
+9. **CONFIRMED RISK** (was previously "needs testing"): `CompanionDeviceManager` cold-process wake
+   is unreliable on the OnePlus 15 test device. Using `scripts/test-ble-link.sh` for a controlled,
+   scripted, repeatable test: with a clean single CDM association (no duplicates) and the app
+   process fully killed (`am force-stop`, not relaunched), resetting the C3 and leaving it
+   advertising for a 90s window never fired `onDeviceAppeared` and no BLE connection occurred. The
+   one time the full chain (`onDeviceAppeared` -> `RelayService` start) was observed to work, the
+   app's own `MainActivity` had just run the association/`startObservingDevicePresence` flow
+   moments earlier in the same warm process — i.e. detection worked warm, not cold. `dumpsys
+   bluetooth_manager` confirms CDM's scan filter correctly matches the terminal's advertised service
+   UUID during the short discovery-picker scan, so the filter itself is not the problem; the
+   sustained low-power background scan CDM is supposed to run after `startObservingDevicePresence()`
+   either isn't starting, or has latency well beyond what was tested. **Practical implication:** do
+   not depend on CDM cold-wake alone for "bike on, phone reconnects with the app never opened" on
+   this device/ROM — the app likely needs to have been opened at least once since the last reboot
+   (e.g. via a "leave running" foreground service or a boot-completed receiver) until this is
+   root-caused, ideally with a phone from a different OEM as a control.
 
 ## 16. Architecture Decision Records
 
@@ -599,10 +609,14 @@ across power cycles. Pairing uses Just Works (`BLE_SM_IO_CAP_NO_IO`) with Secure
   the call site on modern Android (confirmed on a OnePlus 15, Android 15/16-era ROM).
 - This structure leaves room for a later second BLE central (e.g. an ESP32-to-ESP32 sensor link)
   connecting to the same terminal peripheral without any role renegotiation (see §5.1).
-- Validated end-to-end on real hardware (C3 + OnePlus 15): CDM association approved, presence
-  observed, `OpenApexCompanionService.onDeviceAppeared` fired, `RelayService` started as a
-  foreground service. Full GATT connect/write path from the phone to the C3 and item 8's disconnect-
-  churn re-test are tracked as open items (§13.8, §13.9).
+- Validated end-to-end on real hardware (C3 + OnePlus 15) with a warm app process: CDM association
+  approved, presence observed, `OpenApexCompanionService.onDeviceAppeared` fired, `RelayService`
+  started as a foreground service. Cold-process wake did not reproduce in scripted testing — see
+  §13 item 9. Full GATT connect/write path from the phone to the C3 and item 8's disconnect-churn
+  re-test are tracked as open items (§13.8, §13.9).
+- `scripts/test-ble-link.sh` automates this test: it resets the C3, force-stops (but does not
+  relaunch) the Android app, captures the C3 serial log and filtered phone logcat concurrently for
+  a fixed window, and prints a lean pass/fail summary. Raw logs land in `logs/` (gitignored).
 
 ## 14. Source and Licensing Notes
 
