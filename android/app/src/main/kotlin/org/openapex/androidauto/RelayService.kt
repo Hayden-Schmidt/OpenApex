@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -30,11 +31,13 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Foreground service owning the relay lifecycle: GNSS sampling, notification relay state, and
- * the BLE GATT server. Publishes a new [RawNotifPacket] whenever any input changes.
+ * the BLE GATT client connection to the terminal. Publishes a new [RawNotifPacket] whenever any
+ * input changes. Started by [OpenApexCompanionService] with the terminal's bonded device address
+ * once CompanionDeviceManager observer mode sees it advertising.
  */
 class RelayService : Service() {
 
-    private lateinit var ble: RelayBleServer
+    private lateinit var ble: RelayBleClient
     private lateinit var fused: FusedLocationProviderClient
     private lateinit var sensorManager: SensorManager
     private var locationCallback: LocationCallback? = null
@@ -43,9 +46,8 @@ class RelayService : Service() {
     private var fixValid = false
     private var nav: RawNavNotification? = null
     private var listening = false
-    private var subscriberCount = 0
+    private var connected = false
     private val sequence = AtomicInteger(0)
-    private var latestPacket: ByteArray = ByteArray(RAW_NOTIF_PACKET_SIZE)
 
     // Latest raw motion samples. Diagnostic/future-use passthrough only — never classified here;
     // see RawNotifPacket.kt KDoc and docs/OpenApex_SPEC.md §2.4.
@@ -63,20 +65,29 @@ class RelayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        ble = RelayBleServer(this)
+        ble = RelayBleClient(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         startForegroundWithNotification()
         RelayStateHolder.attach { event -> handle(event) }
-        ble.start()
         startGnss()
         startMotionSensors()
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val address = intent?.getStringExtra(EXTRA_DEVICE_ADDRESS)
+        if (address != null) {
+            val adapter = getSystemService(BluetoothAdapter::class.java)
+            adapter?.getRemoteDevice(address)?.let { ble.connect(it) }
+        }
+        return START_STICKY
     }
 
     override fun onDestroy() {
         stopGnss()
         sensorManager.unregisterListener(motionListener)
-        ble.stop()
+        ble.disconnect()
         RelayStateHolder.detach()
         super.onDestroy()
     }
@@ -88,8 +99,8 @@ class RelayService : Service() {
             is RelayStateEvent.NavUpdated -> nav = event.nav
             is RelayStateEvent.ListenerConnected -> listening = true
             is RelayStateEvent.ListenerDisconnected -> listening = false
-            is RelayStateEvent.BleConnected -> subscriberCount += 1
-            is RelayStateEvent.BleDisconnected -> subscriberCount = 0
+            is RelayStateEvent.BleConnected -> connected = true
+            is RelayStateEvent.BleDisconnected -> connected = false
         }
         publish()
     }
@@ -104,10 +115,8 @@ class RelayService : Service() {
         )
         val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
         val packet = packRawNotifPacket(sequence.incrementAndGet(), currentNav, telemetry, motion)
-        latestPacket = packet
-        RelayStateHolder.setLatestPacket(packet)
-        if (subscriberCount > 0) {
-            ble.notify(packet)
+        if (connected) {
+            ble.write(packet)
         }
     }
 
@@ -166,5 +175,9 @@ class RelayService : Service() {
             .setOngoing(true)
             .build()
         startForeground(1, notification)
+    }
+
+    companion object {
+        const val EXTRA_DEVICE_ADDRESS = "org.openapex.androidauto.extra.DEVICE_ADDRESS"
     }
 }

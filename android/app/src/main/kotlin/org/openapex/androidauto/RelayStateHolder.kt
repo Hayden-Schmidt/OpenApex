@@ -1,10 +1,8 @@
 package org.openapex.androidauto
 
 /**
- * Process-wide bridge between the listener service, GNSS/BLE (RelayService), and the BLE read
- * path. Sources emit [RelayStateEvent]s; [RelayService] is the single observer that repacks and
- * publishes. The latest packed packet is stored here so GATT read requests can serve it without
- * reaching into the service.
+ * Process-wide bridge between the listener service and GNSS/BLE (RelayService). Sources emit
+ * [RelayStateEvent]s; [RelayService] is the single observer that repacks and publishes.
  */
 sealed class RelayStateEvent {
     data class NavUpdated(val nav: RawNavNotification?) : RelayStateEvent()
@@ -16,7 +14,6 @@ sealed class RelayStateEvent {
 
 object RelayStateHolder {
     private var observer: ((RelayStateEvent) -> Unit)? = null
-    private var packet: ByteArray = ByteArray(RAW_NOTIF_PACKET_SIZE)
 
     fun attach(fn: (RelayStateEvent) -> Unit) {
         observer = fn
@@ -31,12 +28,6 @@ object RelayStateHolder {
     fun noteListenerDisconnected() = emit(RelayStateEvent.ListenerDisconnected)
     fun noteBleConnected() = emit(RelayStateEvent.BleConnected)
     fun noteBleDisconnected() = emit(RelayStateEvent.BleDisconnected)
-
-    fun latestPacket(): ByteArray = packet
-
-    fun setLatestPacket(bytes: ByteArray) {
-        packet = bytes
-    }
 
     private fun emit(event: RelayStateEvent) {
         observer?.invoke(event)
