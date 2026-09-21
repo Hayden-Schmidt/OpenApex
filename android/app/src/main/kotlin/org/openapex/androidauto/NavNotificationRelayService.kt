@@ -1,5 +1,6 @@
 package org.openapex.androidauto
 
+import android.content.Intent
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -28,6 +29,12 @@ class NavNotificationRelayService : NotificationListenerService() {
         // A navigation notification already posted before this listener (re)connected never
         // fires onNotificationPosted again on its own — seed from whatever is currently active.
         activeNotifications?.firstOrNull { it.packageName == MAPS_PACKAGE }?.let { relayIfNav(it) }
+        // System-forced rebind after process death is a more reliable wake signal on this OEM
+        // than CDM cold-wake (see docs/CDM_Cold_Wake_Investigation.md) — use it to also restart
+        // RelayService, same as BootCompletedReceiver, in case the process was killed without an
+        // intervening reboot. No-op if RelayService is already running (own-scan guards on
+        // `scanning`, ble.connect() guards on existing connection).
+        startForegroundService(Intent(this, RelayService::class.java))
     }
 
     override fun onListenerDisconnected() {
