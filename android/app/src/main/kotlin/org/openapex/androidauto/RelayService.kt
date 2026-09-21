@@ -8,9 +8,17 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.ParcelUuid
+import android.util.Log
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -47,6 +55,8 @@ class RelayService : Service() {
     private var nav: RawNavNotification? = null
     private var listening = false
     private var connected = false
+    private var scanning = false
+    private var gnssStarted = false
     private val sequence = AtomicInteger(0)
 
     // Latest raw motion samples. Diagnostic/future-use passthrough only — never classified here;
@@ -68,25 +78,75 @@ class RelayService : Service() {
         ble = RelayBleClient(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        startForegroundWithNotification()
+        // Only the "connectedDevice" FGS type on first start: since API 34, background-starting a
+        // "location" type foreground service (e.g. from BootCompletedReceiver) is restricted
+        // unless specifically exempted, and boot isn't one of the exemptions (a CDM
+        // presence-triggered start would be, but we can't rely on that firing - see
+        // docs/OpenApex_SPEC.md §13 item 9). GNSS/location starts once actually BLE-connected,
+        // when the service is already legitimately foregrounded.
+        startForegroundWithNotification(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         RelayStateHolder.attach { event -> handle(event) }
-        startGnss()
         startMotionSensors()
     }
 
     @SuppressLint("MissingPermission")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val address = intent?.getStringExtra(EXTRA_DEVICE_ADDRESS)
+        Log.i(TAG, "onStartCommand: address=$address")
+        val adapter = (getSystemService(BluetoothManager::class.java))?.adapter
         if (address != null) {
-            val adapter = getSystemService(BluetoothAdapter::class.java)
             adapter?.getRemoteDevice(address)?.let { ble.connect(it) }
+        } else {
+            // No address (e.g. started from BootCompletedReceiver, not CompanionDeviceManager):
+            // CDM cold-wake is unreliable on some OEMs (see docs/OpenApex_SPEC.md §13 item 9), so
+            // this service runs continuously from boot and scans for the terminal itself instead
+            // of waiting on a CDM presence callback that may never fire.
+            startOwnScan(adapter)
         }
         return START_STICKY
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startOwnScan(adapter: BluetoothAdapter?) {
+        if (scanning) {
+            Log.i(TAG, "startOwnScan: already scanning, skipping")
+            return
+        }
+        val scanner = adapter?.bluetoothLeScanner
+        if (scanner == null) {
+            Log.w(TAG, "startOwnScan: no BluetoothLeScanner available (adapter=$adapter)")
+            return
+        }
+        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(RelayBleClient.SERVICE_UUID)).build()
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        scanning = true
+        Log.i(TAG, "startOwnScan: starting scan for ${RelayBleClient.SERVICE_UUID}")
+        scanner.startScan(listOf(filter), settings, scanCallback)
+    }
+
+    @SuppressLint("MissingPermission")
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            Log.i(TAG, "onScanResult: found ${result.device.address}")
+            val adapter = (getSystemService(BluetoothManager::class.java))?.adapter ?: return
+            adapter.bluetoothLeScanner?.stopScan(this)
+            scanning = false
+            ble.connect(result.device)
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.w(TAG, "onScanFailed: errorCode=$errorCode")
+            scanning = false
+        }
     }
 
     override fun onDestroy() {
         stopGnss()
         sensorManager.unregisterListener(motionListener)
+        if (scanning) {
+            @SuppressLint("MissingPermission")
+            (getSystemService(BluetoothManager::class.java))?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        }
         ble.disconnect()
         RelayStateHolder.detach()
         super.onDestroy()
@@ -99,8 +159,30 @@ class RelayService : Service() {
             is RelayStateEvent.NavUpdated -> nav = event.nav
             is RelayStateEvent.ListenerConnected -> listening = true
             is RelayStateEvent.ListenerDisconnected -> listening = false
-            is RelayStateEvent.BleConnected -> connected = true
-            is RelayStateEvent.BleDisconnected -> connected = false
+            is RelayStateEvent.BleConnected -> {
+                connected = true
+                if (!gnssStarted) {
+                    try {
+                        startForegroundWithNotification(
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+                        )
+                        startGnss()
+                        gnssStarted = true
+                    } catch (e: SecurityException) {
+                        // Background FGS-location-start restriction (API 34+): if this connect was
+                        // triggered from a killed/background process (boot fallback, CDM cold-wake),
+                        // the app may not yet hold the exemption needed to promote to the "location"
+                        // FGS type. Leave gnssStarted false so the next BleConnected retries GNSS
+                        // once the app has been foregrounded by the user; BLE relay still works.
+                        Log.w(TAG, "startGnss: location FGS promotion denied, retrying on next connect", e)
+                    }
+                }
+            }
+            is RelayStateEvent.BleDisconnected -> {
+                connected = false
+                startOwnScan((getSystemService(BluetoothManager::class.java))?.adapter)
+            }
         }
         publish()
     }
@@ -157,7 +239,7 @@ class RelayService : Service() {
         return bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
     }
 
-    private fun startForegroundWithNotification() {
+    private fun startForegroundWithNotification(type: Int) {
         val channelId = "relay"
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -174,10 +256,15 @@ class RelayService : Service() {
             .setContentIntent(pi)
             .setOngoing(true)
             .build()
-        startForeground(1, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(1, notification, type)
+        } else {
+            startForeground(1, notification)
+        }
     }
 
     companion object {
+        private const val TAG = "RelayService"
         const val EXTRA_DEVICE_ADDRESS = "org.openapex.androidauto.extra.DEVICE_ADDRESS"
     }
 }
