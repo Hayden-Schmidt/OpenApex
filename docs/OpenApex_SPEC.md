@@ -551,11 +551,26 @@ remain smartphone-side features.
      delayed well beyond 90s). This points at an OEM (OxygenOS/ColorOS)-level restriction on waking
      third-party app components from a killed state that has no discoverable toggle in Settings or
      `adb shell dumpsys`/`cmd` output — not a bug in this project's BLE/CDM implementation.
-   - **Practical implication (unchanged):** do not depend on CDM cold-wake alone for "bike on, phone
-     reconnects with the app never opened" on this device/ROM — the app likely needs to have been
-     opened at least once since the last reboot (e.g. via a "leave running" foreground service or a
-     boot-completed receiver) until this is root-caused further, ideally with a phone from a
-     different OEM as a control.
+   - **API 36 deprecation checked and ruled out as the cause.** The test device runs Android 16
+     (API 36), which deprecates `startObservingDevicePresence(String)`/`onDeviceAppeared(String)` in
+     favor of `startObservingDevicePresence(ObservingDevicePresenceRequest)` +
+     `onDevicePresenceEvent(DevicePresenceEvent)`. Migrated `MainActivity.kt` and
+     `OpenApexCompanionService.kt` to use the new API on API 36+ (falling back to the old API on
+     API < 36 via an `SDK_INT` check, so minSdk 26 devices are unaffected) and re-tested with a
+     freshly cleaned single association: **identical failure** — `onDevicePresenceEvent` also never
+     fires from a killed process, and `dumpsys companiondevice` still shows the terminal correctly
+     detected as "Nearby." Confirms this is not an API-deprecation issue.
+   - **External research** (Google Issue Tracker #432207962) confirms this is a known, currently
+     unresolved AOSP-level bug/regression in `onDeviceAppeared`/`onDevicePresenceEvent` delivery,
+     and OnePlus/OxygenOS/ColorOS devices are widely documented (dontkillmyapp.com and others) as
+     among the most aggressive at killing background processes and silently reverting
+     battery-optimization whitelisting, with no programmatic (adb/API) way to fix it from app code.
+   - **Practical implication / accepted fix:** per community and Android-team consensus, CDM
+     cold-wake should not be relied on alone on affected OEMs. The recommended pattern — and what
+     this project is implementing — is CDM (still useful on OEMs where it works) backed by a
+     `BOOT_COMPLETED` receiver that starts a persistent foreground service, so the phone reconnects
+     to the terminal on boot without ever depending on the CDM wake callback firing from a killed
+     process.
 
 ## 16. Architecture Decision Records
 

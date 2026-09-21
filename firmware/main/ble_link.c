@@ -117,9 +117,12 @@ static void start_advertising(void) {
     fields.uuids128 = (ble_uuid128_t *)&s_svc_uuid;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
-    // No device name: a 128-bit service UUID (18 bytes with AD header) plus a device name plus
-    // mandatory flags (3 bytes) overflows the 31-byte legacy advertising payload. The Android
-    // central only filters on the service UUID, so the name isn't needed.
+    // "OpenApex" (8 chars) is the longest name that fits alongside flags (3B) + UUID128 (18B) in
+    // the 31-byte legacy primary payload (2B AD header + 8B = 10B, total 31B exactly). CDM/Android
+    // only filters on the service UUID, but a real name replaces the raw MAC in the CDM picker UI.
+    fields.name = (const uint8_t *)"OpenApex";
+    fields.name_len = 8;
+    fields.name_is_complete = 1;
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0) {
         ESP_LOGW(TAG, "ble_gap_adv_set_fields failed; rc=%d", rc);

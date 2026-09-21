@@ -5,8 +5,10 @@ import android.bluetooth.le.ScanFilter
 import android.companion.AssociationRequest
 import android.companion.BluetoothLeDeviceFilter
 import android.companion.CompanionDeviceManager
+import android.companion.ObservingDevicePresenceRequest
 import android.content.Intent
 import android.content.IntentSender
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.ParcelUuid
@@ -73,21 +75,43 @@ class MainActivity : Activity() {
         )
     }
 
-    @Suppress("DEPRECATION") // getAssociations()/startObservingDevicePresence(String) are the minSdk-26 APIs
+    // Android 16 (API 36) deprecated startObservingDevicePresence(String) in favor of the
+    // ObservingDevicePresenceRequest overload, and on-device testing found the old overload's
+    // callbacks silently never fire on API 36 (see docs/OpenApex_SPEC.md §13 item 9). Both paths
+    // are registered here so minSdk 26..35 devices keep working via the legacy overload while
+    // API 36+ devices use the one that's actually reliable.
+    @Suppress("DEPRECATION") // getAssociations()/startObservingDevicePresence(String) are the pre-36 APIs
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_ASSOCIATE) {
             Log.i("OpenApexMain", "association result: resultCode=$resultCode")
-            // associate() alone does not enable onDeviceAppeared/onDeviceDisappeared callbacks;
-            // each associated device's presence must be observed explicitly, and this registration
-            // persists with the association (survives app kill/reboot), so it only needs to run once.
+            // associate() alone does not enable presence callbacks; each associated device's
+            // presence must be observed explicitly, and this registration persists with the
+            // association (survives app kill/reboot), so it only needs to run once.
             val deviceManager = getSystemService(CompanionDeviceManager::class.java)
-            deviceManager?.associations?.forEach { mac ->
-                try {
-                    deviceManager.startObservingDevicePresence(mac)
-                    Log.i("OpenApexMain", "observing device presence: $mac")
-                } catch (e: IllegalArgumentException) {
-                    Log.w("OpenApexMain", "already observing $mac")
+            if (deviceManager != null) {
+                if (Build.VERSION.SDK_INT >= 36) {
+                    deviceManager.myAssociations.forEach { info ->
+                        try {
+                            deviceManager.startObservingDevicePresence(
+                                ObservingDevicePresenceRequest.Builder()
+                                    .setAssociationId(info.id)
+                                    .build(),
+                            )
+                            Log.i("OpenApexMain", "observing device presence: associationId=${info.id}")
+                        } catch (e: IllegalArgumentException) {
+                            Log.w("OpenApexMain", "already observing associationId=${info.id}")
+                        }
+                    }
+                } else {
+                    deviceManager.associations.forEach { mac ->
+                        try {
+                            deviceManager.startObservingDevicePresence(mac)
+                            Log.i("OpenApexMain", "observing device presence: $mac")
+                        } catch (e: IllegalArgumentException) {
+                            Log.w("OpenApexMain", "already observing $mac")
+                        }
+                    }
                 }
             }
             finishSetup()
