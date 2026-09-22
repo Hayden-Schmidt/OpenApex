@@ -1,0 +1,31 @@
+#pragma once
+
+#include "nav_renderer.hpp"
+#include "screen.hpp"
+
+// Turn-by-turn dial: a NavRenderer-driven maneuver animation (route/camera/tween/compass ring,
+// ported from Demo/demo.js) plus a distance label. ARRIVED/UNKNOWN have no NavRenderer geometry
+// (Demo/Google Icons Archive never modeled them) and get a small dedicated glyph instead -- see
+// dial_screen.cpp.
+class DialScreen : public Screen {
+public:
+    DialScreen();
+    void update(const terminal_view_state_t &state) override;
+
+private:
+    lv_obj_t *canvas_obj_;      // custom-draw obj: NavRenderer draws into its LV_EVENT_DRAW_MAIN layer
+    lv_obj_t *distance_label_;
+    lv_obj_t *status_shaft_;    // ARRIVED/UNKNOWN glyph line 1 (hidden otherwise)
+    lv_obj_t *status_head_;     // ARRIVED/UNKNOWN glyph line 2 (hidden otherwise)
+
+    NavRenderer renderer_;
+    int32_t status_box_size_; // runtime display resolution, not BOARD_DISP_WIDTH -- see .cpp
+    nav_icon_t last_icon_ = static_cast<nav_icon_t>(-1); // forces add_maneuver on first update()
+    uint16_t last_heading_deg_ = 0xFFFFu;
+
+    lv_point_precise_t status_shaft_pts_[4];
+    lv_point_precise_t status_head_pts_[2];
+
+    static void draw_event_cb(lv_event_t *e);
+    void draw_status_glyph(nav_icon_t icon);
+};

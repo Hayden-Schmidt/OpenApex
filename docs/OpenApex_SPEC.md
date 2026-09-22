@@ -419,12 +419,14 @@ yet, plus a OnePlus 15 running the Android relay app):
   §16.5), and has been observed end-to-end to fire `onDeviceAppeared` and start `RelayService` as a
   foreground service from a killed app process on a real device reboot cycle.
 - `firmware/sim_lvgl` (PlatformIO native + SDL2) added as the LVGL GUI design/iteration surface:
-  opens a real SDL window at the exact `board_profile.h` resolution (240x240) and renders the
-  shared `firmware/gui/gui_screens.c` widget code, driven by a scripted fixture sequence in the
-  absence of live hardware/data. Screen-building code lives in `firmware/gui/`, not
-  `firmware/main/`, so it never gets pulled into the real ESP-IDF `prototype_c3` build.
-- `pio run -e native`, `pio run -d firmware -e prototype_c3`, and the new `sim_lvgl` env all build
-  clean.
+  opens a real SDL window at the exact `board_profile.h` resolution (240x240), driven by a scripted
+  fixture sequence in the absence of live hardware/data. Screen-building code lives in
+  `firmware/gui/`, not `firmware/main/`, so it never gets pulled into the real ESP-IDF
+  `prototype_c3` build. The original plain-C screen content (`gui_screens.c`/`.h`) has since been
+  removed and is being rebuilt on the C++ architecture in §16.6 (see §11 "Recommended next steps"
+  item 2); `sim_lvgl` currently opens an empty window pending that rebuild.
+- `pio run -e native` and `pio run -d firmware -e prototype_c3` build clean. `sim_lvgl` builds and
+  opens its window but has no screen content until §16.6 is implemented.
 
 **Open items:** the full GATT connect/write path from the Android central to the C3 peripheral
 (RelayBleClient discovering the service and writing a live packet) has not yet been observed in a
@@ -436,14 +438,37 @@ the flaky peripheral role has moved off the OEM phone Bluetooth stack.
 
 1. Confirm the full GATT connect/write path (phone central to C3 peripheral) with live Google Maps
    navigation data, and re-test the disconnect-churn scenario under the new roles (§13 items 8, 9).
-2. Wire the LVGL screens already prototyped in `firmware/sim_lvgl` into the real `gui_task` on the
-   C3 firmware, driven by the now-working `ble_link`/`countdown` pipeline instead of the simulator's
-   scripted fixture.
-3. Source and wire the physical GC9A01 display module once available; port the SPI display driver
+2. GUI rebuild from scratch on the C++ architecture (see §16.6). The original Phase 1 plain-C
+   `gui_screens.c`/`.h` and the SDL sim's textual-include bridge have been removed; `sim_lvgl`
+   currently opens an empty window pending this work:
+   a. Add `BOARD_GFX_TIER_BASIC`/`BOARD_GFX_TIER_RICH`, capability flags (`BOARD_HAS_SPLASH`,
+      `BOARD_HAS_MAP_RENDER`, ...), and a 466x466 S3 profile stub to `board_profile.h` (no real S3
+      pin/panel data needed yet).
+   b. Stand up the build wiring: `firmware/gui` as its own ESP-IDF component; `sim_lvgl`'s
+      `platformio.ini` switched from the old single-file bridge to a normal multi-TU
+      `build_src_filter` build; `gui_app.hpp`/`.cpp` skeleton with the `extern "C"`
+      `gui_app_init()`/`gui_app_update()` seam, loading an empty screen. Confirm both the ESP-IDF
+      build and the native `sim_lvgl` build compile clean before writing any screen content.
+   c. Second `firmware/sim_lvgl` PlatformIO env (`sim_lvgl_s3`) for the S3 profile, sharing the
+      same `gui_app.cpp`/`DialScreen` build as the C3 env — done ahead of screen content so both
+      windows (240x240 and 466x466) run side by side while designing Layer 1, catching scaling
+      issues live instead of in a later pass.
+   d. Implement `Screen`, `GuiTheme` interfaces, `BasicTheme`, and `RichTheme` (`RichTheme` can
+      start visually identical to `BasicTheme`, richer styling deferred); implement `DialScreen`
+      from scratch — a fresh visual design, not a port of the removed `gui_screens.c` content —
+      relatively laid out (`LV_PCT`) so it scales without a layout fork. Built item-by-item,
+      checked against both running `sim_lvgl` windows after each piece, not pre-mocked.
+3. Finish the Phase 1 UI content against both sim envs: real maneuver icons (replace text
+   placeholders), close-turn visual emphasis, a `DiagnosticsScreen` (Layer 2), all 6 §9 states —
+   then wire `gui_app_init`/`gui_app_update` into the real `gui_task` on the C3 firmware, driven by
+   the now-working `ble_link`/`countdown` pipeline instead of the simulator's scripted fixture.
+4. Source and wire the physical GC9A01 display module once available; port the SPI display driver
    (deferred — no module in hand as of this status update).
-4. Implement the iOS/ANCS source adapter (Android-only so far).
-5. Add phone motion/GNSS telemetry (fused location + fused orientation + raw accel/gyro) per the
+5. Implement the iOS/ANCS source adapter (Android-only so far).
+6. Add phone motion/GNSS telemetry (fused location + fused orientation + raw accel/gyro) per the
    Phase 1 roadmap below — not yet started.
+7. `BOARD_GFX_TIER_RICH` implementation (animated splash, richer transitions, map-following once
+   §5.4 exists) tracks against real S3 hardware in Phase 2 — additive, does not block Phase 1.
 
 ### Phase 1: C3 notification/GNSS display POC
 
@@ -457,7 +482,9 @@ the flaky peripheral role has moved off the OEM phone Bluetooth stack.
 - [ ] Pass phone GNSS speed, heading, validity, and freshness through the packet.
 - [x] Implement C3-side speed smoothing and distance countdown between notifications.
 - [ ] Implement the basic LVGL maneuver/distance/speed/stale UI on-device (prototyped in
-      `firmware/sim_lvgl`, not yet wired into `firmware/main/main.c`'s `gui_task`).
+      `firmware/sim_lvgl`, not yet wired into `firmware/main/main.c`'s `gui_task`). GUI architecture
+      is now shared-baseline + tier-gated per §16.6 — see "Recommended next steps" item 2 above for
+      the sequencing.
 - [ ] Build the first weather-resistant mechanical prototype only after the display path works.
 
 **Phase 1 exit test:** Google Maps navigation notification plus phone GNSS data reaches the C3,
@@ -588,9 +615,14 @@ normalizer serves both Android and iOS/ANCS.
 
 - **C** — hardware drivers, protocol (BLE GATT, packet decoder), and pure domain logic
   (`normalize.c`, `countdown.c`, `pipeline.c`). No `extern "C"` wrapper fatigue; straight ESP-IDF
-  APIs.
-- **C++** — LVGL UI screens (`NavScreen`, `IdleScreen`, etc.) and view-state encapsulation. RAII
-  for mutex guards.
+  APIs. Data contracts crossing into the GUI (`view_state.h`, `nav_model.h`, `board_profile.h`) stay
+  plain C headers — POD structs and macros only, includable from both C and C++.
+- **C++** — the entire LVGL GUI layer (`firmware/gui/`): screen classes, the theme/tier interface,
+  and view-state handling on the render side. RAII for widget and mutex-guard lifetime. See §16.6
+  for the concrete class layout — this supersedes the single plain-C `gui_screens.c` file from the
+  original Phase 1 slice, binned in favor of the architecture below once it became clear the GUI
+  would grow multiple screens across multiple board tiers (C3 and S3, both permanently supported,
+  not a prototype-then-replace relationship).
 - **Disciplined constraints:** `-fno-exceptions`, `-fno-rtti`, no heap-heavy STL inside the render
   loop; `std::array` and fixed pools only. (These are ESP-IDF defaults; do not add conflicting
   `build_flags`.)
@@ -656,6 +688,89 @@ across power cycles. Pairing uses Just Works (`BLE_SM_IO_CAP_NO_IO`) with Secure
 - `scripts/test-ble-link.sh` automates this test: it resets the C3, force-stops (but does not
   relaunch) the Android app, captures the C3 serial log and filtered phone logcat concurrently for
   a fixed window, and prints a lean pass/fail summary. Raw logs land in `logs/` (gitignored).
+
+### 16.6 GUI architecture: shared baseline + tier-gated richness, implemented in C++
+
+**Decision:** one shared GUI composition drives every board profile, split into two layers, so the
+C3 and S3 (and any later profile) present the same product with the same states and meaning, while
+each device's UI quality scales with what its hardware can actually support — without capping the
+richer targets to the leanest one or letting the profiles drift into unrelated UIs. Implemented as
+C++ classes (per §16.2), not the plain-C single-file `gui_screens.c` from the original Phase 1
+slice — that file has been removed. Reasons for the C++ rewrite:
+
+- Layer 2 screens are created/destroyed dynamically (splash plays once and unloads; map screen loads
+  only on demand) — plain C has no compiler-enforced cleanup path for that; C++ RAII does.
+- A missing theme implementation for a board profile is a compile error with a virtual interface,
+  not a null-pointer crash discovered on whichever device happens to hit the unfilled hook.
+- The two-file, single-screen POC scope that justified plain C no longer holds now that C3 and S3
+  are both permanently supported products, not a prototype-then-replace pair.
+
+**Layer 1 — shared baseline (identical logic across all profiles).**
+
+- `Screen` (`firmware/gui/screen.hpp`) — abstract base: `init()`, `update(const terminal_view_state_t&)`,
+  virtual destructor. Every screen, Layer 1 or Layer 2, implements this.
+- `DialScreen : Screen` (`firmware/gui/dial_screen.hpp/.cpp`) — owns the state machine
+  (`view_state_t` -> what is shown) and the core dial layout (state banner, maneuver/distance
+  readout, street line, presence ring). Widgets are members, created in `init()`, released in the
+  destructor (RAII — no manual `lv_obj_del()` bookkeeping). Layout is expressed in relative terms
+  (`LV_PCT`, DPI-relative font choice), so the same class scales from 240x240 (C3/GC9A01) to 466x466
+  (S3/AMOLED) without forking layout code.
+- `GuiTheme` (`firmware/gui/theme.hpp`) — abstract interface: `draw_icon(nav_icon_t, size)` (icon
+  asset fidelity), `palette(...)` (color richness), `apply_state_change(prev, next)` (instant
+  mutation vs. animated/crossfade transition, e.g. via `lv_style_transition_dsc_t` or
+  `lv_screen_load_anim`). `DialScreen` holds a `GuiTheme&` and never branches on tier itself — the
+  state machine and the meaning of each state never change per tier, only how a change is rendered.
+  Two concrete implementations: `BasicTheme` (C3, instant/flat) and `RichTheme` (S3, animated).
+  Selected per board profile via `BOARD_GFX_TIER_BASIC`/`BOARD_GFX_TIER_RICH` in `board_profile.h`,
+  resolved to a concrete type at compile time (e.g. a type alias picked by `#if`) — no runtime
+  branching, no unused theme code in either build.
+
+**Layer 2 — capability-gated additive screens (opt-in per profile, never a ceiling on richer
+hardware).** Each is a separate `Screen` subclass in its own file, compiled in only when a profile
+declares the capability it needs — same pattern already used for `BOARD_HAS_TOUCH` compiling the
+touch driver out: `SplashScreen` (`#if BOARD_HAS_SPLASH`), `MapScreen` (`#if BOARD_HAS_MAP_RENDER`,
+once the polyline stream in §5.4 exists), a richer `DiagnosticsScreen` with live graphs. A leaner
+profile simply never compiles or links these — they cannot bloat or slow down its build.
+
+**C++/C seam.** `firmware/gui/gui_app.hpp` exposes the only points the C side calls, as
+`extern "C"` functions taking POD structs: `gui_app_init()`, `gui_app_update(const
+terminal_view_state_t*)`. `gui_app.cpp` owns the active `Screen` instance(s) and the selected
+`GuiTheme`, and is the only file that constructs concrete screen/theme types. `firmware/main/main.c`
+(`gui_task`) calls only these two functions and never sees a C++ type — matching the existing
+POD-struct C→C++ boundary rule in §16.2.
+
+**Build wiring.**
+
+- ESP-IDF: `firmware/gui/` becomes its own component (`CMakeLists.txt` with
+  `idf_component_register(SRCS ... INCLUDE_DIRS "." REQUIRES main)`), referenced from
+  `firmware/CMakeLists.txt` via `EXTRA_COMPONENT_DIRS`. `firmware/main`'s `CMakeLists.txt` gains
+  `gui` under `REQUIRES` (or `PRIV_REQUIRES`) instead of listing GUI sources directly.
+- `firmware/sim_lvgl` (PlatformIO `native`): replaces the previous single-file textual include
+  (`gui_screens_bridge.c` including `../../gui/gui_screens.c` directly) with a normal multi-TU C++
+  build — `build_src_filter` in `platformio.ini` adds `../gui/*.cpp` alongside `src/*.cpp`.
+
+**Dev-loop consequence:** `firmware/sim_lvgl` gains a second PlatformIO env built against an S3
+profile stub (466x466, `BOARD_GFX_TIER_RICH`) alongside the existing C3 env. Every Layer 1 change is
+checked in both simulator windows before being considered done, so tier drift is caught immediately
+rather than discovered after S3 hardware exists. Layer 2 screens are simulated only under the S3 env
+since leaner profiles never compile them.
+
+**Why:** without this split, either every profile is limited to what fits on the leanest board
+(240px round dial, bounded memory, no animation budget), or profiles diverge into separately
+maintained UIs that drift out of sync over time. The split keeps exactly one state machine and one
+layout contract, while leaving S3-class hardware fully open to animated transitions, a splash
+screen, and map-following — none of which require touching or reworking the shared baseline.
+
+**Dev-loop consequence:** `firmware/sim_lvgl` gains a second PlatformIO env built against an S3
+profile stub (466x466, `BOARD_GFX_TIER_RICH`) alongside the existing C3 env. Every Layer 1 change is
+checked in both simulator windows before being considered done, so tier drift is caught immediately
+rather than discovered after S3 hardware exists. Layer 2 screens are simulated only under the S3 env
+since leaner profiles never compile them.
+
+**Resolution model:** every choice above (tier, capability flags, which Layer 2 screens exist) is
+resolved at compile time via `board_profile.h` `#if`/`#define` selection, the same mechanism already
+used for `BOARD_HAS_TOUCH`. A C3 build contains no S3-only screen code and no animated-transition
+path; nothing is a runtime branch. Final builds stay as lean as they are today.
 
 ## 14. Source and Licensing Notes
 

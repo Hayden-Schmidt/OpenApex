@@ -26,15 +26,20 @@ import java.nio.charset.StandardCharsets
  * | 67     | 64   | title_str        | android.title (maneuver text)          |
  * | 131    | 6    | accel_mg         | 3x int16 LE, milli-g, 0x7FFF = unknown |
  * | 137    | 6    | gyro_mdps        | 3x int16 LE, milli-deg/s, 0x7FFF = unk |
- * | 143    | 1    | reserved         | padding (0)                            |
+ * | 143    | 2    | icon_rotation_deg| int16 LE, 0=up/straight, cw+, 0x7FFF=unk|
  * --------------------------------------------------------------------------------------------
- * Total: 144 bytes. One BLE notification after MTU negotiation (ESP32 central requests MTU >= 185).
+ * Total: 146 bytes. One BLE notification after MTU negotiation (ESP32 central requests MTU >= 185).
  *
  * accel_mg/gyro_mdps are raw phone motion samples for terminal-side diagnostics/future use only —
  * they are never classified or fed into the normalized navigation/countdown model (that stays the
  * ESP32 normalizer's job per docs/OpenApex_SPEC.md §2.4).
+ *
+ * icon_rotation_deg is likewise raw geometry, not a classification: it's the angle of the
+ * notification's maneuver arrow bitmap, extracted on the phone via image-moment analysis (the
+ * bitmap itself is too large to relay and only exists on Android). Bucketing this angle into a
+ * maneuver (turn/slight/sharp/u-turn) is the ESP32 normalizer's job, same as title-text parsing.
  */
-const val RAW_NOTIF_PACKET_SIZE = 144
+const val RAW_NOTIF_PACKET_SIZE = 146
 const val RAW_NOTIF_VERSION = 2
 
 private const val DIST_STR_BYTES = 16
@@ -53,6 +58,9 @@ data class RawNavNotification(
     val distanceText: String?,
     val progress: Int?,
     val progressMax: Int?,
+    // Maneuver arrow rotation angle extracted from the notification icon bitmap, degrees,
+    // 0 = up/straight, clockwise positive. Null = not extracted/unavailable.
+    val iconRotationDeg: Int? = null,
 )
 
 /** Phone GNSS + battery telemetry. Null speed/heading/battery = no usable reading. */
@@ -96,7 +104,7 @@ fun packRawNotifPacket(
     // accel: m/s^2 -> milli-g. gyro: rad/s -> milli-degrees/s.
     putMotionVector(p, 131, motion.accelMs2, scale = 1000.0 / MS2_PER_G)
     putMotionVector(p, 137, motion.gyroRadS, scale = 1000.0 * RAD_PER_S_TO_DEG_PER_S)
-    // p[143] reserved stays 0
+    putI16(p, 143, nav.iconRotationDeg?.mod(360) ?: I16_UNKNOWN)
     return p
 }
 

@@ -36,6 +36,30 @@ static nav_icon_t derive_maneuver(const char *text) {
     return NAV_ICON_UNKNOWN;
 }
 
+// Buckets a maneuver-arrow rotation angle (degrees, 0 = up/straight, clockwise positive) into the
+// normalized maneuver set. This is geometry, not language, so it works for any title phrasing —
+// preferred over derive_maneuver() whenever the phone was able to extract an angle (see
+// icon_rotation_deg KDoc in packet.h / RawNotifPacket.kt). Thresholds are a first approximation,
+// not yet validated against real on-road turns/roundabouts/u-turns beyond the straight-ahead case.
+static nav_icon_t derive_maneuver_from_angle(int16_t angle_deg) {
+    int a = ((int)angle_deg) % 360;
+    if (a < 0) a += 360;
+
+    if (a <= 20 || a >= 340) return NAV_ICON_STRAIGHT;
+    if (a <= 180) {
+        // Right side (clockwise from straight-ahead).
+        if (a <= 45) return NAV_ICON_SLIGHT_RIGHT;
+        if (a <= 135) return NAV_ICON_TURN_RIGHT;
+        if (a <= 170) return NAV_ICON_SHARP_RIGHT;
+        return NAV_ICON_U_TURN;
+    }
+    // Left side (counter-clockwise from straight-ahead).
+    if (a >= 315) return NAV_ICON_SLIGHT_LEFT;
+    if (a >= 225) return NAV_ICON_TURN_LEFT;
+    if (a >= 190) return NAV_ICON_SHARP_LEFT;
+    return NAV_ICON_U_TURN;
+}
+
 // Extracts the street name from "...onto/on <street>" phrasing. Returns 0 on no match.
 // Roundabout/arrive/reroute text has no separable street — empty is correct, not fabricated.
 static size_t extract_street(const char *text, char *out, size_t out_len) {
@@ -78,7 +102,17 @@ void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     out->battery_percent = 0xFF;
     out->sequence = raw->sequence;
 
-    out->icon_type = derive_maneuver(raw->title_str);
+    // Prefer the icon-rotation angle (language-independent) over title-text keyword matching,
+    // except for arrival: "arrive"/"destination" text is unambiguous and the arrival icon isn't a
+    // rotated arrow, so it doesn't map onto the angle bucketing below.
+    nav_icon_t text_icon = derive_maneuver(raw->title_str);
+    if (text_icon == NAV_ICON_ARRIVED) {
+        out->icon_type = NAV_ICON_ARRIVED;
+    } else if (raw->icon_rotation_deg != RAW_I16_UNKNOWN) {
+        out->icon_type = derive_maneuver_from_angle(raw->icon_rotation_deg);
+    } else {
+        out->icon_type = text_icon;
+    }
 
     // Distance: prefer the clean numeric field (Android shortCriticalText), else scan the title.
     out->distance_meters = parse_distance_metres(raw->distance_str);

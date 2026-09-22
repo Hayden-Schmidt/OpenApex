@@ -197,6 +197,7 @@ class RelayService : Service() {
         )
         val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
         val packet = packRawNotifPacket(sequence.incrementAndGet(), currentNav, telemetry, motion)
+        Log.i(TAG, "publish: connected=$connected packetLen=${packet.size}")
         if (connected) {
             ble.write(packet)
         }

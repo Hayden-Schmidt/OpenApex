@@ -8,7 +8,10 @@
 // terminal decodes. See the Android RawNotifPacket.kt KDoc for the authoritative field table.
 // v2 adds raw phone accelerometer/gyroscope samples (offsets 131-142) alongside the v1 fields;
 // these are diagnostic/future-use passthrough, not part of the normalized nav/countdown model.
-#define RAW_NOTIF_PACKET_SIZE 144U
+// v2 also adds icon_rotation_deg (offset 143): the maneuver arrow's rotation angle, extracted on
+// the phone from the notification's icon bitmap (geometry only — no semantic classification, kept
+// on the terminal normalizer per docs/OpenApex_SPEC.md §2.4). 0 = up/straight, clockwise positive.
+#define RAW_NOTIF_PACKET_SIZE 146U
 #define RAW_NOTIF_VERSION 2U
 
 // Field buffer sizes.
@@ -37,6 +40,9 @@ typedef struct {
     // passthrough only — never fed into the countdown/navigation model (SPEC normalization rule).
     int16_t accel_mg[3];   // x, y, z accelerometer, milli-g
     int16_t gyro_mdps[3];  // x, y, z gyroscope, milli-degrees/second
+    // Maneuver arrow rotation angle extracted from the notification icon bitmap, degrees,
+    // 0 = up/straight, clockwise positive. RAW_I16_UNKNOWN = not extracted/unavailable.
+    int16_t icon_rotation_deg;
 } raw_notif_t;
 
 // Decodes a raw packet into out. Returns false on wrong version or short length (malformed

@@ -1,0 +1,10 @@
+<project theme="simple" lvgl_version="9.5.0">
+    <targets>
+        <target name="c3_basic">
+            <display width="240" height="240"/>
+        </target>
+        <target name="s3_rich">
+            <display width="466" height="466"/>
+        </target>
+    </targets>
+</project>

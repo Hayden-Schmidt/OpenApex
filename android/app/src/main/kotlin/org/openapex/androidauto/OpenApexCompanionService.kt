@@ -54,7 +54,11 @@ class OpenApexCompanionService : CompanionDeviceService() {
         return deviceManager.myAssociations
             .firstOrNull { it.id == associationId }
             ?.deviceMacAddress
+            // MacAddress.toString() is always lowercase; BluetoothAdapter.getRemoteDevice()
+            // throws IllegalArgumentException on anything but uppercase hex, which was crashing
+            // RelayService.onStartCommand (and the whole app process) on every CDM presence event.
             ?.toString()
+            ?.uppercase()
     }
 
     private fun relayStart(deviceAddress: String) {
