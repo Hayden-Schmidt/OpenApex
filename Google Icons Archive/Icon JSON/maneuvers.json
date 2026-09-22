@@ -1,0 +1,194 @@
+{
+  "_comment": "Canonical, hand-editable maneuver definitions. Every entry is a list of two primitives -- 'straight' (length) and 'curve' (dir: left|right, angle deg, radius) -- chained tip-to-tail starting at (0,0) heading up. build_icons.py interprets this file (generic straight/curve walker, not per-maneuver code) to produce the per-maneuver *.json outputs and the Demo/icons-data.js bundle. An entry with 'mirror_of' is generated as the exact x-mirror of another entry (used for the natural left/right pairs); roundabout_right/straight/left are each written out in full -- they share the same rotational sense and kinks but aren't true mirrors of each other, just three different sweep amounts on the same shape, so templating them would obscure more than it'd save.",
+  "straight": {
+    "name": "Straight",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 260
+      }
+    ]
+  },
+  "turn_right": {
+    "name": "Turn Right",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 130
+      },
+      {
+        "type": "curve",
+        "dir": "right",
+        "angle": 90,
+        "radius": 60
+      },
+      {
+        "type": "straight",
+        "length": 140
+      }
+    ]
+  },
+  "turn_left": {
+    "name": "Turn Left",
+    "mirror_of": "turn_right"
+  },
+  "turn_slight_right": {
+    "name": "Slight Right",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 130
+      },
+      {
+        "type": "curve",
+        "dir": "right",
+        "angle": 35,
+        "radius": 60
+      },
+      {
+        "type": "straight",
+        "length": 145
+      }
+    ]
+  },
+  "turn_slight_left": {
+    "name": "Slight Left",
+    "mirror_of": "turn_slight_right"
+  },
+  "u_turn_right": {
+    "name": "U-Turn Right",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 180
+      },
+      {
+        "type": "curve",
+        "dir": "right",
+        "angle": 180,
+        "radius": 70
+      },
+      {
+        "type": "straight",
+        "length": 140
+      }
+    ]
+  },
+  "u_turn_left": {
+    "name": "U-Turn Left",
+    "mirror_of": "u_turn_right"
+  },
+  "roundabout_right": {
+    "name": "Roundabout Right",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 70
+      },
+      {
+        "type": "roundabout",
+        "transition_radius": 20,
+        "loop_radius": 80,
+        "net": 90
+      },
+      {
+        "type": "straight",
+        "length": 90
+      }
+    ]
+  },
+  "roundabout_straight": {
+    "name": "Roundabout Straight",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 50
+      },
+      {
+        "type": "roundabout",
+        "transition_radius": 20,
+        "loop_radius": 70,
+        "net": 0
+      },
+      {
+        "type": "straight",
+        "length": 100
+      }
+    ]
+  },
+  "roundabout_left": {
+    "name": "Roundabout Left",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 80
+      },
+      {
+        "type": "roundabout",
+        "transition_radius": 20,
+        "loop_radius": 70,
+        "net": -90
+      },
+      {
+        "type": "straight",
+        "length": 115
+      }
+    ]
+  },
+  "right_merge": {
+    "name": "Merge Right",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 260
+      }
+    ],
+    "secondary_path_comment": "Side artifact, not a navigable line -- kept as literal traced coordinates rather than steps, see build_icons.py.",
+    "secondary_path": [
+      [
+        190.0,
+        -40.0
+      ],
+      [
+        179.4,
+        -54.1
+      ],
+      [
+        167.9,
+        -67.5
+      ],
+      [
+        155.4,
+        -80.0
+      ],
+      [
+        142.2,
+        -91.7
+      ],
+      [
+        128.2,
+        -102.4
+      ],
+      [
+        113.5,
+        -112.2
+      ],
+      [
+        98.2,
+        -120.9
+      ],
+      [
+        82.3,
+        -128.6
+      ],
+      [
+        65.9,
+        -135.2
+      ]
+    ]
+  },
+  "merge_left": {
+    "name": "Merge Left",
+    "mirror_of": "right_merge"
+  }
+}

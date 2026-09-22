@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Arrow Maneuver Animation Demo (LVGL-shaped renderer)</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #111;
+    color: #eee;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    padding-top: 32px;
+    box-sizing: border-box;
+  }
+  h1 { font-size: 16px; font-weight: 500; color: #999; margin: 0; }
+  h1 small { display: block; font-weight: 400; color: #666; margin-top: 4px; }
+  /* One .panel per configured resolution, laid out side by side. Both are
+     CSS-scaled to the same diameter so the comparison is about pixel density,
+     not about one preview being physically bigger than the other. */
+  #displays { display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+  .panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .label { font-size: 12px; color: #777; letter-spacing: 0.05em; }
+  .display {
+    background: #000;
+    box-shadow: 0 0 0 1px #333;
+    border-radius: 50%;
+    overflow: hidden;
+    line-height: 0;
+  }
+  /* The canvas backing store is the panel's REAL pixel count; this only
+     upscales it for viewing. image-rendering:pixelated keeps that honest --
+     you see the device's actual pixels, not a browser-smoothed version. */
+  .display canvas { display: block; image-rendering: pixelated; }
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 560px;
+    justify-content: center;
+  }
+  button {
+    background: #222;
+    color: #eee;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { background: #333; }
+  button:active { background: #3ddc84; color: #111; }
+</style>
+</head>
+<body>
+  <h1>ESP32 round-display arrow animation demo
+    <small>Canvas renderer built only from LVGL-equivalent primitives. Tunables live in params.js -- edit and reload.</small>
+  </h1>
+  <div id="displays"></div>
+  <div class="buttons" id="buttons"></div>
+
+  <script src="icons-data.js"></script>
+  <script src="params.js"></script>
+  <script src="lvgl_shim.js"></script>
+  <script src="demo.js"></script>
+</body>
+</html>
