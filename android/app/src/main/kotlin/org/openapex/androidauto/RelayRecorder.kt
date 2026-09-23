@@ -199,6 +199,11 @@ object RelayRecorder {
         yawRateDps: Float? = null,
         accel: FloatArray? = null,
         gyro: FloatArray? = null,
+        latDeg: Double? = null,
+        lonDeg: Double? = null,
+        altitudeM: Double? = null,
+        fixElapsedRealtimeNanos: Long? = null,
+        instanceId: Int? = null,
     ) {
         event("telemetry") {
             put("speedKmh", speedKmh ?: JSONObject.NULL)
@@ -212,6 +217,19 @@ object RelayRecorder {
             put("accuracyM", accuracyM ?: JSONObject.NULL)
             put("hasBearing", hasBearing ?: JSONObject.NULL)
             put("hasSpeed", hasSpeed ?: JSONObject.NULL)
+            // Position. Recorded so a capture can be replayed geometrically: without lat/lon the
+            // learned mount offset in docs/Heading_Sensor_Fusion_Plan.md can only be tuned against
+            // the same GPS course it is meant to be checked against. [fixElapsedRealtimeNanos] is
+            // the fix's own monotonic timestamp -- wall clock is not usable for interpolation.
+            put("latDeg", latDeg ?: JSONObject.NULL)
+            put("lonDeg", lonDeg ?: JSONObject.NULL)
+            put("altitudeM", altitudeM ?: JSONObject.NULL)
+            put("fixElapsedRealtimeNanos", fixElapsedRealtimeNanos ?: JSONObject.NULL)
+            // Which RelayService object emitted this. The 2026-09-23 capture logged every fix twice
+            // ~7 ms apart, one copy carrying a yaw frozen at 249.10715 -- the signature of a second,
+            // orphaned service instance with a dead sensor listener. Stamping the instance makes
+            // that diagnosable from the log instead of inferable.
+            put("instanceId", instanceId ?: JSONObject.NULL)
             // Phone orientation raw
             put("yawDeg", yawDeg ?: JSONObject.NULL)
             put("pitchDeg", pitchDeg ?: JSONObject.NULL)

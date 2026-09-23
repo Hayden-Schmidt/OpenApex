@@ -61,6 +61,11 @@ class RelayService : Service() {
     private val handler by lazy { android.os.Handler(Looper.getMainLooper()) }
     private val gnssRetry = Runnable { tryStartGnss() }
 
+    // Identifies this object in the drive log. Android can leave an older instance alive while a
+    // new one starts; both write to the same RelayRecorder singleton, so without this the two
+    // streams are indistinguishable. See the instanceId note in RelayRecorder.telemetry().
+    private val instanceId = instanceCounter.incrementAndGet()
+
     // Latest raw motion samples. Diagnostic/future-use passthrough only — never classified here;
     // see RawNotifPacket.kt KDoc and docs/OpenApex_SPEC.md §2.4.
     private var lastAccel: FloatArray? = null
@@ -287,6 +292,11 @@ class RelayService : Service() {
     @SuppressLint("MissingPermission")
     private fun startGnss(): Boolean {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return false
+        // Drop any callback this instance already has registered before requesting another. The
+        // gnssStarted flag guards the common path, but it is set only after this function returns,
+        // and requestLocationUpdates with a fresh callback object registers a *second* stream
+        // rather than replacing the first -- one duplicated fix per second, forever.
+        stopGnss()
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
             .setMinUpdateIntervalMillis(500L)
             .build()
@@ -318,6 +328,11 @@ class RelayService : Service() {
                         yawRateDps = lastYawRateDps,
                         accel = lastAccel,
                         gyro = lastGyro,
+                        latDeg = loc.latitude,
+                        lonDeg = loc.longitude,
+                        altitudeM = if (loc.hasAltitude()) loc.altitude else null,
+                        fixElapsedRealtimeNanos = loc.elapsedRealtimeNanos,
+                        instanceId = instanceId,
                     )
                     publish()
                 }
@@ -376,6 +391,9 @@ class RelayService : Service() {
     companion object {
         private const val TAG = "RelayService"
         private const val ORIENTATION_LOG_MS = 100L
+
+        /** Process-wide, so a second instance gets a different id than the one it overlapped with. */
+        private val instanceCounter = AtomicInteger(0)
 
         /**
          * Stand-in maneuver for "riding, but not navigating". Every field null so the terminal's

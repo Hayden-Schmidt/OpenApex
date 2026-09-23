@@ -168,6 +168,31 @@ Implemented ahead of the filter so the filter can be developed offline:
 
 This is dev-only, gated on `BuildConfig.DEBUG` like the rest of `RelayRecorder`.
 
+### What the first real capture (2026-09-23) showed was missing
+
+The Bunnings ride produced 1635 telemetry samples and 7569 orientation samples, and two gaps in
+the logging blocked using them. Both are fixed now, but **no ride captured before 2026-09-24 has
+the fields**, so the filter has to be tuned against a fresh capture:
+
+- **No position was logged at all.** Without lat/lon the learned mount offset can only be checked
+  against the same GPS course it is derived from — there is no independent track to reconstruct a
+  true direction of travel from. `telemetry()` now records `latDeg`, `lonDeg`, `altitudeM` and
+  `fixElapsedRealtimeNanos` (the fix's own monotonic clock; wall-clock is not interpolatable).
+- **Every fix was logged twice**, ~7 ms apart with identical bearing/speed/accuracy, one copy of
+  each pair carrying a yaw frozen at exactly `249.10715` for the whole ride (817 of 1635 samples) —
+  an orphaned second `RelayService` instance with a dead sensor listener, sharing the singleton
+  recorder. `startGnss()` now calls `stopGnss()` before registering, and each sample is stamped
+  with an `instanceId` so a recurrence is visible in the log rather than inferred from it.
+
+Anything reading a pre-2026-09-24 capture must de-duplicate on `(bearingDeg, speedKmh, accuracyM)`
+and discard samples whose `yawDeg` is 249.10715.
+
+### What it showed was good
+
+- `headingDeg` as relayed equals `Location.bearing` exactly — no corruption on the send path.
+- `bearingAccuracyDeg` is mostly under 0.5° at road speed, which makes it a usable gate for the
+  offset estimator (see the second open question below).
+
 With a recorded ride, the filter can be written, tuned and regression-tested against the actual
 jacket, bike and phone placement without riding again — the same payoff `replay.c` gives for
 maneuver parsing.

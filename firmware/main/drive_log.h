@@ -47,9 +47,20 @@ typedef enum {
     DRIVE_LOG_BLE_QUEUE_FULL = 4,
 } drive_log_ble_event_t;
 
+// GCC/Clang spell struct packing as an attribute, MSVC as a pragma. Both are needed: the firmware
+// builds with the Xtensa/RISC-V GCC, while the host replay harness (firmware/test_host/replay.c)
+// builds with whatever C compiler the dev machine has, MSVC included. The on-flash layout these
+// produce is identical -- tools/decode_drive.py unpacks it either way.
+#if defined(_MSC_VER)
+#define DRIVE_LOG_PACKED
+#pragma pack(push, 1)
+#else
+#define DRIVE_LOG_PACKED __attribute__((packed))
+#endif
+
 // 16-byte common header + 112-byte payload. Fixed size keeps the flash ring trivially indexable
 // (32 records per 4096-byte sector) and makes a torn write cost exactly one record.
-typedef struct __attribute__((packed)) {
+typedef struct DRIVE_LOG_PACKED {
     uint16_t magic;        // DRIVE_LOG_MAGIC; 0xFFFF means "erased/free slot"
     uint8_t version;       // DRIVE_LOG_VERSION
     uint8_t kind;          // drive_log_kind_t
@@ -63,7 +74,7 @@ _Static_assert(sizeof(drive_log_record_t) == DRIVE_LOG_RECORD_SIZE, "drive log r
 
 // Tier 1. Mirrors the wire fields; the phone's own log holds the notification this came from, and
 // `sequence` is the join key between the two sides.
-typedef struct __attribute__((packed)) {
+typedef struct DRIVE_LOG_PACKED {
     uint32_t sequence;
     int16_t icon_rotation_deg;
     uint16_t speed_kmh_x10;
@@ -78,7 +89,7 @@ typedef struct __attribute__((packed)) {
 } drive_log_raw_t;
 
 // Tier 2.
-typedef struct __attribute__((packed)) {
+typedef struct DRIVE_LOG_PACKED {
     uint32_t sequence;
     uint8_t icon_type;
     int32_t distance_meters;
@@ -89,7 +100,7 @@ typedef struct __attribute__((packed)) {
 } drive_log_model_t;
 
 // Tier 3.
-typedef struct __attribute__((packed)) {
+typedef struct DRIVE_LOG_PACKED {
     uint32_t sequence;
     uint8_t state;
     uint8_t icon_type;
@@ -104,6 +115,10 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(drive_log_raw_t) <= DRIVE_LOG_RECORD_SIZE - 16, "raw payload too large");
 _Static_assert(sizeof(drive_log_model_t) <= DRIVE_LOG_RECORD_SIZE - 16, "model payload too large");
 _Static_assert(sizeof(drive_log_view_t) <= DRIVE_LOG_RECORD_SIZE - 16, "view payload too large");
+
+#if defined(_MSC_VER)
+#pragma pack(pop)
+#endif
 
 #if defined(OPENAPEX_DRIVE_LOG) && OPENAPEX_DRIVE_LOG
 

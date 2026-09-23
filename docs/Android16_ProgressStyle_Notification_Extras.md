@@ -78,7 +78,44 @@ and is unreliable (measured `263°` on a real right-hand exit, misclassified as 
 centroid (the exit tick's tip) for roundabout icons specifically, instead of PCA — same real
 exit then measured `87°`, correctly bucketed as RIGHT.
 
-## Open question: can we identify the maneuver without parsing the bitmap?
+## ANSWERED (2026-09-23 ride capture): Maps ships one glyph per maneuver
+
+Everything below this heading down to "Unresolved" was written before a full drive was captured.
+The 2026-09-23 Bunnings ride settled it, and the answer is lead 2 — **bitmap fingerprinting**:
+
+- Across 1521 relayed packets, every maneuver class produced **one exact, unvarying**
+  `iconRotationDeg`, and its `largeIcon` mask fingerprint was likewise constant within the class.
+  11 masks ↔ 11 angles, 1:1.
+- Maps therefore does **not** rotate a single arrow. It ships a distinct pre-rendered bitmap per
+  maneuver, and `extractIconRotationDeg()` is measuring a per-glyph constant, not geometry.
+- So the angle is usable, but as a **lookup key**, never as an angle. `derive_maneuver_from_angle()`
+  and `derive_roundabout_direction()` in `firmware/main/normalize.c` are now switch tables over the
+  observed values, with `UNKNOWN` for anything unseen rather than a bucketed guess.
+
+Observed table (angle → mask → maneuver):
+
+| ° | mask | maneuver |
+|---|---|---|
+| 0 | `0x14c1db44` | head / depart |
+| 0 | `0xd0c4eb44` | right-hand ramp lane guidance — **collides with head/depart** |
+| 113 | `0x52a3927d` | turn left |
+| 133 | `0x2060b4fa` | destination pin |
+| 135 | `0xcb794cdc` | roundabout, "take the Nth exit" (NZ, left-hand traffic) |
+| 169 | `0xa5c5b7f3` | roundabout, "continue straight onto ..." |
+| 181 | `0xe39dc9b1` | merge |
+| 247 | `0xfe8a3cb4` | turn right |
+| 283 | `0x776c7837` | sharp right |
+| 325 | `0x51f1bfdd` | left-hand exit ramp |
+
+The single collision at 0° is resolved by text: the lane/ramp wording rule in `derive_maneuver()`
+runs before the angle fallback.
+
+**Text and glyph are two independent witnesses, and they agree wherever both speak.** Text is
+primary in `normalize_packet()` because it is explicit and needs no table; the glyph covers exactly
+what text cannot say ("take the 1st exit" names no direction; a destination title is a bare place
+name), and text covers what the glyph cannot (an unseen bitmap in a new release or another locale).
+
+## Open question (superseded): can we identify the maneuver without parsing the bitmap?
 
 The earlier capture closed the door on `android.largeIcon` (always `TYPE_BITMAP`, no resource id),
 but it only logged `largeIcon` and `smallIcon`. Two leads were never tested:
@@ -119,10 +156,14 @@ icons) — not just large/small.
 Capture with `adb logcat -s OpenApexRelay` over a drive that includes at least one left turn, one
 right turn, one roundabout and one straight/continue.
 
-## Unresolved: arrow handedness vs roundabout handedness
+## Resolved: arrow handedness vs roundabout handedness
 
 An on-road run reported every left/right inverted, so `derive_maneuver_from_angle()` (PCA arrow
-path) was mirrored in `firmware/main/normalize.c`. `derive_roundabout_direction()` was **not**
-mirrored: it uses a different extractor (farthest-point exit tick, not PCA) and the one real
-measurement on record — a right-hand exit at `87°` — agrees with the unmirrored mapping. If the
-next drive shows roundabouts inverted too, mirror that function as well.
+path) was mirrored in `firmware/main/normalize.c`, and `derive_roundabout_direction()` was left
+unmirrored on the strength of a single bench measurement (a right-hand exit at `87°`).
+
+Both are now moot. Mirroring was patching a symptom of treating a per-glyph constant as an angle:
+handedness was never being *measured*, so no sign convention could make it reliably right. The
+`87°` bench figure does not appear anywhere in the 1521-packet ride capture and should not be
+relied on. Both functions are glyph lookups now; to extend them, capture the drive and read the
+angle/mask pair off `tools/decode_drive.py` output rather than reasoning about rotation.

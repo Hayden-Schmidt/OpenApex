@@ -159,65 +159,150 @@ static void test_normalize_roundabout_and_sharp(void) {
     assert(m.icon_type == NAV_ICON_SHARP_LEFT);
 }
 
-// A roundabout with an icon-rotation angle present must stay a roundabout and pick up the
-// angle-derived exit direction -- this is the exact regression the arbitration bug produced
-// (roundabout notifications silently downgraded to a plain turn/slight/sharp bucket because
-// derive_maneuver_from_angle() has no roundabout case).
+// Roundabouts: the text names the direction when it can, the glyph when it can't, and neither
+// route may ever resolve to a non-roundabout icon.
+//
+// Angles here are the real glyph identifiers observed on the 2026-09-23 capture, not synthetic
+// bearings -- see derive_maneuver_from_angle() for why an arbitrary angle is meaningless.
 static void test_normalize_roundabout_direction_from_angle(void) {
     uint8_t p[RAW_NOTIF_PACKET_SIZE];
     raw_notif_t raw;
     nav_model_t m;
 
-    // Roundabout handedness IS mirrored, like the arrow path: roundabouts read mostly backward on
-    // the road. See derive_roundabout_direction() for why "mostly" means the mirror is only half
-    // the fix.
+    // "take the Nth exit" carries no direction: the glyph decides. 135 is the first-exit glyph.
     build_packet_with_angle(p, "At the roundabout take the 1st exit", NULL, NULL, -1, -1,
-                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, -90);
-    packet_decode(p, sizeof(p), &raw);
-    normalize_packet(&raw, &m);
-    assert(m.icon_type == NAV_ICON_ROUNDABOUT_RIGHT);
-
-    build_packet_with_angle(p, "At the roundabout take the 3rd exit", NULL, NULL, -1, -1,
-                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 90);
+                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 135);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
     assert(m.icon_type == NAV_ICON_ROUNDABOUT_LEFT);
 
+    // THE BUNNINGS REGRESSION. The text says "continue straight" in so many words; the glyph
+    // (169) used to be bucketed as a left-hand exit and won, showing a left arrow for a
+    // straight-through roundabout. Text must win here.
+    build_packet_with_angle(p, "At the roundabout, continue straight onto Home Pl", NULL, NULL,
+                             -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 169);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ROUNDABOUT_STRAIGHT);
+
+    // An unseen glyph on a roundabout still renders as a roundabout, never as a plain turn.
     build_packet_with_angle(p, "At the roundabout take the 2nd exit", NULL, NULL, -1, -1,
-                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 0);
+                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 42);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
     assert(m.icon_type == NAV_ICON_ROUNDABOUT_STRAIGHT);
 }
 
-// Title text outranks the icon-rotation angle for every non-roundabout maneuver. The PCA angle is
-// only a rough, sometimes wrong-handed estimate (first on-road run got every left/right backwards
-// through it), so a title that literally says "Turn left" must win -- angle is the fallback only.
+// Title text outranks the glyph wherever the text classifies at all, and the glyph table covers
+// what the text cannot express.
 static void test_text_outranks_angle(void) {
     uint8_t p[RAW_NOTIF_PACKET_SIZE];
     raw_notif_t raw;
     nav_model_t m;
 
-    // Angle says slight-something; text says a hard left turn. Text wins.
+    // Glyph 247 is the right-turn bitmap; the text says left. Text wins.
     build_packet_with_angle(p, "Turn left", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
-                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 30);
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 247);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
     assert(m.icon_type == NAV_ICON_TURN_LEFT);
 
-    // Unclassifiable text (non-English phrasing) -- the angle is the fallback. +90 is LEFT under
-    // the corrected mirrored handedness.
+    // Unclassifiable text (non-English phrasing) -- the glyph table is the fallback.
     build_packet_with_angle(p, "Bitte abbiegen", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
-                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 90);
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 113);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
     assert(m.icon_type == NAV_ICON_TURN_LEFT);
 
     build_packet_with_angle(p, "Bitte abbiegen", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
-                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, -90);
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 247);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
     assert(m.icon_type == NAV_ICON_TURN_RIGHT);
+
+    // An angle that is not a known glyph is not a maneuver. Inventing one from the old severity
+    // buckets is what drew a left turn at the destination.
+    build_packet_with_angle(p, "Bitte abbiegen", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 57);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_UNKNOWN);
+}
+
+// The destination is the one maneuver Google Maps never names: the title is the saved-place label
+// ("350 m . Home"), which no keyword can match. Glyph 133 is the destination pin.
+static void test_destination_glyph_is_arrived(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+
+    build_packet_with_angle(p, "Home", NULL, "350", -1, -1, RAW_U16_UNKNOWN,
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 133);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ARRIVED);
+    assert(m.distance_meters == 350);
+
+    // "Arriving" -- the stem the old "arrive" match missed entirely.
+    build_packet(p, "Arriving", NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN,
+                 RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ARRIVED);
+}
+
+// Motorway lane guidance is a ramp departure, not a 90-degree turn -- but "Use any lane to turn
+// right" is a genuine right turn that happens to contain the same "lane" word.
+static void test_lane_guidance_is_a_ramp_not_a_turn(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+
+    build_packet(p, "Use the left 2 lanes to take exit 412 for Route 25", NULL, NULL, -1, -1,
+                 RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_SLIGHT_LEFT);
+
+    build_packet(p, "Use the right lanes to take the Rte 31 ramp", NULL, NULL, -1, -1,
+                 RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_SLIGHT_RIGHT);
+
+    build_packet(p, "Use any lane to turn right onto E Coast Rd", NULL, NULL, -1, -1,
+                 RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_RIGHT);
+}
+
+// "1.1 km" parsed as one metre through strtol(), so the terminal counted down from 1 m while the
+// turn was still a kilometre out.
+static void test_kilometre_distance_parses(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+
+    build_packet(p, "Turn right", NULL, "1.1 km", -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN,
+                 RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.distance_meters == 1100);
+
+    // U+00A0 no-break space, which is what Maps actually sends between number and unit.
+    build_packet(p, "Turn right", NULL, "1.0\xc2\xa0km", -1, -1, RAW_U16_UNKNOWN,
+                 RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.distance_meters == 1000);
+
+    // Metres are unchanged.
+    build_packet(p, "Turn right", NULL, "250\xc2\xa0m", -1, -1, RAW_U16_UNKNOWN,
+                 RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.distance_meters == 250);
 }
 
 // The street name must never feed the maneuver keyword match: "Wright St" contains "right".
@@ -243,6 +328,9 @@ int main(void) {
     test_normalize_roundabout_and_sharp();
     test_normalize_roundabout_direction_from_angle();
     test_text_outranks_angle();
+    test_destination_glyph_is_arrived();
+    test_lane_guidance_is_a_ramp_not_a_turn();
+    test_kilometre_distance_parses();
     test_street_name_does_not_flip_direction();
     puts("packet + normalize tests passed");
     return 0;

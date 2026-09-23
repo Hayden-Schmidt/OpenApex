@@ -31,21 +31,40 @@ static nav_icon_t derive_maneuver(const char *text) {
     if (street_sep != NULL) *street_sep = '\0';
 
     if (contains(lower, "u-turn") || contains(lower, "u turn")) return NAV_ICON_U_TURN;
-    // Direction isn't in the text (Google Maps roundabout phrasing is "take the Nth exit", not
-    // left/right) -- default to straight here, refined by icon_rotation_deg in normalize_packet()
-    // when available. Never reclassified away from a roundabout type; see that comment for why.
-    if (contains(lower, "roundabout")) return NAV_ICON_ROUNDABOUT_STRAIGHT;
-    if (contains(lower, "arrive") || contains(lower, "destination") || contains(lower, "reached")) return NAV_ICON_ARRIVED;
+    // Roundabouts: Google Maps phrases the exit as "take the Nth exit", which names no direction --
+    // but it also emits "continue straight onto <street>", which names one exactly. Read that when
+    // it is there; leave the rest to the glyph table in normalize_packet(). Getting this wrong is
+    // what showed a left-hand roundabout for a straight-through one on the 2026-09-23 capture.
+    if (contains(lower, "roundabout")) {
+        if (contains(lower, "straight")) return NAV_ICON_ROUNDABOUT_STRAIGHT;
+        if (contains(lower, "left")) return NAV_ICON_ROUNDABOUT_LEFT;
+        if (contains(lower, "right")) return NAV_ICON_ROUNDABOUT_RIGHT;
+        return NAV_ICON_UNKNOWN;  // "take the 1st exit" -- direction is only in the glyph
+    }
+    // "arriv" rather than "arrive": Maps says "Arriving", which the longer stem misses.
+    if (contains(lower, "arriv") || contains(lower, "destination") || contains(lower, "reached")) return NAV_ICON_ARRIVED;
     if (contains(lower, "sharp right")) return NAV_ICON_SHARP_RIGHT;
     if (contains(lower, "sharp left")) return NAV_ICON_SHARP_LEFT;
     // Fork/merge/exit wording is a lane change, not a 90-degree turn -- the slight glyphs are the
     // honest rendering. Checked before the bare left/right fallbacks below so they win.
-    if (contains(lower, "slight right") || contains(lower, "keep right") ||
+    // "slightly right" as well as "slight right": Maps uses both ("turn slightly left onto ...").
+    if (contains(lower, "slight right") || contains(lower, "slightly right") ||
+        contains(lower, "keep right") ||
         contains(lower, "exit right") || contains(lower, "fork right") ||
         contains(lower, "merge right") || contains(lower, "ramp on the right")) return NAV_ICON_SLIGHT_RIGHT;
-    if (contains(lower, "slight left") || contains(lower, "keep left") ||
+    if (contains(lower, "slight left") || contains(lower, "slightly left") ||
+        contains(lower, "keep left") ||
         contains(lower, "exit left") || contains(lower, "fork left") ||
         contains(lower, "merge left") || contains(lower, "ramp on the left")) return NAV_ICON_SLIGHT_LEFT;
+    // Motorway lane guidance: "Use the left 2 lanes to take exit 412" and "Use the right lanes to
+    // take the Rte 31 ramp" are ramp departures, not 90-degree turns, and the bare left/right
+    // fallback below called both of them full turns on the 2026-09-23 capture. Gated on the
+    // exit/ramp wording as well as the lane wording, so "Use any lane to turn right onto E Coast
+    // Rd" -- same "lane" word, a genuine right turn -- still falls through to TURN_RIGHT.
+    if (contains(lower, "lane") && (contains(lower, "exit") || contains(lower, "ramp"))) {
+        if (contains(lower, "right")) return NAV_ICON_SLIGHT_RIGHT;
+        if (contains(lower, "left")) return NAV_ICON_SLIGHT_LEFT;
+    }
     if (contains(lower, "right")) return NAV_ICON_TURN_RIGHT;
     if (contains(lower, "left")) return NAV_ICON_TURN_LEFT;
     if (contains(lower, "straight") || contains(lower, "continue") || contains(lower, "head ") ||
@@ -53,52 +72,69 @@ static nav_icon_t derive_maneuver(const char *text) {
     return NAV_ICON_UNKNOWN;
 }
 
-// Buckets a maneuver-arrow rotation angle (degrees, 0 = up/straight) into the normalized maneuver
-// set. This is geometry, not language, so it survives any title phrasing — but on-road capture
-// showed it is only a rough approximation of the real maneuver, so it is now the FALLBACK, used
-// only when derive_maneuver() couldn't classify the title text (see normalize_packet()).
+// Maps the maneuver-arrow rotation angle onto the normalized maneuver set.
 //
-// Handedness: the extracted angle runs COUNTER-clockwise relative to the displayed arrow (every
-// left/right came out mirrored on the first on-road run), so increasing angle means "more left"
-// here, not "more right". Thresholds themselves are still a first approximation.
+// This is a GLYPH LOOKUP, not geometry. The 2026-09-23 capture settled what the angle actually is:
+// across 1521 packets, every maneuver class produced one exact, unvarying angle, and the
+// notification's largeIcon mask fingerprint was likewise constant within the class. Google Maps
+// does not rotate a single arrow -- it ships a distinct pre-rendered bitmap per maneuver, so
+// NavNotificationRelayService.extractIconRotationDeg is measuring a per-glyph constant. That is
+// why the old severity/handedness bucketing was never better than "mostly right": there was no
+// angle to bucket.
+//
+// Read as an identifier the same number is exact. Each entry below is an observed
+// (angle, glyph fingerprint, maneuver) triple from that capture; the fingerprint is recorded in the
+// comment because the phone has it and a future packet version could carry it directly, which
+// would remove the one collision noted below.
 static nav_icon_t derive_maneuver_from_angle(int16_t angle_deg) {
     int a = ((int)angle_deg) % 360;
     if (a < 0) a += 360;
 
-    if (a <= 20 || a >= 340) return NAV_ICON_STRAIGHT;
-    if (a <= 180) {
-        if (a <= 45) return NAV_ICON_SLIGHT_LEFT;
-        if (a <= 135) return NAV_ICON_TURN_LEFT;
-        if (a <= 170) return NAV_ICON_SHARP_LEFT;
-        return NAV_ICON_U_TURN;
+    switch (a) {
+    // 0 is AMBIGUOUS: both the head/depart glyph (mask 0x14c1db44) and the right-hand ramp glyph
+    // (0xd0c4eb44) report it. Depart is the commoner of the two and the safer default; the ramp
+    // case is caught by the lane/ramp wording in derive_maneuver() before it ever reaches here.
+    case 0:   return NAV_ICON_STRAIGHT;         // 0x14c1db44 "Head toward ..."
+    case 113: return NAV_ICON_TURN_LEFT;        // 0x52a3927d
+    case 133: return NAV_ICON_ARRIVED;          // 0x2060b4fa destination pin -- the title is the
+                                                // place name ("Home"), which no keyword can catch
+    case 181: return NAV_ICON_STRAIGHT;         // 0xe39dc9b1 "Merge onto ..."
+    case 247: return NAV_ICON_TURN_RIGHT;       // 0xfe8a3cb4
+    case 283: return NAV_ICON_SHARP_RIGHT;      // 0x776c7837
+    case 325: return NAV_ICON_SLIGHT_LEFT;      // 0x51f1bfdd left-hand exit ramp
+    default:  break;
     }
-    if (a >= 315) return NAV_ICON_SLIGHT_RIGHT;
-    if (a >= 225) return NAV_ICON_TURN_RIGHT;
-    if (a >= 190) return NAV_ICON_SHARP_RIGHT;
-    return NAV_ICON_U_TURN;
+    // An unseen glyph. UNKNOWN is the honest answer: inventing a maneuver from an angle that is not
+    // an angle is what produced a left turn at the destination on the 2026-09-23 ride.
+    return NAV_ICON_UNKNOWN;
 }
 
-// Buckets an icon-rotation angle into a roundabout exit direction. Separate from
-// derive_maneuver_from_angle() -- that function has no roundabout case and exists only to bucket
-// turn severity for point-to-point maneuvers, not roundabout exit direction.
+// Roundabout exit direction from the same glyph table. Kept separate from
+// derive_maneuver_from_angle() because the roundabout glyphs are their own family -- a roundabout
+// must never be able to resolve to a plain turn.
 static nav_icon_t derive_roundabout_direction(int16_t angle_deg) {
     int a = ((int)angle_deg) % 360;
     if (a < 0) a += 360;
-    // Mirrored, like derive_maneuver_from_angle(). Roundabouts read "mostly backward" on the road,
-    // which outranks the single bench measurement in
-    // docs/Android16_ProgressStyle_Notification_Extras.md (a right-hand exit at 87deg) that this
-    // mapping used to be built on.
-    //
-    // "Mostly", not "always", is the tell that the handedness is only half the problem: the exit
-    // tick comes from a farthest-point search over the icon mask
-    // (NavNotificationRelayService.extractIconRotationDeg), which has no way to tell the exit
-    // spoke from the entry spoke or from the roundabout ring itself, so it picks the wrong feature
-    // on some icons regardless of which way the result is mirrored. Fixing that needs the logged
-    // (angle, displayed icon, actual roundabout) triples the drive logger now captures -- this flip
-    // only corrects the systematic half.
-    if (a <= 20 || a >= 340) return NAV_ICON_ROUNDABOUT_STRAIGHT;
-    if (a <= 180) return NAV_ICON_ROUNDABOUT_LEFT;
-    return NAV_ICON_ROUNDABOUT_RIGHT;
+
+    switch (a) {
+    case 169: return NAV_ICON_ROUNDABOUT_STRAIGHT;  // 0xa5c5b7f3 "continue straight onto ..."
+    // 0xcb794cdc is the "take the 1st exit" glyph. On the capture (New Zealand, left-hand traffic)
+    // that exit was a left-hand one. Whether Maps ships a mirrored glyph in right-hand-traffic
+    // countries is untested -- if a right-hand-drive capture ever shows 135 on a right-hand exit,
+    // this entry is the thing to revisit, not the caller.
+    case 135: return NAV_ICON_ROUNDABOUT_LEFT;
+    default:  break;
+    }
+    return NAV_ICON_ROUNDABOUT_STRAIGHT;  // unseen glyph: still a roundabout, direction unknown
+}
+
+// Whether the title names a roundabout at all, independent of which exit it names. derive_maneuver()
+// returns UNKNOWN for "take the 1st exit" (the text carries no direction), so the roundabout-ness
+// has to be asked separately or it would be lost on exactly the phrasing that needs the glyph most.
+static bool title_is_roundabout(const char *text) {
+    char lower[RAW_TITLE_STR_LEN];
+    to_lower(text, lower, sizeof(lower));
+    return contains(lower, "roundabout");
 }
 
 static bool is_roundabout(nav_icon_t icon) {
@@ -127,14 +163,42 @@ static size_t extract_street(const char *text, char *out, size_t out_len) {
     return n;
 }
 
-// Parses a distance in metres from a plain number string ("250") or text-embedded number.
-// Returns -1 on no parse.
+// Parses a distance in metres from a plain number string ("250"), a text-embedded number, or a
+// kilometre-suffixed decimal ("1.1 km"). Returns -1 on no parse.
+//
+// The km case is not cosmetic: strtol() stops at the decimal point, so "1.1 km" used to parse as
+// ONE METRE and the terminal counted down from 1 m while the turn was still a kilometre away.
+// Nineteen packets on the 2026-09-23 capture did exactly that.
 static int32_t parse_distance_metres(const char *s) {
     if (s == NULL || s[0] == '\0') return -1;
     char *end = NULL;
     long v = strtol(s, &end, 10);
     if (end == s) return -1;
     if (v < 0) return -1;
+
+    // Fractional part, if any. Kept as thousandths so the km conversion below is exact integer
+    // work -- no float, and no rounding surprises on a unit whose last digit is 100 m.
+    long milli = 0;
+    if (*end == '.' || *end == ',') {
+        const char *frac = end + 1;
+        for (int i = 0; i < 3; i++) {
+            milli *= 10;
+            if (frac[0] >= '0' && frac[0] <= '9') {
+                milli += frac[0] - '0';
+                frac++;
+            }
+        }
+        end = (char *)frac;
+    }
+
+    // Unit suffix: skip separators (including the U+00A0 no-break space Maps uses, whose UTF-8
+    // bytes are 0xC2 0xA0) and look for a leading 'k'.
+    while (*end == ' ' || *end == '\t' || (unsigned char)*end == 0xC2 || (unsigned char)*end == 0xA0) {
+        end++;
+    }
+    if (*end == 'k' || *end == 'K') {
+        return (int32_t)(v * 1000 + milli);
+    }
     return (int32_t)v;
 }
 
@@ -148,22 +212,24 @@ void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     out->battery_percent = 0xFF;
     out->sequence = raw->sequence;
 
-    // Title-text keyword matching is PRIMARY. The icon-rotation angle is language-independent and
-    // was tried as the arbiter first, but on-road capture showed the PCA angle both misjudges
-    // turn severity and reports the wrong handedness often enough that it can't outrank text that
-    // literally says "Turn left". It is now only the fallback for titles derive_maneuver() can't
-    // classify (non-English locales, unseen phrasings, reroute/exit wording).
+    // Text and glyph are two independent, mutually-redundant witnesses to the same maneuver, and
+    // the 2026-09-23 capture showed they agree wherever both speak. So: TEXT FIRST, because it is
+    // explicit and needs no lookup table, and the GLYPH TABLE for what text cannot express.
     //
-    // Roundabouts stay a special case in the other direction: Google Maps phrases them as "take
-    // the Nth exit", so the text identifies the roundabout but never the exit direction. There
-    // the angle is still the only direction source -- used to refine left/right/straight, never
-    // to reclassify away from "roundabout" (derive_maneuver_from_angle has no roundabout value
-    // and would silently downgrade it to a plain turn).
+    // The two cover each other's blind spots exactly:
+    //   - text has no direction for "At the roundabout, take the 1st exit"   -> glyph has it
+    //   - text is just a place name at the destination ("350 m . Home")      -> glyph has it
+    //   - glyph is an unseen bitmap in a non-English locale or a new release -> text has it
+    //
+    // A roundabout is never allowed to resolve to a plain turn: derive_roundabout_direction() has
+    // no non-roundabout value, so the worst case is ROUNDABOUT_STRAIGHT, not a wrong turn arrow.
+    const bool roundabout = title_is_roundabout(raw->title_str);
     nav_icon_t text_icon = derive_maneuver(raw->title_str);
-    if (is_roundabout(text_icon)) {
-        out->icon_type = (raw->icon_rotation_deg != RAW_I16_UNKNOWN)
+    if (roundabout) {
+        out->icon_type = is_roundabout(text_icon) ? text_icon
+                       : (raw->icon_rotation_deg != RAW_I16_UNKNOWN)
                               ? derive_roundabout_direction(raw->icon_rotation_deg)
-                              : text_icon;
+                              : NAV_ICON_ROUNDABOUT_STRAIGHT;
     } else if (text_icon != NAV_ICON_UNKNOWN) {
         out->icon_type = text_icon;
     } else if (raw->icon_rotation_deg != RAW_I16_UNKNOWN) {

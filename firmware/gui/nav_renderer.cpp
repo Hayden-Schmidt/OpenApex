@@ -574,7 +574,12 @@ void NavRenderer::draw_compass_ring(lv_layer_t *layer, const lv_area_t &coords) 
     }
 
     if (!north_known_) return;
-    const float screen_angle = north_heading_rad_ - kPi / 2.0f;
+    // The route is drawn heading-up: the bike's forward direction is pinned to the top of the
+    // screen, so the world -- north included -- rotates the OPPOSITE way to the heading. Hence the
+    // negation. Without it the marker sweeps at exactly the right rate in exactly the wrong
+    // direction, which is what "the compass spins backwards" on the 2026-09-23 ride was.
+    // (-kPi/2 then converts "clockwise from up" to the atan2 convention, 0 = +x.)
+    const float screen_angle = -north_heading_rad_ - kPi / 2.0f;
     const float nc = std::cos(screen_angle), ns = std::sin(screen_angle);
     const float tip_r = half * (1.0f - kCompassNorthLength);
     const nav_pt_t tip = {cx + nc * tip_r, cy + ns * tip_r};
