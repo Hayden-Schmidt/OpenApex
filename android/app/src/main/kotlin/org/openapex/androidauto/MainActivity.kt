@@ -42,11 +42,11 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         Log.i("OpenApexMain", "permissions result: ${permissions.zip(grantResults.toList())}")
-        if (requestCode == REQUEST_FOREGROUND_PERMISSIONS) {
-            requestBackgroundLocation()
-            return
+        when (requestCode) {
+            REQUEST_FOREGROUND_PERMISSIONS -> requestBackgroundLocation()
+            REQUEST_BACKGROUND_LOCATION -> onBackgroundLocationResult()
+            else -> associateWithTerminal()
         }
-        associateWithTerminal()
     }
 
     /**
@@ -74,14 +74,23 @@ class MainActivity : Activity() {
             associateWithTerminal()
             return
         }
-        if (shouldShowRequestPermissionRationale(BACKGROUND_LOCATION)) {
-            // The system dialog will still be shown, so it is worth asking.
-            requestPermissions(arrayOf(BACKGROUND_LOCATION), REQUEST_BACKGROUND_LOCATION)
-        } else {
+        // Always ask first, and decide from the RESULT rather than from
+        // shouldShowRequestPermissionRationale(). That flag is false both before the first ask and
+        // after a permanent denial, so branching on it sends a first-run user straight to Settings
+        // and they never see the dialog at all. Asking is harmless when the dialog is spent --
+        // requestPermissions() just returns the existing answer immediately.
+        requestPermissions(arrayOf(BACKGROUND_LOCATION), REQUEST_BACKGROUND_LOCATION)
+    }
+
+    /** Called with the outcome of the background-location ask; Settings is the fallback. */
+    private fun onBackgroundLocationResult() {
+        if (!hasBackgroundLocation()) {
+            // Either denied, or the one-shot dialog was already spent and nothing was shown.
+            // "Allow all the time" only exists in Settings, so that is the only place left to go.
             Log.w("OpenApexMain", "background location not granted; opening settings")
             openAppSettings()
-            associateWithTerminal()
         }
+        associateWithTerminal()
     }
 
     private fun hasBackgroundLocation(): Boolean =
