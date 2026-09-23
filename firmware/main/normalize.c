@@ -86,46 +86,106 @@ static nav_icon_t derive_maneuver(const char *text) {
 // (angle, glyph fingerprint, maneuver) triple from that capture; the fingerprint is recorded in the
 // comment because the phone has it and a future packet version could carry it directly, which
 // would remove the one collision noted below.
-static nav_icon_t derive_maneuver_from_angle(int16_t angle_deg) {
-    int a = ((int)angle_deg) % 360;
-    if (a < 0) a += 360;
+//
+// MATCHED WITH TOLERANCE, not by equality. The angle is a measurement of a rendered bitmap, so it
+// is only as stable as the bitmap and the measurement: a Maps release that nudges a glyph by a
+// pixel, or a different display density, can move it a degree or two. Exact-match would answer
+// UNKNOWN for a glyph we plainly recognise. The tolerance is deliberately far smaller than the
+// gap between any two entries (the tightest is 133 -> 113, 20 degrees apart), so widening
+// recognition cannot turn one maneuver into another; glyph_tables_are_separable() in
+// firmware/test_host/packet_normalize_test.c enforces that invariant as the tables grow.
+#define GLYPH_ANGLE_TOLERANCE_DEG 3
 
-    switch (a) {
+static const glyph_entry_t MANEUVER_GLYPHS[] = {
     // 0 is AMBIGUOUS: both the head/depart glyph (mask 0x14c1db44) and the right-hand ramp glyph
     // (0xd0c4eb44) report it. Depart is the commoner of the two and the safer default; the ramp
     // case is caught by the lane/ramp wording in derive_maneuver() before it ever reaches here.
-    case 0:   return NAV_ICON_STRAIGHT;         // 0x14c1db44 "Head toward ..."
-    case 113: return NAV_ICON_TURN_LEFT;        // 0x52a3927d
-    case 133: return NAV_ICON_ARRIVED;          // 0x2060b4fa destination pin -- the title is the
-                                                // place name ("Home"), which no keyword can catch
-    case 181: return NAV_ICON_STRAIGHT;         // 0xe39dc9b1 "Merge onto ..."
-    case 247: return NAV_ICON_TURN_RIGHT;       // 0xfe8a3cb4
-    case 283: return NAV_ICON_SHARP_RIGHT;      // 0x776c7837
-    case 325: return NAV_ICON_SLIGHT_LEFT;      // 0x51f1bfdd left-hand exit ramp
-    default:  break;
-    }
-    // An unseen glyph. UNKNOWN is the honest answer: inventing a maneuver from an angle that is not
-    // an angle is what produced a left turn at the destination on the 2026-09-23 ride.
-    return NAV_ICON_UNKNOWN;
-}
+    {0,   NAV_ICON_STRAIGHT},      // 0x14c1db44 "Head toward ..."
+    {113, NAV_ICON_TURN_LEFT},     // 0x52a3927d
+    {133, NAV_ICON_ARRIVED},       // 0x2060b4fa destination pin -- the title is the place name
+                                   // ("Home", "Daifuku Oceania"), which no keyword can catch
+    {181, NAV_ICON_STRAIGHT},      // 0xe39dc9b1 "Merge onto ..."
+    {247, NAV_ICON_TURN_RIGHT},    // 0xfe8a3cb4
+    {283, NAV_ICON_SHARP_RIGHT},   // 0x776c7837
+    {325, NAV_ICON_SLIGHT_LEFT},   // 0x51f1bfdd left-hand exit ramp
+};
 
-// Roundabout exit direction from the same glyph table. Kept separate from
-// derive_maneuver_from_angle() because the roundabout glyphs are their own family -- a roundabout
-// must never be able to resolve to a plain turn.
-static nav_icon_t derive_roundabout_direction(int16_t angle_deg) {
-    int a = ((int)angle_deg) % 360;
-    if (a < 0) a += 360;
-
-    switch (a) {
-    case 169: return NAV_ICON_ROUNDABOUT_STRAIGHT;  // 0xa5c5b7f3 "continue straight onto ..."
+static const glyph_entry_t ROUNDABOUT_GLYPHS[] = {
+    {169, NAV_ICON_ROUNDABOUT_STRAIGHT},  // 0xa5c5b7f3 "continue straight onto ..."
     // 0xcb794cdc is the "take the 1st exit" glyph. On the capture (New Zealand, left-hand traffic)
     // that exit was a left-hand one. Whether Maps ships a mirrored glyph in right-hand-traffic
     // countries is untested -- if a right-hand-drive capture ever shows 135 on a right-hand exit,
     // this entry is the thing to revisit, not the caller.
-    case 135: return NAV_ICON_ROUNDABOUT_LEFT;
-    default:  break;
+    {135, NAV_ICON_ROUNDABOUT_LEFT},
+};
+
+// Shortest angular distance between two bearings, 0..180. Needed because the table wraps: 359 and
+// 1 are two degrees apart, not 358.
+static int angle_separation(int a, int b) {
+    int d = a - b;
+    d %= 360;
+    if (d < 0) d += 360;
+    return d > 180 ? 360 - d : d;
+}
+
+// Nearest table entry within GLYPH_ANGLE_TOLERANCE_DEG, or `fallback` if the glyph is unseen.
+// Nearest rather than first-match so that behaviour stays well-defined even if a future pair of
+// entries is added closer together than the test allows.
+static nav_icon_t glyph_lookup(const glyph_entry_t *table, size_t count, int16_t angle_deg,
+                               nav_icon_t fallback) {
+    int a = ((int)angle_deg) % 360;
+    if (a < 0) a += 360;
+
+    nav_icon_t best = fallback;
+    int best_sep = GLYPH_ANGLE_TOLERANCE_DEG + 1;
+    for (size_t i = 0; i < count; i++) {
+        int sep = angle_separation(a, table[i].angle_deg);
+        if (sep <= GLYPH_ANGLE_TOLERANCE_DEG && sep < best_sep) {
+            best_sep = sep;
+            best = table[i].icon;
+        }
     }
-    return NAV_ICON_ROUNDABOUT_STRAIGHT;  // unseen glyph: still a roundabout, direction unknown
+    return best;
+}
+
+// Exposed for the host tests, which walk the tables to prove no two entries are close enough for
+// the tolerance to confuse them. Not part of the terminal's runtime path.
+const glyph_entry_t *normalize_maneuver_glyphs(size_t *count) {
+    *count = sizeof(MANEUVER_GLYPHS) / sizeof(MANEUVER_GLYPHS[0]);
+    return MANEUVER_GLYPHS;
+}
+
+const glyph_entry_t *normalize_roundabout_glyphs(size_t *count) {
+    *count = sizeof(ROUNDABOUT_GLYPHS) / sizeof(ROUNDABOUT_GLYPHS[0]);
+    return ROUNDABOUT_GLYPHS;
+}
+
+int normalize_glyph_tolerance_deg(void) {
+    return GLYPH_ANGLE_TOLERANCE_DEG;
+}
+
+int normalize_angle_separation(int a, int b) {
+    return angle_separation(a, b);
+}
+
+static nav_icon_t derive_maneuver_from_angle(int16_t angle_deg) {
+    // An unseen glyph resolves to UNKNOWN. That is the honest answer: inventing a maneuver from an
+    // angle that is not an angle is what produced a left turn at the destination on the 2026-09-23
+    // ride. Unseen glyphs are recoverable from any capture without extra logging -- the RAW record
+    // carries icon_rotation_deg for every packet and the MODEL record carries the icon it produced,
+    // so `tools/decode_drive.py --glyphs` lists exactly which angles are not yet in these tables.
+    return glyph_lookup(MANEUVER_GLYPHS,
+                        sizeof(MANEUVER_GLYPHS) / sizeof(MANEUVER_GLYPHS[0]),
+                        angle_deg, NAV_ICON_UNKNOWN);
+}
+
+// Roundabout exit direction from its own glyph family. Kept separate from
+// derive_maneuver_from_angle() because a roundabout must never be able to resolve to a plain turn:
+// the fallback here is still a roundabout, just one with an unknown exit direction.
+static nav_icon_t derive_roundabout_direction(int16_t angle_deg) {
+    return glyph_lookup(ROUNDABOUT_GLYPHS,
+                        sizeof(ROUNDABOUT_GLYPHS) / sizeof(ROUNDABOUT_GLYPHS[0]),
+                        angle_deg, NAV_ICON_ROUNDABOUT_STRAIGHT);
 }
 
 // Whether the title names a roundabout at all, independent of which exit it names. derive_maneuver()

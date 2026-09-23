@@ -17,6 +17,7 @@ change to the v2 packet format.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import struct
 import sys
@@ -43,7 +44,12 @@ ICONS = ["STRAIGHT", "TURN_LEFT", "TURN_RIGHT", "SLIGHT_LEFT", "SLIGHT_RIGHT",
          "ROUNDABOUT_STRAIGHT", "U_TURN", "ARRIVED", "UNKNOWN"]
 # firmware/main/view_state.h
 STATES = ["IDLE", "ACTIVE", "STALE", "ARRIVED"]
-BLE_EVENTS = {1: "CONNECTED", 2: "DISCONNECTED", 3: "DECODE_FAILED", 4: "QUEUE_FULL"}
+BLE_EVENTS = {1: "CONNECTED", 2: "DISCONNECTED", 3: "DECODE_FAILED", 4: "QUEUE_FULL",
+              # detail = negotiated ATT MTU; anything below RAW_NOTIF_PACKET_SIZE + 3 (149)
+              # means the central never negotiated up and every write is being truncated.
+              5: "MTU",
+              # detail = the (too short) write length actually received.
+              6: "TRUNCATED"}
 
 
 def cstr(raw: bytes) -> str:
@@ -151,6 +157,92 @@ def format_record(record: dict) -> str:
     return f"{head} {body}"
 
 
+def pair_by_sequence(records):
+    """Pairs each RAW record with the MODEL the terminal derived from it.
+
+    Keyed on (boot_id, seq), never on seq alone: `sequence` restarts at 1 on every phone-side
+    service start, so across a multi-session capture the same seq belongs to several different
+    packets. Joining on seq alone silently attributes one drive's title to another drive's icon.
+    """
+    models = {(r["boot_id"], r["seq"]): r for r in records if r["kind"] == "MODEL"}
+    for raw in (r for r in records if r["kind"] == "RAW"):
+        yield raw, models.get((raw["boot_id"], raw["seq"]))
+
+
+def report_glyphs(records) -> int:
+    """Lists every maneuver-glyph angle in the capture and what the terminal made of it.
+
+    The terminal's angle->maneuver tables are a lookup over observed glyph bitmaps, so the way to
+    find a glyph they don't know yet is to look for an angle that produced UNKNOWN. No extra
+    firmware logging is needed for this: the RAW record already carries icon_rotation_deg for every
+    packet and the MODEL record carries the resulting icon.
+    """
+    seen = {}
+    for raw, model in pair_by_sequence(records):
+        angle = raw["icon_rotation_deg"]
+        icon = model["icon"] if model else "(no model)"
+        entry = seen.setdefault(angle, {"count": 0, "icons": collections.Counter(), "titles": set()})
+        entry["count"] += 1
+        entry["icons"][icon] += 1
+        if raw["title"]:
+            entry["titles"].add(raw["title"])
+
+    print(f"{'angle':>7}  {'n':>5}  resolved-to")
+    unseen = []
+    for angle in sorted(seen, key=lambda a: (a is None, a)):
+        entry = seen[angle]
+        icons = ", ".join(f"{name}x{n}" for name, n in entry["icons"].most_common())
+        label = "none" if angle is None else str(angle)
+        print(f"{label:>7}  {entry['count']:>5}  {icons}")
+        for title in sorted(entry["titles"])[:3]:
+            print(f"{'':>16}{title!r}")
+        # An angle is "unseen by the glyph tables" only if it exists AND produced UNKNOWN. A null
+        # angle producing UNKNOWN just means the notification had no maneuver icon to measure.
+        if angle is not None and entry["icons"].get("UNKNOWN"):
+            unseen.append((angle, entry["icons"]["UNKNOWN"]))
+
+    if unseen:
+        print("\nAngles NOT in the terminal's glyph tables (add to normalize.c after confirming "
+              "the maneuver from the titles above):", file=sys.stderr)
+        for angle, count in unseen:
+            print(f"  {angle} ({count} packet(s) resolved to UNKNOWN)", file=sys.stderr)
+    else:
+        print("\nevery maneuver glyph in this capture is known to the terminal", file=sys.stderr)
+    return 0
+
+
+def report_link(records) -> int:
+    """Per-boot BLE link health: negotiated MTU, and whether packets actually decoded.
+
+    A session with writes arriving but nothing decoding is the truncating-MTU failure; a session
+    with an MTU below RAW_NOTIF_PACKET_SIZE + 3 names the cause outright.
+    """
+    min_usable_mtu = 146 + 3
+    boots = []
+    for r in records:
+        if r["boot_id"] not in boots:
+            boots.append(r["boot_id"])
+
+    for boot in boots:
+        rs = [r for r in records if r["boot_id"] == boot]
+        kinds = collections.Counter(r["kind"] for r in rs)
+        events = collections.Counter(r.get("event") for r in rs if r["kind"] == "BLE")
+        mtus = [r["detail"] for r in rs if r.get("event") == "MTU"]
+        mtu = mtus[-1] if mtus else None
+        decoded = kinds.get("RAW", 0)
+        failed = events.get("DECODE_FAILED", 0) + events.get("TRUNCATED", 0)
+
+        print(f"{boot}  decoded={decoded:<5} failed={failed:<6} mtu={mtu if mtu else 'not negotiated'}")
+        if mtu is not None and mtu < min_usable_mtu:
+            print(f"    MTU {mtu} < {min_usable_mtu}: every packet is truncated and discarded")
+        elif mtu is None and failed:
+            print("    no MTU exchange logged and writes failed to decode — likely truncation "
+                  "(pre-fix firmware does not log MTU, so this may be an older capture)")
+        elif decoded == 0 and failed:
+            print("    link delivered writes but nothing decoded")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -159,12 +251,22 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="emit JSONL instead of a text timeline")
     parser.add_argument("--kind", action="append",
                         help="only this record kind (repeatable): BOOT BLE RAW MODEL VIEW")
+    parser.add_argument("--glyphs", action="store_true",
+                        help="report which maneuver-glyph angles appeared and what each resolved "
+                             "to; flags angles missing from the terminal's glyph tables")
+    parser.add_argument("--link", action="store_true",
+                        help="report ATT MTU and packet-decode health per boot session")
     args = parser.parse_args()
 
     records = decode_records(args.esp_log.read_bytes())
     if args.kind:
         wanted = {k.upper() for k in args.kind}
         records = [r for r in records if r["kind"] in wanted]
+
+    if args.glyphs:
+        return report_glyphs(records)
+    if args.link:
+        return report_link(records)
 
     phone = load_phone(args.phone) if args.phone else {}
     if phone:

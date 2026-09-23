@@ -30,6 +30,56 @@ static uint8_t s_own_addr_type;
 
 static void start_advertising(void);
 
+// Consecutive failed decodes on the current link. Reset by any successful decode.
+static uint32_t s_consecutive_decode_failures;
+static uint16_t s_negotiated_mtu;
+
+// Whether the link is currently unusable: nothing has decoded for a long run of writes. The GUI
+// reads this to show a fault instead of a frozen last-good screen.
+bool ble_link_is_faulted(void) {
+    return s_consecutive_decode_failures >= BLE_LINK_FAULT_THRESHOLD;
+}
+
+uint16_t ble_link_negotiated_mtu(void) {
+    return s_negotiated_mtu;
+}
+
+/**
+ * Records a failed decode, WITHOUT letting a broken link eat the log partition.
+ *
+ * On the 2026-09-24 capture a single stale connection wrote 6,565 consecutive DECODE_FAILED
+ * records -- 80% of the 1 MB ring -- and destroyed the history of every earlier drive while
+ * saying exactly one thing over and over. The information in the 6,565th identical failure is
+ * zero. So: log the first few in full, then only on a change of length or a power-of-two
+ * milestone, which keeps the shape of a long outage (when it started, how long it ran) at a cost
+ * of a few dozen records instead of thousands.
+ */
+static void note_decode_failure(uint16_t out_len) {
+    static uint16_t last_len;
+    const uint32_t n = ++s_consecutive_decode_failures;
+
+    // A write too short to be a packet is a truncating link (MTU never negotiated up), not a
+    // corrupt or stale-format packet. Worth its own event -- it has a different fix.
+    const drive_log_ble_event_t event = (out_len < RAW_NOTIF_PACKET_SIZE)
+                                            ? DRIVE_LOG_BLE_TRUNCATED
+                                            : DRIVE_LOG_BLE_DECODE_FAILED;
+
+    const bool milestone = (n <= 3) || (out_len != last_len) || ((n & (n - 1)) == 0);
+    last_len = out_len;
+    if (!milestone) {
+        return;
+    }
+    if (event == DRIVE_LOG_BLE_TRUNCATED) {
+        ESP_LOGW(TAG, "truncated write: got %u bytes, need %u (ATT MTU is %u; central never "
+                      "negotiated up?) [%lu consecutive]",
+                 out_len, (unsigned)RAW_NOTIF_PACKET_SIZE, s_negotiated_mtu, (unsigned long)n);
+    } else {
+        ESP_LOGW(TAG, "dropped malformed/unsupported-version packet (len=%u) [%lu consecutive]",
+                 out_len, (unsigned long)n);
+    }
+    drive_log_ble(event, (int32_t)out_len);
+}
+
 static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                           struct ble_gatt_access_ctxt *ctxt, void *arg) {
     (void)conn_handle;
@@ -45,10 +95,10 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
     raw_notif_t raw;
     if (!packet_decode(buf, out_len, &raw)) {
-        ESP_LOGW(TAG, "dropped malformed/unsupported-version packet (len=%u)", out_len);
-        drive_log_ble(DRIVE_LOG_BLE_DECODE_FAILED, (int32_t)out_len);
+        note_decode_failure(out_len);
         return 0; // ATT-level success; the packet is simply discarded downstream
     }
+    s_consecutive_decode_failures = 0;
     drive_log_raw(&raw);
     ESP_LOGI(TAG, "decoded packet seq=%lu title=\"%s\" dist=\"%s\" speed_x10=%u heading=%u",
              (unsigned long)raw.sequence, raw.title_str, raw.distance_str, raw.speed_kmh_x10, raw.heading_deg);
@@ -88,6 +138,9 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         if (event->connect.status == 0) {
             ESP_LOGI(TAG, "central connected, conn_handle=%u", event->connect.conn_handle);
             drive_log_ble(DRIVE_LOG_BLE_CONNECTED, (int32_t)event->connect.conn_handle);
+            // Fresh link: the previous connection's MTU and failure run say nothing about it.
+            s_consecutive_decode_failures = 0;
+            s_negotiated_mtu = BLE_ATT_MTU_DFLT;
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
             start_advertising();
@@ -100,6 +153,21 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
         start_advertising();
+        return 0;
+    case BLE_GAP_EVENT_MTU:
+        // The exchange the whole packet path depends on. CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU is 256
+        // here, so this reflects what the CENTRAL asked for; if it never asks, no event arrives and
+        // the MTU stays at the 23-byte default, which silently truncates every 146-byte packet to
+        // 20 bytes. Logged either way so a capture shows which happened instead of leaving it to be
+        // inferred from the failure lengths.
+        s_negotiated_mtu = event->mtu.value;
+        ESP_LOGI(TAG, "ATT MTU negotiated: %u (need >= %u)", event->mtu.value,
+                 (unsigned)(RAW_NOTIF_PACKET_SIZE + 3));
+        drive_log_ble(DRIVE_LOG_BLE_MTU, (int32_t)event->mtu.value);
+        if (event->mtu.value < RAW_NOTIF_PACKET_SIZE + 3) {
+            ESP_LOGE(TAG, "ATT MTU %u is too small for a %u-byte packet; writes will be truncated",
+                     event->mtu.value, (unsigned)RAW_NOTIF_PACKET_SIZE);
+        }
         return 0;
     case BLE_GAP_EVENT_REPEAT_PAIRING:
         // A central we already have a bond for is re-pairing (e.g. it lost its bond). Delete the

@@ -8,6 +8,8 @@ import android.companion.CompanionDeviceManager
 import android.companion.ObservingDevicePresenceRequest
 import android.content.Intent
 import android.content.IntentSender
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -30,7 +32,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i("OpenApexMain", "onCreate")
-        requestPermissions(requiredPermissions, 0)
+        requestPermissions(requiredPermissions, REQUEST_FOREGROUND_PERMISSIONS)
     }
 
     override fun onRequestPermissionsResult(
@@ -40,7 +42,57 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         Log.i("OpenApexMain", "permissions result: ${permissions.zip(grantResults.toList())}")
+        if (requestCode == REQUEST_FOREGROUND_PERMISSIONS) {
+            requestBackgroundLocation()
+            return
+        }
         associateWithTerminal()
+    }
+
+    /**
+     * Second-stage request for ACCESS_BACKGROUND_LOCATION, which decides whether the rider gets a
+     * compass at all.
+     *
+     * Without it, the OS treats location as foreground-only, and RelayService — which is normally
+     * started from the background by CDM presence or the boot fallback — cannot promote itself to
+     * the "location" foreground-service type. The promotion throws, speed/heading never arrive,
+     * and the terminal shows a dead compass ring for the whole ride. The 2026-09-24 capture had
+     * four sessions like that and nothing on screen said why.
+     *
+     * Android 11+ refuses to grant it in the same dialog as the foreground permissions, and from
+     * API 30 the system dialog for it is one-shot: once the user has answered, requestPermissions
+     * returns immediately without showing anything. So ask once, and thereafter send them to the
+     * settings page where "Allow all the time" actually lives, rather than firing an invisible
+     * request and silently carrying on degraded.
+     */
+    private fun requestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            associateWithTerminal()
+            return
+        }
+        if (hasBackgroundLocation()) {
+            associateWithTerminal()
+            return
+        }
+        if (shouldShowRequestPermissionRationale(BACKGROUND_LOCATION)) {
+            // The system dialog will still be shown, so it is worth asking.
+            requestPermissions(arrayOf(BACKGROUND_LOCATION), REQUEST_BACKGROUND_LOCATION)
+        } else {
+            Log.w("OpenApexMain", "background location not granted; opening settings")
+            openAppSettings()
+            associateWithTerminal()
+        }
+    }
+
+    private fun hasBackgroundLocation(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            checkSelfPermission(BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun openAppSettings() {
+        startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.fromParts("package", packageName, null)),
+        )
     }
 
     private fun associateWithTerminal() {
@@ -125,5 +177,8 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_ASSOCIATE = 1
+        private const val REQUEST_FOREGROUND_PERMISSIONS = 2
+        private const val REQUEST_BACKGROUND_LOCATION = 3
+        private const val BACKGROUND_LOCATION = android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
     }
 }
