@@ -15,6 +15,12 @@ android {
         versionName = "0.1.0"
     }
 
+    // RelayRecorder (dev-only drive capture) gates itself on BuildConfig.DEBUG, so BuildConfig has
+    // to be generated. AGP 8 defaults this off.
+    buildFeatures {
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

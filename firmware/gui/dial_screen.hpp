@@ -23,7 +23,11 @@ private:
     nav_icon_t last_icon_ = static_cast<nav_icon_t>(-1); // forces add_maneuver on first update()
     uint16_t last_heading_deg_ = 0xFFFFu;
 
-    lv_point_precise_t status_shaft_pts_[4];
+    // Sized for the ARRIVED badge's ring, which is the longer of the two glyphs: one point every
+    // kStatusRingStepDeg from 0 to 360 inclusive. The UNKNOWN glyph needs only 4.
+    static constexpr float kStatusRingStepDeg = 24.0f;
+    static constexpr int kStatusShaftMaxPts = 360 / 24 + 1;
+    lv_point_precise_t status_shaft_pts_[kStatusShaftMaxPts];
     lv_point_precise_t status_head_pts_[2];
 
     static void draw_event_cb(lv_event_t *e);

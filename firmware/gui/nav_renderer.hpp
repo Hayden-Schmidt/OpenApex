@@ -57,25 +57,71 @@ private:
     };
 
     // -- route model (Demo/demo.js's routePoints/cumDist) ---------------------------------------
-    // Fixed capacity: the largest single maneuver is 63 points (roundabout_right); a transition
-    // briefly holds the tail of the previous maneuver plus the new one, so 2x that with margin
-    // covers every case without a heap allocation ever happening here.
-    static constexpr int kRouteCapacity = 160;
-    nav_pt_t route_points_[kRouteCapacity];
-    float cum_dist_[kRouteCapacity];
+    // The route is a chain of EXACT primitives, not sampled points: nav_icons_data.h ships each
+    // maneuver as the straights/curves maneuvers.json declares, and each is drawn whole (one quad
+    // per straight, one lv_draw_arc per curve). A curve therefore has no internal joints to seam,
+    // and a turn costs ~3 draws instead of ~22 quads + ~21 discs.
+    //
+    // Seg is the world-space, radians twin of nav_segment_t (the shipped data is local-space and
+    // degrees, matching the authoring convention).
+    struct Seg {
+        nav_seg_type_t type;
+        nav_pt_t p0;     // start point, world space
+        float h0;        // travel heading at p0, radians
+        float length;    // arc length for arcs
+        float radius;
+        float turn;      // signed sweep, radians; 0 for lines
+        float start_dist; // cumulative along the whole route, not the maneuver
+        float end_dist;
+    };
+
+    // Fixed capacity: the longest maneuver is NAV_ICON_MAX_SEGMENTS; a transition briefly holds the
+    // tail of the previous maneuver plus the whole new one, so 2x that with margin covers every
+    // case without a heap allocation ever happening here.
+    static constexpr int kRouteCapacity = NAV_ICON_MAX_SEGMENTS * 2 + 4;
+    Seg route_[kRouteCapacity];
     int route_count_ = 0;
 
+    float start_dist() const;
     float total_dist() const;
-    void append_points(const nav_pt_t *pts, int count);
+    void append_segments(const nav_segment_t *segs, int count, const Transform &t);
+    // Index of the segment containing `dist` (clamped to the route's ends).
     int index_at_dist(float dist) const;
+    // Point/heading at a distance along one segment -- the only place arc geometry is unpacked.
+    static void eval_segment(const Seg &s, float dist, nav_pt_t *out_point, float *out_heading);
     void point_and_heading_at_dist(float dist, nav_pt_t *out_point, float *out_heading) const;
-    // Writes the rendered window into out[], returns point count (capped at max_out).
-    int slice_window(float from_dist, float to_dist, nav_pt_t *out, int max_out) const;
+    // Clips `s` to [from_dist, to_dist]; the result is just a shorter segment of the same kind
+    // (arc length is linear in sweep angle at constant radius, so an arc trims proportionally).
+    static Seg clip_segment(const Seg &s, float from_dist, float to_dist);
+    // Writes the revealed window into out[], returns segment count (capped at max_out).
+    int slice_window(float from_dist, float to_dist, Seg *out, int max_out) const;
     void prune_before(float dist);
 
-    Transform compute_transform(const nav_pt_t local_main[2]) const;
+    Transform compute_transform(const nav_segment_t &first) const;
     static nav_pt_t transform_point(const nav_pt_t &p, const Transform &t);
     Pose compute_pose(const nav_icon_data_t &data, const Transform &t) const;
+
+    void draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam, float basis_c,
+                      float basis_s, const lv_area_t &coords, float width_px) const;
+
+    // -- arrowhead glyph (pre-rasterized alpha mask) ---------------------------------------------
+    // The arrowhead is a concave 7-gon, and LVGL has no polygon fill: splitting it into triangles
+    // makes each shared interior edge an anti-aliasing boundary, where two ~50%-covered pixels
+    // composite to ~75% instead of opaque -- a permanent lighter seam no amount of outward growth
+    // can close. So it isn't filled as geometry at all: the glyph is a FIXED shape at a FIXED size
+    // (only its rotation changes frame to frame), so it's rasterized once here into an 8-bit
+    // coverage mask and drawn each frame as a single recoloured, rotated lv_draw_image. One shape,
+    // one anti-aliasing pass, no interior edges -- seams become structurally impossible.
+    //
+    // Sized for the largest panel this renderer is built for; the glyph's on-screen extent is
+    // ~0.186 * display diameter (see build_arrowhead_mask), so 64 covers diameters up to ~344.
+    static constexpr int kHeadMaskMaxSide = 64;
+    uint8_t head_mask_[kHeadMaskMaxSide * kHeadMaskMaxSide];
+    lv_image_dsc_t head_img_{};
+    // Where the glyph's tip sits inside the mask -- both the image's placement anchor and the
+    // rotation pivot, so the tip stays pinned to the route end exactly as the polygon fill did.
+    nav_pt_t head_pivot_{0.0f, 0.0f};
+    void build_arrowhead_mask();
 
     // -- tween state (Demo/demo.js's cur/from/to/tick/retarget) ---------------------------------
     Pose cur_;

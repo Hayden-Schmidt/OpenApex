@@ -34,6 +34,14 @@ static bool on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_e
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     (void)disp;
+    // LVGL renders RGB565 as native little-endian uint16s; the GC9A01 clocks each pixel in
+    // high-byte-first over SPI, so the two bytes have to be swapped before the transfer. Without
+    // this the panel reads every pixel's halves transposed. Pure black (0x0000) and pure white
+    // (0xFFFF) are byte-symmetric and survive unharmed, which is why the arrow itself still looked
+    // right -- but red (0xF800) arrives as 0x00F8 (blue), and every anti-aliased grey edge pixel
+    // lands on an unrelated near-black colour, which destroys the edge gradient and makes smooth
+    // diagonals read as hard stair-steps.
+    lv_draw_sw_rgb565_swap(px_map, lv_area_get_size(area));
     esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
 }
 
@@ -75,13 +83,14 @@ void display_driver_init(void) {
 
     const esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = BOARD_DISP_PIN_RST,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_gc9a01(io, &panel_cfg, &s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, false));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
     const size_t buf_px = (size_t)BOARD_DISP_WIDTH * kBufLines;

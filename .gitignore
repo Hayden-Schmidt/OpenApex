@@ -10,6 +10,7 @@ firmware/build/
 firmware/sdkconfig
 firmware/sdkconfig.old
 firmware/sdkconfig.prototype_c3
+firmware/sdkconfig.prototype_c3_devlog
 firmware/managed_components/
 
 # PlatformIO generated files
@@ -37,3 +38,12 @@ build/
 # Local agent/tool state, not project source
 /.claude/
 /.serena/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Drive captures: contain the rider's route, addresses and timestamps. Never commit raw.
+*.jsonl
+esp_log.bin
+drivelogs/

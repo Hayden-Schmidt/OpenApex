@@ -38,6 +38,10 @@ import java.nio.charset.StandardCharsets
  * notification's maneuver arrow bitmap, extracted on the phone via image-moment analysis (the
  * bitmap itself is too large to relay and only exists on Android). Bucketing this angle into a
  * maneuver (turn/slight/sharp/u-turn) is the ESP32 normalizer's job, same as title-text parsing.
+ * On-road capture showed the extracted angle is only a rough estimate and comes out mirrored
+ * (left/right swapped) relative to the displayed arrow, so the normalizer now uses it only as a
+ * fallback behind title-text parsing — except for roundabout exit direction, where the title text
+ * ("take the Nth exit") never states a direction and this is the only source.
  */
 const val RAW_NOTIF_PACKET_SIZE = 146
 const val RAW_NOTIF_VERSION = 2

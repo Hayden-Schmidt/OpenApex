@@ -1,5 +1,6 @@
 #include "ble_link.h"
 #include "countdown.h"
+#include "drive_log.h"
 #include "display_driver.h"
 #include "gui_app.hpp"
 #include "packet.h"
@@ -91,12 +92,17 @@ static void gui_task(void *argument) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "OpenApex terminal boot: PROTOTYPE_C3_GC9A01");
-    countdown_reset();
+    pipeline_reset();
     memset(&shared_view, 0, sizeof(shared_view));
     shared_view.state = VIEW_IDLE;
 
     raw_packet_queue = xQueueCreate(RAW_PACKET_QUEUE_LEN, sizeof(raw_notif_t));
     view_mutex = xSemaphoreCreateMutex();
+
+    // Dev-only; no-ops entirely in the production build. Started before ble_link_init so the very
+    // first connect/packet of a session is captured.
+    drive_log_init();
+    drive_log_boot("PROTOTYPE_C3_GC9A01");
 
     // ble_link_init spawns NimBLE's own host task (single-producer into raw_packet_queue); there
     // is no separate ble_handler_task to create.

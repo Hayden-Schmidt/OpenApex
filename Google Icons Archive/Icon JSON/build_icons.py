@@ -246,11 +246,58 @@ def frame_center(pts, secondary_path=None):
     return [round((min(xs) + max(xs)) / 2, 1), round((min(ys) + max(ys)) / 2, 1)]
 
 
+def segments_from_ops(p0, heading_deg, ops):
+    """Walks the same op list chain() walks, but keeps each op as an exact
+    primitive instead of tessellating it into sample points -- this is what the
+    firmware renders (one lv_draw_arc per curve, one quad per straight), so no
+    sampling density and therefore no quad-to-quad seams. `n` (sample count) is
+    dropped; it is purely a JS-canvas-path concern.
+
+    Returns a list of dicts: {"type": "line"|"arc", "p0", "heading0",
+    "length"|("radius","turn_deg"), "start_dist", "end_dist"} with distances
+    cumulative along the maneuver from its start (arc length =
+    radius * |turn_deg| * pi/180), which is what the reveal animation slices on.
+    """
+    segs = []
+    cur, h, d = p0, heading_deg, 0.0
+    for step in ops:
+        if step[0] == "line":
+            _, length, _n = step
+            seg = {"type": "line", "p0": cur, "heading0": h,
+                   "length": float(length), "radius": 0.0, "turn_deg": 0.0}
+            cur = add(cur, heading_vec(h), length)
+        else:
+            _, radius, turn_deg, _n = step
+            length = radius * abs(turn_deg) * math.pi / 180.0
+            seg = {"type": "arc", "p0": cur, "heading0": h,
+                   "length": length, "radius": float(radius),
+                   "turn_deg": float(turn_deg)}
+            pts, h = arc_points(cur, h, radius, turn_deg, 2)
+            cur = pts[-1]
+        seg["start_dist"] = d
+        d += seg["length"]
+        seg["end_dist"] = d
+        segs.append(seg)
+    return segs
+
+
+def round_segs(segs):
+    out = []
+    for s in segs:
+        r = dict(s)
+        r["p0"] = [round(s["p0"][0], 2), round(s["p0"][1], 2)]
+        for k in ("heading0", "length", "radius", "turn_deg", "start_dist", "end_dist"):
+            r[k] = round(s[k], 4)
+        out.append(r)
+    return out
+
+
 def build_from_steps(name, json_steps, secondary_path=None):
     ops, loop_center = steps_from_json(json_steps)
     pts, final_h = chain((0.0, 0.0), -90.0, ops)
     icon = {
         "name": name,
+        "segments": round_segs(segments_from_ops((0.0, 0.0), -90.0, ops)),
         "main_path": round_pts(pts),
         "rotation": round(norm_angle(final_h - (-90.0)), 1),
         "head_junction": round_pts([pts[-1]])[0],
@@ -262,64 +309,16 @@ def build_from_steps(name, json_steps, secondary_path=None):
     return icon
 
 
-def triangulate(poly):
-    """Ear clipping, Python twin of Demo/lvgl_shim.js's LV.triangulate(). Run once here (not on
-    device) since ARROWHEAD.perimeter is fixed data -- the C port ships only the resulting
-    triangle index list, no triangulation code."""
-    n = len(poly)
-    if n < 3:
-        return []
-    idx = list(range(n))
-
-    def area2(a, b, c):
-        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-
-    signed_area = sum(
-        poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1]
-        for i in range(n)
-    )
-    if signed_area < 0:
-        idx.reverse()
-
-    def inside(a, b, c, p):
-        return area2(a, b, p) >= 0 and area2(b, c, p) >= 0 and area2(c, a, p) >= 0
-
-    tris = []
-    guard = 0
-    while len(idx) > 3 and guard < n * n:
-        guard += 1
-        clipped = False
-        for i in range(len(idx)):
-            i0 = idx[(i - 1) % len(idx)]
-            i1 = idx[i]
-            i2 = idx[(i + 1) % len(idx)]
-            a, b, c = poly[i0], poly[i1], poly[i2]
-            if area2(a, b, c) <= 0:
-                continue
-            clean = True
-            for j in idx:
-                if j in (i0, i1, i2):
-                    continue
-                if inside(a, b, c, poly[j]):
-                    clean = False
-                    break
-            if not clean:
-                continue
-            tris.append((i0, i1, i2))
-            idx.pop(i)
-            clipped = True
-            break
-        if not clipped:
-            break
-    if len(idx) == 3:
-        tris.append((idx[0], idx[1], idx[2]))
-    return tris
-
-
 def mirror_x(icon, new_name):
     m = json.loads(json.dumps(icon))
     m["name"] = new_name
     m["main_path"] = [[-x, y] for x, y in m["main_path"]]
+    # Reflecting about x=0 maps direction (cos h, sin h) -> (-cos h, sin h),
+    # i.e. h -> 180 - h, and flips every turn's handedness.
+    for s in m["segments"]:
+        s["p0"] = [-s["p0"][0], s["p0"][1]]
+        s["heading0"] = round(norm_angle(180.0 - s["heading0"]), 4)
+        s["turn_deg"] = -s["turn_deg"]
     m["head_junction"] = [-m["head_junction"][0], m["head_junction"][1]]
     m["secondary_path"] = [[-x, y] for x, y in m["secondary_path"]]
     m["frame_center"] = [-m["frame_center"][0], m["frame_center"][1]]
@@ -384,6 +383,53 @@ def check_roundabouts(icons, maneuvers):
             "ROUNDABOUT CHECK FAILED for: " + ", ".join(failed)
             + "\nThe loop centre must lie on the entry centreline (x=0) and the "
             "net heading must match the declared exit."
+        )
+
+
+def check_segments(icons):
+    """The firmware renders `segments`, the JS demo renders `main_path`, and both claim to be the
+    same maneuver -- so prove it here rather than by eyeballing two screens. Walks each segment
+    analytically (the same arithmetic nav_renderer.cpp's eval_segment does) and checks every
+    tessellated main_path point lies on it, and that cumulative distance matches the polyline."""
+    failed = []
+    print("")
+    print("segment/point agreement:")
+    for key, icon in icons.items():
+        segs = icon["segments"]
+
+        def at(d):
+            s = next((s for s in segs if d <= s["end_dist"]), segs[-1])
+            t = (d - s["start_dist"]) / s["length"] if s["length"] else 0.0
+            t = min(max(t, 0.0), 1.0)
+            h = s["heading0"]
+            if s["type"] == "line":
+                return add(s["p0"], heading_vec(h), s["length"] * t)
+            sign = 1.0 if s["turn_deg"] >= 0 else -1.0
+            h0 = math.radians(h)
+            cx = s["p0"][0] + sign * s["radius"] * -math.sin(h0)
+            cy = s["p0"][1] + sign * s["radius"] * math.cos(h0)
+            hr = math.radians(h + s["turn_deg"] * t)
+            return (cx - sign * s["radius"] * -math.sin(hr),
+                    cy - sign * s["radius"] * math.cos(hr))
+
+        pts = icon["main_path"]
+        cum, worst = 0.0, 0.0
+        for i, p in enumerate(pts):
+            if i:
+                cum += math.dist(pts[i - 1], p)
+            worst = max(worst, math.dist(at(cum), p))
+        len_err = abs(cum - segs[-1]["end_dist"])
+        # Tolerance is dominated by the tessellation itself: a chord cuts the corner off its arc by
+        # radius*(1-cos(DEGREES_PER_SAMPLE/2)) ~ 0.1 units here, plus main_path's 0.1 rounding.
+        ok = worst < 0.5 and len_err < 1.0
+        print(f"  {key:22} {len(segs)} segs  max point dev={worst:.3f}  "
+              f"length err={len_err:.3f}  " + ("ok" if ok else "FAIL"))
+        if not ok:
+            failed.append(key)
+    if failed:
+        raise SystemExit(
+            "SEGMENT CHECK FAILED for: " + ", ".join(failed)
+            + "\nThe firmware's primitives no longer trace the same shape as the demo's points."
         )
 
 
@@ -515,7 +561,10 @@ lines = ["// Auto-generated by Google Icons Archive/Icon JSON/build_icons.py fro
          "const ICONS = {"]
 for i, key in enumerate(order):
     comma = "," if i < len(order) - 1 else ""
-    lines.append(f"  {json.dumps(key)}: {json.dumps(icons[key], indent=2)}{comma}")
+    # "segments" is firmware-only (see the C output below); the JS canvas demo keeps
+    # consuming the dense sampled main_path, so its file stays exactly as it was.
+    js_icon = {k: v for k, v in icons[key].items() if k != "segments"}
+    lines.append(f"  {json.dumps(key)}: {json.dumps(js_icon, indent=2)}{comma}")
 lines.append("};")
 lines.append("const ARROWHEAD = " + json.dumps(arrowhead, indent=2) + ";")
 
@@ -525,15 +574,27 @@ print("wrote", DEMO_JS_OUT)
 
 # --- bundle into firmware/gui/nav_icons_data.h (C port, Demo/demo.js's twin) ----------------
 # Same `icons`/`arrowhead` dicts as the JS output above, so the two outputs cannot drift.
-# ARROWHEAD is triangulated here (not on device) since its 7-vertex perimeter is fixed data --
-# see Demo/lvgl_shim.js's triangulate() note.
+# ARROWHEAD ships as its bare 7-point perimeter: the firmware rasterizes it once at boot into an
+# alpha mask and draws that as a single rotated image, so it needs no triangulation (which is what
+# caused the anti-aliased seams down the glyph) and none is emitted.
 
 
 def c_pts(pts):
     return ", ".join(f"{{{x:.2f}f, {y:.2f}f}}" for x, y in pts)
 
 
-head_tris = triangulate(arrowhead["perimeter"])
+def c_segs(segs):
+    out = []
+    for s in segs:
+        kind = "NAV_SEG_LINE" if s["type"] == "line" else "NAV_SEG_ARC"
+        out.append(
+            f"    {{{kind}, {{{s['p0'][0]:.2f}f, {s['p0'][1]:.2f}f}}, {s['heading0']:.4f}f, "
+            f"{s['length']:.4f}f, {s['radius']:.4f}f, {s['turn_deg']:.4f}f, "
+            f"{s['start_dist']:.4f}f, {s['end_dist']:.4f}f}},"
+        )
+    return out
+
+
 
 c_lines = [
     "// Auto-generated by Google Icons Archive/Icon JSON/build_icons.py from",
@@ -546,9 +607,30 @@ c_lines = [
     "",
     "typedef struct { float x, y; } nav_pt_t;",
     "",
+    "// The maneuver body ships as EXACT primitives (the same straights/curves maneuvers.json",
+    "// declares), not as sampled points: the firmware renders a curve with one lv_draw_arc, so",
+    "// there are no quad-to-quad joints inside it to seam. Demo/icons-data.js still gets the",
+    "// tessellated point path -- the JS canvas demo strokes a Path2D and has no such problem.",
+    "// Angles are degrees, x right / y DOWN (SVG convention, matching maneuvers.json).",
+    "// heading0 = travel direction at p0; turn_deg is signed (+ = right/toward +x) and 0 for",
+    "// lines; length is arc length for arcs (radius * |turn_deg| * pi/180); start_dist/end_dist",
+    "// are cumulative along the maneuver, which is what the reveal animation slices on.",
+    "typedef enum { NAV_SEG_LINE = 0, NAV_SEG_ARC = 1 } nav_seg_type_t;",
+    "",
     "typedef struct {",
-    "    const nav_pt_t *main_path;",
-    "    size_t main_count;",
+    "    nav_seg_type_t type;",
+    "    nav_pt_t p0;",
+    "    float heading0;",
+    "    float length;",
+    "    float radius;",
+    "    float turn_deg;",
+    "    float start_dist;",
+    "    float end_dist;",
+    "} nav_segment_t;",
+    "",
+    "typedef struct {",
+    "    const nav_segment_t *main_segments;",
+    "    size_t main_segment_count;",
     "    const nav_pt_t *secondary_path;",
     "    size_t secondary_count;",
     "    nav_pt_t frame_center;",
@@ -564,7 +646,9 @@ c_lines.append("")
 
 for key in order:
     icon = icons[key]
-    c_lines.append(f"static const nav_pt_t nav_icon_{key}_main[] = {{{c_pts(icon['main_path'])}}};")
+    c_lines.append(f"static const nav_segment_t nav_icon_{key}_main[] = {{")
+    c_lines.extend(c_segs(icon["segments"]))
+    c_lines.append("};")
     if icon["secondary_path"]:
         c_lines.append(
             f"static const nav_pt_t nav_icon_{key}_secondary[] = {{{c_pts(icon['secondary_path'])}}};"
@@ -579,9 +663,14 @@ for key in order:
     fc = FRAME_CENTER_OVERRIDES.get(key, icon["frame_center"])
     c_lines.append(
         f"    [NAV_RENDER_{key.upper()}] = {{ nav_icon_{key}_main, "
-        f"{len(icon['main_path'])}, {sec}, {sec_count}, {{{fc[0]:.1f}f, {fc[1]:.1f}f}} }},"
+        f"{len(icon['segments'])}, {sec}, {sec_count}, {{{fc[0]:.1f}f, {fc[1]:.1f}f}} }},"
     )
 c_lines.append("};")
+c_lines.append("")
+c_lines.append("// Longest maneuver, so the renderer can size its route buffer off the data.")
+c_lines.append(
+    f"#define NAV_ICON_MAX_SEGMENTS {max(len(icons[k]['segments']) for k in order)}"
+)
 c_lines.append("")
 
 c_lines.append(f"static const nav_pt_t NAV_ARROWHEAD_PERIMETER[] = {{{c_pts(arrowhead['perimeter'])}}};")
@@ -589,11 +678,6 @@ c_lines.append(f"#define NAV_ARROWHEAD_VERT_COUNT {len(arrowhead['perimeter'])}"
 c_lines.append(f"static const nav_pt_t NAV_ARROWHEAD_TIP = {{{arrowhead['tip'][0]:.1f}f, {arrowhead['tip'][1]:.1f}f}};")
 c_lines.append(f"static const float NAV_ARROWHEAD_HEAD_BASE_HALF_WIDTH = {arrowhead['head_base_half_width']:.1f}f;")
 c_lines.append(f"static const float NAV_ARROWHEAD_HEAD_BASE_DEPTH = {arrowhead['head_base_depth']:.1f}f;")
-c_lines.append(f"static const uint8_t NAV_ARROWHEAD_TRIS[][3] = {{")
-for a, b, c in head_tris:
-    c_lines.append(f"    {{{a}, {b}, {c}}},")
-c_lines.append("};")
-c_lines.append(f"#define NAV_ARROWHEAD_TRI_COUNT {len(head_tris)}")
 c_lines.append("")
 
 with open(FIRMWARE_C_OUT, "w", encoding="utf-8", newline="\n") as f:
@@ -601,6 +685,7 @@ with open(FIRMWARE_C_OUT, "w", encoding="utf-8", newline="\n") as f:
 print("wrote", FIRMWARE_C_OUT)
 
 print("\nrotations:", {k: icons[k]["rotation"] for k in order})
+check_segments(icons)
 check_fit(icons)
 check_roundabouts(icons, maneuvers)
 

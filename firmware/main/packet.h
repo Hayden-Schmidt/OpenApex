@@ -11,6 +11,9 @@
 // v2 also adds icon_rotation_deg (offset 143): the maneuver arrow's rotation angle, extracted on
 // the phone from the notification's icon bitmap (geometry only — no semantic classification, kept
 // on the terminal normalizer per docs/OpenApex_SPEC.md §2.4). 0 = up/straight, clockwise positive.
+// It is a rough estimate and its handedness is mirrored relative to the displayed arrow, so the
+// normalizer treats it as a FALLBACK behind title-text parsing (see normalize.c) — except for
+// roundabout exit direction, which the title text never states.
 #define RAW_NOTIF_PACKET_SIZE 146U
 #define RAW_NOTIF_VERSION 2U
 

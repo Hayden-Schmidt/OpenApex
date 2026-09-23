@@ -14,6 +14,9 @@
 // Applies a newly decoded packet, re-baselining the countdown engine.
 void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_view_state_t *out);
 
+/** Clears maneuver tracking and the countdown. Use instead of countdown_reset() alone. */
+void pipeline_reset(void);
+
 // Advances countdown interpolation to now_ms and refreshes distance/stale in out.
 void view_state_tick(uint32_t now_ms, terminal_view_state_t *out);
 

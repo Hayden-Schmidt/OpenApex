@@ -1,5 +1,6 @@
 #include "ble_link.h"
 
+#include "drive_log.h"
 #include "packet.h"
 
 #include "esp_log.h"
@@ -45,14 +46,17 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     raw_notif_t raw;
     if (!packet_decode(buf, out_len, &raw)) {
         ESP_LOGW(TAG, "dropped malformed/unsupported-version packet (len=%u)", out_len);
+        drive_log_ble(DRIVE_LOG_BLE_DECODE_FAILED, (int32_t)out_len);
         return 0; // ATT-level success; the packet is simply discarded downstream
     }
+    drive_log_raw(&raw);
     ESP_LOGI(TAG, "decoded packet seq=%lu title=\"%s\" dist=\"%s\" speed_x10=%u heading=%u",
              (unsigned long)raw.sequence, raw.title_str, raw.distance_str, raw.speed_kmh_x10, raw.heading_deg);
     // BLE callbacks must never block on a full queue beyond a short bounded wait; drop the
     // packet rather than stall the NimBLE host task if countdown_task has fallen behind.
     if (xQueueSend(s_raw_packet_queue, &raw, pdMS_TO_TICKS(10)) != pdTRUE) {
         ESP_LOGW(TAG, "raw_packet_queue full, dropping packet seq=%lu", (unsigned long)raw.sequence);
+        drive_log_ble(DRIVE_LOG_BLE_QUEUE_FULL, (int32_t)raw.sequence);
     }
     return 0;
 }
@@ -83,6 +87,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
     case BLE_GAP_EVENT_CONNECT:
         if (event->connect.status == 0) {
             ESP_LOGI(TAG, "central connected, conn_handle=%u", event->connect.conn_handle);
+            drive_log_ble(DRIVE_LOG_BLE_CONNECTED, (int32_t)event->connect.conn_handle);
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
             start_advertising();
@@ -90,6 +95,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "central disconnected; reason=%d", event->disconnect.reason);
+        drive_log_ble(DRIVE_LOG_BLE_DISCONNECTED, (int32_t)event->disconnect.reason);
         start_advertising();
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:

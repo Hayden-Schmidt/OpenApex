@@ -40,7 +40,13 @@ bool render_icon_for(nav_icon_t icon, nav_render_icon_t *out) {
         case NAV_ICON_SLIGHT_RIGHT:
             *out = NAV_RENDER_TURN_SLIGHT_RIGHT;
             return true;
-        case NAV_ICON_ROUNDABOUT:
+        case NAV_ICON_ROUNDABOUT_LEFT:
+            *out = NAV_RENDER_ROUNDABOUT_LEFT;
+            return true;
+        case NAV_ICON_ROUNDABOUT_RIGHT:
+            *out = NAV_RENDER_ROUNDABOUT_RIGHT;
+            return true;
+        case NAV_ICON_ROUNDABOUT_STRAIGHT:
             *out = NAV_RENDER_ROUNDABOUT_STRAIGHT;
             return true;
         case NAV_ICON_U_TURN:
@@ -63,6 +69,13 @@ DialScreen::DialScreen()
     lv_obj_set_style_bg_color(root_, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
 
+    // NavRenderer strokes straight into this object's LV_EVENT_DRAW_MAIN layer. An lv_canvas was
+    // tried here instead, on the theory that compositing the arrow's overlapping strokes onto one
+    // surface was needed to stop their anti-aliased joins reading as hairlines -- but the draw
+    // layer is already a pixel buffer holding the background, so each stroke blends against the
+    // previous one's solid pixels there just the same. With every stroke fully opaque the two are
+    // pixel-identical, and the canvas would have cost a display-sized ARGB8888 buffer (225kB at
+    // 240x240) the C3 does not have.
     canvas_obj_ = lv_obj_create(root_);
     lv_obj_set_size(canvas_obj_, lv_pct(100), lv_pct(100));
     lv_obj_center(canvas_obj_);
@@ -107,7 +120,8 @@ void DialScreen::draw_status_glyph(nav_icon_t icon) {
     if (icon == NAV_ICON_ARRIVED) {
         // Full ring (completion badge) + a checkmark drawn into the head-line buffer.
         const float kRadius = S * 0.28f;
-        for (float t = 0.0f; t <= 360.0f + 0.1f; t += 24.0f, ++shaft_count) {
+        for (float t = 0.0f; t <= 360.0f + 0.1f && shaft_count < kStatusShaftMaxPts;
+             t += kStatusRingStepDeg, ++shaft_count) {
             status_shaft_pts_[shaft_count] = point_at(cx, cy, t, kRadius);
         }
         status_head_pts_[0] = pt(cx - S * 0.12f, cy + S * 0.02f);
@@ -128,11 +142,17 @@ void DialScreen::draw_status_glyph(nav_icon_t icon) {
 }
 
 void DialScreen::update(const terminal_view_state_t &state) {
-    // distance_meters is only meaningful in VIEW_ACTIVE (view_state.h) -- blank it otherwise.
-    if (state.state == VIEW_ACTIVE) {
+    // distance_meters is meaningful in VIEW_ACTIVE and VIEW_STALE (view_state.h) -- blank it
+    // otherwise. VIEW_STALE is last-known-good, not garbage: it renders greyed rather than hidden,
+    // because a held distance reads far better on the road than an empty dial.
+    if (state.state == VIEW_ACTIVE || state.state == VIEW_STALE) {
         char text[16];
         std::snprintf(text, sizeof(text), "%u m", static_cast<unsigned>(state.distance_meters));
         lv_label_set_text(distance_label_, text);
+        lv_obj_set_style_text_color(distance_label_,
+                                    state.state == VIEW_STALE ? lv_color_hex(0x808080)
+                                                              : lv_color_white(),
+                                    0);
     } else {
         lv_label_set_text(distance_label_, "");
     }

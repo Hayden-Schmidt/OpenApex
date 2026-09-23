@@ -7,9 +7,12 @@
 #include "../main/normalize.h"
 
 // Builds a minimal valid v1 packet in the same layout RawNotifPacket.kt emits.
-static void build_packet(uint8_t *p, const char *title, const char *eta, const char *dist,
-                         int progress, int progress_max, uint16_t speed_x10, uint16_t heading,
-                         uint8_t battery, bool fix_valid) {
+// icon_rotation_deg defaults to RAW_I16_UNKNOWN (see build_packet() below) unless overridden via
+// build_packet_with_angle() -- most fixtures exercise the no-angle-extracted path.
+static void build_packet_with_angle(uint8_t *p, const char *title, const char *eta,
+                                     const char *dist, int progress, int progress_max,
+                                     uint16_t speed_x10, uint16_t heading, uint8_t battery,
+                                     bool fix_valid, int16_t icon_rotation_deg) {
     memset(p, 0, RAW_NOTIF_PACKET_SIZE);
     p[0] = RAW_NOTIF_VERSION;
     p[1] = fix_valid ? 0x01 : 0x00;
@@ -43,6 +46,18 @@ static void build_packet(uint8_t *p, const char *title, const char *eta, const c
         p[131 + i * 2] = 0xFF;
         p[131 + i * 2 + 1] = 0x7F;
     }
+    p[143] = (uint8_t)(icon_rotation_deg & 0xFF);
+    p[144] = (uint8_t)(((uint16_t)icon_rotation_deg >> 8) & 0xFF);
+}
+
+// Same as build_packet_with_angle(), but with icon_rotation_deg left at RAW_I16_UNKNOWN --
+// i.e. the phone didn't extract an angle from the notification icon. Used by every fixture that
+// only wants to exercise the text classifier.
+static void build_packet(uint8_t *p, const char *title, const char *eta, const char *dist,
+                         int progress, int progress_max, uint16_t speed_x10, uint16_t heading,
+                         uint8_t battery, bool fix_valid) {
+    build_packet_with_angle(p, title, eta, dist, progress, progress_max, speed_x10, heading,
+                             battery, fix_valid, (int16_t)RAW_I16_UNKNOWN);
 }
 
 static void test_decode_rejects_malformed(void) {
@@ -128,18 +143,95 @@ static void test_decode_motion_samples(void) {
 
 static void test_normalize_roundabout_and_sharp(void) {
     uint8_t p[RAW_NOTIF_PACKET_SIZE];
-
-    build_packet(p, "At the roundabout take the 2nd exit", NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
     raw_notif_t raw;
-    packet_decode(p, sizeof(p), &raw);
     nav_model_t m;
+
+    // No angle extracted -- text alone identifies a roundabout, defaults to the straight variant.
+    build_packet(p, "At the roundabout take the 2nd exit", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                 RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
-    assert(m.icon_type == NAV_ICON_ROUNDABOUT);
+    assert(m.icon_type == NAV_ICON_ROUNDABOUT_STRAIGHT);
 
     build_packet(p, "Sharp left turn ahead", NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
     assert(m.icon_type == NAV_ICON_SHARP_LEFT);
+}
+
+// A roundabout with an icon-rotation angle present must stay a roundabout and pick up the
+// angle-derived exit direction -- this is the exact regression the arbitration bug produced
+// (roundabout notifications silently downgraded to a plain turn/slight/sharp bucket because
+// derive_maneuver_from_angle() has no roundabout case).
+static void test_normalize_roundabout_direction_from_angle(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+
+    // Roundabout handedness IS mirrored, like the arrow path: roundabouts read mostly backward on
+    // the road. See derive_roundabout_direction() for why "mostly" means the mirror is only half
+    // the fix.
+    build_packet_with_angle(p, "At the roundabout take the 1st exit", NULL, NULL, -1, -1,
+                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, -90);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ROUNDABOUT_RIGHT);
+
+    build_packet_with_angle(p, "At the roundabout take the 3rd exit", NULL, NULL, -1, -1,
+                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 90);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ROUNDABOUT_LEFT);
+
+    build_packet_with_angle(p, "At the roundabout take the 2nd exit", NULL, NULL, -1, -1,
+                             RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 0);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ROUNDABOUT_STRAIGHT);
+}
+
+// Title text outranks the icon-rotation angle for every non-roundabout maneuver. The PCA angle is
+// only a rough, sometimes wrong-handed estimate (first on-road run got every left/right backwards
+// through it), so a title that literally says "Turn left" must win -- angle is the fallback only.
+static void test_text_outranks_angle(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+
+    // Angle says slight-something; text says a hard left turn. Text wins.
+    build_packet_with_angle(p, "Turn left", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 30);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_LEFT);
+
+    // Unclassifiable text (non-English phrasing) -- the angle is the fallback. +90 is LEFT under
+    // the corrected mirrored handedness.
+    build_packet_with_angle(p, "Bitte abbiegen", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 90);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_LEFT);
+
+    build_packet_with_angle(p, "Bitte abbiegen", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                             RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, -90);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_RIGHT);
+}
+
+// The street name must never feed the maneuver keyword match: "Wright St" contains "right".
+static void test_street_name_does_not_flip_direction(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+
+    build_packet(p, "Turn left onto Wright St", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                 RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_LEFT);
+    assert(strcmp(m.street_name, "Wright St") == 0);
 }
 
 int main(void) {
@@ -149,6 +241,9 @@ int main(void) {
     test_normalize_unknown_uses_sentinels();
     test_decode_motion_samples();
     test_normalize_roundabout_and_sharp();
+    test_normalize_roundabout_direction_from_angle();
+    test_text_outranks_angle();
+    test_street_name_does_not_flip_direction();
     puts("packet + normalize tests passed");
     return 0;
 }

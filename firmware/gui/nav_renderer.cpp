@@ -59,17 +59,15 @@ nav_pt_t rotate_point(const nav_pt_t &p, const nav_pt_t &origin, float angle) {
     return {origin.x + dx * c - dy * s, origin.y + dx * s + dy * c};
 }
 
-float heading_of(const nav_pt_t &from, const nav_pt_t &to) {
-    return std::atan2(to.y - from.y, to.x - from.x);
-}
-
 lv_point_precise_t to_lv(const nav_pt_t &p) {
     return {static_cast<lv_value_precise_t>(p.x), static_cast<lv_value_precise_t>(p.y)};
 }
 
 // -- LVGL-shaped drawing primitives (C++ twin of Demo/lvgl_shim.js) --------------------------
 
-// Offsets a convex polygon (<=4 points here) outward by `d` so adjacent filled pieces overlap
+constexpr int kMaxPolyVerts = 8;
+
+// Offsets a convex polygon (<= kMaxPolyVerts points) outward by `d` so adjacent filled pieces overlap
 // instead of abut -- see lvgl_shim.js's SEAMS note for why this exists. Direct port of its
 // inflate(); MITER_LIMIT matches.
 constexpr float kMiterLimit = 2.5f;
@@ -91,7 +89,7 @@ int inflate(const nav_pt_t *pts, int n, float d, nav_pt_t *out) {
         bool valid;
         float px, py, dx, dy;
     };
-    Line lines[4];
+    Line lines[kMaxPolyVerts];
     for (int i = 0; i < n; ++i) {
         const nav_pt_t &p = pts[i];
         const nav_pt_t &q = pts[(i + 1) % n];
@@ -153,16 +151,38 @@ void fill_triangle(lv_layer_t *layer, const nav_pt_t &a, const nav_pt_t &b, cons
     lv_draw_triangle(layer, &dsc);
 }
 
-// LVGL has no quad fill primitive (unlike lv_canvas_draw_polygon(4) in the JS shim comment) --
-// every quad here is convex by construction (a stroked segment's offset rectangle), so it's
-// split into two triangles sharing the a-c diagonal. That diagonal doesn't exist in the JS shim
-// at all (Canvas fills the whole quad as one polygon) -- it's a seam this port introduces, and it
-// needs the exact same per-triangle inflate() growth fillTriangulated() already uses for the
-// arrowhead's triangle-to-triangle seams, or the two halves show a hairline down the diagonal.
-void fill_convex_quad(lv_layer_t *layer, const nav_pt_t &a, const nav_pt_t &b, const nav_pt_t &c,
-                       const nav_pt_t &d, lv_color_t color, float grow = 0.0f) {
-    fill_triangle(layer, a, b, c, color, grow);
-    fill_triangle(layer, a, c, d, color, grow);
+// -- polygon -> 8-bit coverage mask ------------------------------------------------------------
+// Runs once at construction (see NavRenderer::build_arrowhead_mask), never per frame, so a plain
+// supersampled even-odd fill is fine -- no need for a scanline/active-edge rasterizer. 4x4 samples
+// give 17 coverage levels, which is finer than the anti-aliasing LVGL's own primitives produce.
+constexpr int kMaskSupersample = 4;
+
+bool point_in_poly(const nav_pt_t *pts, int n, float x, float y) {
+    bool inside = false;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        if ((pts[i].y > y) == (pts[j].y > y)) continue;
+        const float t = (y - pts[i].y) / (pts[j].y - pts[i].y);
+        if (x < pts[i].x + t * (pts[j].x - pts[i].x)) inside = !inside;
+    }
+    return inside;
+}
+
+void rasterize_poly_a8(const nav_pt_t *pts, int n, int w, int h, uint8_t *out) {
+    constexpr int kSamples = kMaskSupersample * kMaskSupersample;
+    const float step = 1.0f / kMaskSupersample;
+    for (int py = 0; py < h; ++py) {
+        for (int px = 0; px < w; ++px) {
+            int hits = 0;
+            for (int sy = 0; sy < kMaskSupersample; ++sy) {
+                const float y = static_cast<float>(py) + (sy + 0.5f) * step;
+                for (int sx = 0; sx < kMaskSupersample; ++sx) {
+                    const float x = static_cast<float>(px) + (sx + 0.5f) * step;
+                    if (point_in_poly(pts, n, x, y)) ++hits;
+                }
+            }
+            out[py * w + px] = static_cast<uint8_t>((hits * 255) / kSamples);
+        }
+    }
 }
 
 // lv_draw_arc() swept the full circle with width == radius fills a solid disc.
@@ -181,7 +201,7 @@ void fill_circle(lv_layer_t *layer, float cx, float cy, float r, lv_color_t colo
 }
 
 void stroke_line(lv_layer_t *layer, float x1, float y1, float x2, float y2, float width,
-                  lv_color_t color) {
+                  lv_color_t color, bool rounded = false) {
     if (width <= 0.0f) return;
     lv_draw_line_dsc_t dsc;
     lv_draw_line_dsc_init(&dsc);
@@ -189,140 +209,219 @@ void stroke_line(lv_layer_t *layer, float x1, float y1, float x2, float y2, floa
     dsc.p2 = {static_cast<lv_value_precise_t>(x2), static_cast<lv_value_precise_t>(y2)};
     dsc.color = color;
     dsc.width = static_cast<int32_t>(width);
-    dsc.round_start = 0;
-    dsc.round_end = 0;
+    dsc.round_start = rounded;
+    dsc.round_end = rounded;
     lv_draw_line(layer, &dsc);
 }
 
-// One quad per segment (offset by the segment's normal) plus a disc at each interior vertex, so
-// bends read as round joins without LVGL's line draw needing one -- see lvgl_shim.js's
-// strokePolyline() note.
-void stroke_polyline(lv_layer_t *layer, const nav_pt_t *pts, int count, float width,
-                      lv_color_t color, float grow) {
-    if (count < 2 || width <= 0.0f) return;
-    const float h = width / 2.0f;
-    for (int i = 1; i < count; ++i) {
-        const nav_pt_t &a = pts[i - 1];
-        const nav_pt_t &b = pts[i];
-        const float dx = b.x - a.x, dy = b.y - a.y;
-        const float len = std::sqrt(dx * dx + dy * dy);
-        if (len < 1e-9f) continue;
-        const float nx = (-dy / len) * h, ny = (dx / len) * h;
-        fill_convex_quad(layer, {a.x + nx, a.y + ny}, {b.x + nx, b.y + ny}, {b.x - nx, b.y - ny},
-                          {a.x - nx, a.y - ny}, color, grow);
-    }
-    // TODO: disc joins disabled -- flickers at the route's base during maneuver transitions
-    // (interior vertex near cur_.base_dist toggling in/out of the render window frame-to-frame).
-    // for (int i = 1; i < count - 1; ++i) {
-    //     fill_circle(layer, pts[i].x, pts[i].y, h + grow, color);
-    // }
+// A curve is one native LVGL arc -- the reason this renderer carries primitives rather than
+// sampled points. lv_draw_arc fills the band [radius - width, radius], so `radius` is pushed out
+// by half the stroke to centre the band on the true centreline. Rounded ends match
+// lv_draw_line's rounded caps so a straight-to-curve join closes without a separate disc.
+void stroke_arc(lv_layer_t *layer, const nav_pt_t &center, float radius, float start_deg,
+                 float end_deg, float width, lv_color_t color) {
+    if (radius <= 0.0f || width <= 0.0f || end_deg <= start_deg) return;
+    lv_draw_arc_dsc_t dsc;
+    lv_draw_arc_dsc_init(&dsc);
+    dsc.color = color;
+    dsc.opa = LV_OPA_COVER;
+    dsc.center = {static_cast<int32_t>(std::lround(center.x)),
+                  static_cast<int32_t>(std::lround(center.y))};
+    dsc.radius = static_cast<uint16_t>(std::lround(radius + width / 2.0f));
+    dsc.width = static_cast<int32_t>(std::lround(width));
+    dsc.rounded = 1;
+    dsc.start_angle = static_cast<lv_value_precise_t>(start_deg);
+    dsc.end_angle = static_cast<lv_value_precise_t>(end_deg);
+    lv_draw_arc(layer, &dsc);
 }
+
+float deg_of(float rad) { return rad * 180.0f / kPi; }
 
 } // namespace
 
-NavRenderer::NavRenderer(int32_t display_diameter_px) : display_diameter_px_(display_diameter_px) {}
+NavRenderer::NavRenderer(int32_t display_diameter_px) : display_diameter_px_(display_diameter_px) {
+    build_arrowhead_mask();
+}
+
+// Rasterizes NAV_ARROWHEAD_PERIMETER into head_mask_ at its exact final on-screen size, in the
+// glyph's authored orientation (tip at origin, pointing "up"/-y). The size is the same product the
+// polygon fill used to apply per vertex -- kArrowheadScale (the authored glyph size knob, kept in
+// sync with arrowheadScale in Demo/params.js) x kDisplayScale x px_per_unit() -- so changing the
+// authored scale still changes the rendered glyph, it just re-bakes the mask instead of re-scaling
+// vertices. Rotation is NOT baked in: that is the one thing that varies per frame, and
+// lv_draw_image applies it.
+void NavRenderer::build_arrowhead_mask() {
+    const float scale = kArrowheadScale * kDisplayScale * px_per_unit();
+
+    float min_x = 0.0f, min_y = 0.0f, max_x = 0.0f, max_y = 0.0f;
+    for (int i = 0; i < NAV_ARROWHEAD_VERT_COUNT; ++i) {
+        const float x = NAV_ARROWHEAD_PERIMETER[i].x * scale;
+        const float y = NAV_ARROWHEAD_PERIMETER[i].y * scale;
+        min_x = i == 0 ? x : (x < min_x ? x : min_x);
+        max_x = i == 0 ? x : (x > max_x ? x : max_x);
+        min_y = i == 0 ? y : (y < min_y ? y : min_y);
+        max_y = i == 0 ? y : (y > max_y ? y : max_y);
+    }
+
+    // One transparent pixel of margin all round, so the rotation's bilinear sampling has empty
+    // pixels to fade into rather than clamping the glyph's own edge and hardening it.
+    constexpr int kMargin = 1;
+    const float ox = -std::floor(min_x) + kMargin;
+    const float oy = -std::floor(min_y) + kMargin;
+    int w = static_cast<int>(std::ceil(max_x - std::floor(min_x))) + 2 * kMargin;
+    int h = static_cast<int>(std::ceil(max_y - std::floor(min_y))) + 2 * kMargin;
+    LV_ASSERT_MSG(w <= kHeadMaskMaxSide && h <= kHeadMaskMaxSide,
+                  "arrowhead mask too large for this display; raise kHeadMaskMaxSide");
+    if (w > kHeadMaskMaxSide) w = kHeadMaskMaxSide;
+    if (h > kHeadMaskMaxSide) h = kHeadMaskMaxSide;
+
+    nav_pt_t local[NAV_ARROWHEAD_VERT_COUNT];
+    for (int i = 0; i < NAV_ARROWHEAD_VERT_COUNT; ++i) {
+        local[i] = {NAV_ARROWHEAD_PERIMETER[i].x * scale + ox,
+                    NAV_ARROWHEAD_PERIMETER[i].y * scale + oy};
+    }
+    std::memset(head_mask_, 0, sizeof(head_mask_));
+    rasterize_poly_a8(local, NAV_ARROWHEAD_VERT_COUNT, w, h, head_mask_);
+
+    // The tip is authored at the origin, so it lands exactly on the offset.
+    head_pivot_ = {NAV_ARROWHEAD_TIP.x * scale + ox, NAV_ARROWHEAD_TIP.y * scale + oy};
+
+    head_img_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    head_img_.header.cf = LV_COLOR_FORMAT_A8;
+    head_img_.header.w = static_cast<uint32_t>(w);
+    head_img_.header.h = static_cast<uint32_t>(h);
+    head_img_.header.stride = static_cast<uint32_t>(w);
+    head_img_.data = head_mask_;
+    head_img_.data_size = static_cast<uint32_t>(w * h);
+}
 
 float NavRenderer::px_per_unit() const {
     return static_cast<float>(display_diameter_px_) / kDesignDiameter;
 }
 
-float NavRenderer::total_dist() const {
-    return route_count_ ? cum_dist_[route_count_ - 1] : 0.0f;
+float NavRenderer::start_dist() const {
+    return route_count_ ? route_[0].start_dist : 0.0f;
 }
 
-void NavRenderer::append_points(const nav_pt_t *pts, int count) {
-    const int start = route_count_ ? 1 : 0;
-    for (int i = start; i < count; ++i) {
+float NavRenderer::total_dist() const {
+    return route_count_ ? route_[route_count_ - 1].end_dist : 0.0f;
+}
+
+void NavRenderer::append_segments(const nav_segment_t *segs, int count, const Transform &t) {
+    // The shipped data's distances restart at 0 per maneuver; rebase them onto the running route.
+    const float base = total_dist();
+    for (int i = 0; i < count; ++i) {
         if (route_count_ >= kRouteCapacity) break;
-        const nav_pt_t &p = pts[i];
-        float d = 0.0f;
-        if (route_count_ > 0) {
-            const nav_pt_t &prev = route_points_[route_count_ - 1];
-            const float dx = p.x - prev.x, dy = p.y - prev.y;
-            d = std::sqrt(dx * dx + dy * dy);
-        }
-        const float cum = (route_count_ ? cum_dist_[route_count_ - 1] : 0.0f) + d;
-        route_points_[route_count_] = p;
-        cum_dist_[route_count_] = cum;
-        ++route_count_;
+        const nav_segment_t &src = segs[i];
+        Seg &d = route_[route_count_++];
+        d.type = src.type;
+        d.p0 = transform_point(src.p0, t);
+        // The placement transform is a rotation + translation, so it rotates headings by exactly
+        // t.rotation and leaves radius/sweep (and therefore length) alone.
+        d.h0 = src.heading0 * kPi / 180.0f + t.rotation;
+        d.length = src.length;
+        d.radius = src.radius;
+        d.turn = src.turn_deg * kPi / 180.0f;
+        d.start_dist = base + src.start_dist;
+        d.end_dist = base + src.end_dist;
     }
 }
 
 int NavRenderer::index_at_dist(float dist) const {
-    int lo = 1, hi = route_count_ - 1;
-    while (lo < hi) {
-        const int mid = (lo + hi) / 2;
-        if (cum_dist_[mid] < dist) lo = mid + 1;
-        else hi = mid;
+    for (int i = 0; i < route_count_; ++i) {
+        if (dist <= route_[i].end_dist) return i;
     }
-    return lo;
+    return route_count_ - 1;
+}
+
+void NavRenderer::eval_segment(const Seg &s, float dist, nav_pt_t *out_point, float *out_heading) {
+    const float t = s.length > 0.0f ? clampf((dist - s.start_dist) / s.length, 0.0f, 1.0f) : 0.0f;
+    if (s.type == NAV_SEG_LINE) {
+        *out_point = {s.p0.x + std::cos(s.h0) * s.length * t,
+                      s.p0.y + std::sin(s.h0) * s.length * t};
+        *out_heading = s.h0;
+        return;
+    }
+    // Circle centre sits one radius off the start point, on the side the curve bends toward; the
+    // point at heading h is then that same radial offset taken backwards from the centre (this is
+    // arc_points() in build_icons.py, one sample at a time).
+    const float sign = s.turn >= 0.0f ? 1.0f : -1.0f;
+    const float cx = s.p0.x + sign * s.radius * (-std::sin(s.h0));
+    const float cy = s.p0.y + sign * s.radius * (std::cos(s.h0));
+    const float h = s.h0 + s.turn * t;
+    *out_point = {cx - sign * s.radius * (-std::sin(h)), cy - sign * s.radius * (std::cos(h))};
+    *out_heading = h;
 }
 
 void NavRenderer::point_and_heading_at_dist(float dist, nav_pt_t *out_point,
                                              float *out_heading) const {
-    if (route_count_ < 2) {
-        *out_point = route_count_ ? route_points_[0] : nav_pt_t{0.0f, 0.0f};
+    if (route_count_ == 0) {
+        *out_point = {0.0f, 0.0f};
         *out_heading = -kPi / 2.0f;
         return;
     }
-    dist = clampf(dist, cum_dist_[0], total_dist());
-    const int i = index_at_dist(dist);
-    const nav_pt_t &a = route_points_[i - 1];
-    const nav_pt_t &b = route_points_[i];
-    const float seg_start = cum_dist_[i - 1], seg_end = cum_dist_[i];
-    const float seg_len = seg_end - seg_start;
-    const float t = seg_len > 0.0f ? (dist - seg_start) / seg_len : 0.0f;
-    *out_point = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
-    *out_heading = heading_of(a, b);
+    dist = clampf(dist, start_dist(), total_dist());
+    eval_segment(route_[index_at_dist(dist)], dist, out_point, out_heading);
 }
 
-int NavRenderer::slice_window(float from_dist, float to_dist, nav_pt_t *out, int max_out) const {
-    const float total = total_dist();
-    const float lo = route_count_ ? cum_dist_[0] : 0.0f;
-    from_dist = clampf(from_dist, lo, total);
-    to_dist = clampf(to_dist, lo, total);
-    int n = 0;
-    nav_pt_t p;
+NavRenderer::Seg NavRenderer::clip_segment(const Seg &s, float from_dist, float to_dist) {
+    Seg c = s;
+    const float lo = std::max(from_dist, s.start_dist);
+    const float hi = std::min(to_dist, s.end_dist);
+    if (hi <= lo || s.length <= 0.0f) {
+        c.length = 0.0f;
+        c.turn = 0.0f;
+        return c;
+    }
     float h;
-    point_and_heading_at_dist(from_dist, &p, &h);
-    if (n < max_out) out[n++] = p;
-    if (to_dist > from_dist) {
-        // Epsilon margin: near a transition's end, from_dist eases asymptotically toward a real
-        // route vertex's exact cum_dist (the old/new maneuver join point). A bare `>` test flips
-        // in and out of inclusion across consecutive frames as float rounding wobbles around that
-        // near-equality, producing a near-zero-length leading segment whose disc flickers on/off
-        // at the base of the line. The margin keeps that vertex merged into the interpolated start
-        // point instead.
-        constexpr float kEps = 1e-3f;
-        for (int i = index_at_dist(from_dist); i < route_count_ && cum_dist_[i] < to_dist; ++i) {
-            if (cum_dist_[i] > from_dist + kEps && n < max_out) out[n++] = route_points_[i];
-        }
-        point_and_heading_at_dist(to_dist, &p, &h);
-        if (n < max_out) out[n++] = p;
+    eval_segment(s, lo, &c.p0, &h);
+    c.h0 = h;
+    // Arc length is linear in sweep at constant radius, so the sweep trims by the same fraction
+    // the length does -- no re-solving of the circle needed, the centre is unchanged.
+    c.turn = s.turn * ((hi - lo) / s.length);
+    c.length = hi - lo;
+    c.start_dist = lo;
+    c.end_dist = hi;
+    return c;
+}
+
+int NavRenderer::slice_window(float from_dist, float to_dist, Seg *out, int max_out) const {
+    from_dist = clampf(from_dist, start_dist(), total_dist());
+    to_dist = clampf(to_dist, from_dist, total_dist());
+    int n = 0;
+    // Epsilon: base_dist eases asymptotically onto a maneuver join, and a segment clipped to a
+    // hair's length there would flicker its join disc on and off frame to frame.
+    constexpr float kEps = 1e-3f;
+    for (int i = 0; i < route_count_ && n < max_out; ++i) {
+        const Seg &s = route_[i];
+        if (s.end_dist <= from_dist + kEps || s.start_dist >= to_dist - kEps) continue;
+        const Seg c = clip_segment(s, from_dist, to_dist);
+        if (c.length > kEps) out[n++] = c;
     }
     return n;
 }
 
 void NavRenderer::prune_before(float dist) {
-    if (route_count_ < 3 || dist <= cum_dist_[0]) return;
-    const int keep = index_at_dist(dist) - 1; // segment straddling `dist` must survive
+    if (route_count_ < 2) return;
+    const int keep = index_at_dist(dist); // the segment straddling `dist` must survive
     if (keep <= 0) return;
     const int remaining = route_count_ - keep;
-    std::memmove(route_points_, route_points_ + keep, sizeof(nav_pt_t) * remaining);
-    std::memmove(cum_dist_, cum_dist_ + keep, sizeof(float) * remaining);
+    std::memmove(route_, route_ + keep, sizeof(Seg) * remaining);
     route_count_ = remaining;
 }
 
-NavRenderer::Transform NavRenderer::compute_transform(const nav_pt_t local_main[2]) const {
-    const nav_pt_t &base0 = local_main[0];
-    const nav_pt_t &base1 = local_main[1];
-    const float heading_new = heading_of(base0, base1);
+NavRenderer::Transform NavRenderer::compute_transform(const nav_segment_t &first) const {
+    const nav_pt_t base0 = first.p0;
+    const float heading_new = first.heading0 * kPi / 180.0f;
     Transform t{0.0f, base0, base0};
     if (route_count_ > 0) {
-        const nav_pt_t &tip_prev = route_points_[route_count_ - 1];
-        const nav_pt_t &pre_tip_prev =
-            route_count_ > 1 ? route_points_[route_count_ - 2] : tip_prev;
-        t.rotation = heading_of(pre_tip_prev, tip_prev) - heading_new;
+        // Butt the new maneuver onto the end of the old one, matching its exit heading exactly --
+        // with primitives that heading is carried, not re-derived from the last two sample points.
+        const Seg &last = route_[route_count_ - 1];
+        nav_pt_t tip_prev;
+        float tip_heading;
+        eval_segment(last, last.end_dist, &tip_prev, &tip_heading);
+        t.rotation = tip_heading - heading_new;
         t.anchor = tip_prev;
     }
     return t;
@@ -334,8 +433,7 @@ nav_pt_t NavRenderer::transform_point(const nav_pt_t &p, const Transform &t) {
 }
 
 NavRenderer::Pose NavRenderer::compute_pose(const nav_icon_data_t &data, const Transform &t) const {
-    const float entry_heading =
-        heading_of(transform_point(data.main_path[0], t), transform_point(data.main_path[1], t));
+    const float entry_heading = data.main_segments[0].heading0 * kPi / 180.0f + t.rotation;
     const nav_pt_t local = data.frame_center;
     const nav_pt_t center = transform_point(local, t);
     Pose pose;
@@ -358,16 +456,10 @@ void NavRenderer::retarget(const Pose &target, uint32_t duration_ms) {
 
 void NavRenderer::add_maneuver(nav_render_icon_t icon, bool animate) {
     const nav_icon_data_t &data = NAV_ICON_DATA[icon];
-    nav_pt_t local_main[2] = {data.main_path[0], data.main_path[1]};
-    const Transform t = compute_transform(local_main);
-
-    // Transform every authored point (not just the two used for the transform above).
-    nav_pt_t world_main[kRouteCapacity];
-    const int n = std::min<int>(data.main_count, kRouteCapacity);
-    for (int i = 0; i < n; ++i) world_main[i] = transform_point(data.main_path[i], t);
+    const Transform t = compute_transform(data.main_segments[0]);
 
     const float start_dist = total_dist();
-    append_points(world_main, n);
+    append_segments(data.main_segments, static_cast<int>(data.main_segment_count), t);
     const float end_dist = total_dist();
 
     const Pose pose = compute_pose(data, t);
@@ -430,6 +522,39 @@ nav_pt_t NavRenderer::world_to_screen(const nav_pt_t &p, const Pose &cam, float 
             static_cast<float>(coords.y1) + half + sy * px_unit};
 }
 
+// The camera transform (world_to_screen) is a similarity -- rotate, uniform scale, translate, no
+// shear -- so it maps circles to circles and lines to lines. That is what lets an arc authored in
+// maneuver space stay a true circular arc on screen: its centre transforms as a point, its radius
+// scales uniformly, and both its angles simply shift by the camera rotation.
+void NavRenderer::draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam, float basis_c,
+                                float basis_s, const lv_area_t &coords, float width_px) const {
+    if (s.length <= 0.0f) return;
+    if (s.type == NAV_SEG_LINE) {
+        const nav_pt_t b = {s.p0.x + std::cos(s.h0) * s.length,
+                            s.p0.y + std::sin(s.h0) * s.length};
+        const nav_pt_t sa = world_to_screen(s.p0, cam, basis_c, basis_s, coords);
+        const nav_pt_t sb = world_to_screen(b, cam, basis_c, basis_s, coords);
+        stroke_line(layer, sa.x, sa.y, sb.x, sb.y, width_px, route_color(), /*rounded=*/true);
+        return;
+    }
+    const float sign = s.turn >= 0.0f ? 1.0f : -1.0f;
+    const nav_pt_t center = {s.p0.x + sign * s.radius * (-std::sin(s.h0)),
+                             s.p0.y + sign * s.radius * (std::cos(s.h0))};
+    const nav_pt_t center_screen = world_to_screen(center, cam, basis_c, basis_s, coords);
+    const float radius_px = s.radius * kDisplayScale * px_per_unit();
+
+    // A point's angle about the centre runs a quarter turn behind/ahead of the travel heading
+    // (which side depends on which way the curve bends), and advances with it; LVGL measures
+    // angles the same way atan2 does here (0 = +x, increasing toward +y), so no axis fixups.
+    const float sweep = std::fabs(deg_of(s.turn));
+    // lv_draw_arc only sweeps start -> end in increasing degrees, so for a left-bending curve the
+    // start is the far end of the same sweep.
+    float a0 = deg_of(s.h0 - sign * kPi / 2.0f + cam.rot) - (s.turn < 0.0f ? sweep : 0.0f);
+    a0 = std::fmod(a0, 360.0f);
+    if (a0 < 0.0f) a0 += 360.0f;
+    stroke_arc(layer, center_screen, radius_px, a0, a0 + sweep, width_px, route_color());
+}
+
 void NavRenderer::draw_compass_ring(lv_layer_t *layer, const lv_area_t &coords) const {
     const float half = static_cast<float>(display_diameter_px_) / 2.0f;
     const float cx = static_cast<float>(coords.x1) + half;
@@ -472,33 +597,50 @@ void NavRenderer::draw(lv_layer_t *layer, const lv_area_t &coords) const {
         return world_to_screen(p, cur_, basis_c, basis_s, coords);
     };
 
-    nav_pt_t window[kRouteCapacity];
+    Seg window[kRouteCapacity];
     const float trimmed_head = std::max(cur_.base_dist, cur_.head_dist - kHeadDepth);
     const int window_n = slice_window(cur_.base_dist, trimmed_head, window, kRouteCapacity);
-    nav_pt_t window_screen[kRouteCapacity];
-    for (int i = 0; i < window_n; ++i) window_screen[i] = to_screen(window[i]);
-    stroke_polyline(layer, window_screen, window_n, kLineThickness * kDisplayScale * px_per_unit(),
-                     route_color(), kSeamOverlap);
+    const float width_px = kLineThickness * kDisplayScale * px_per_unit();
+    for (int i = 0; i < window_n; ++i) {
+        draw_segment(layer, window[i], cur_, basis_c, basis_s, coords, width_px);
+    }
+    // No join discs: consecutive segments are tangent and both ends are rounded, so each cap
+    // lands inside its neighbour's stroke.
 
     nav_pt_t head_point;
     float head_heading;
     point_and_heading_at_dist(cur_.head_dist, &head_point, &head_heading);
 
-    // ARROWHEAD.perimeter is authored tip-at-origin, pointing "up" (-y); scale in local space
-    // (so the tip stays pinned) then rotate to the travel heading and translate to the tip.
+    // The glyph is already rasterized at final size and tip-at-origin (build_arrowhead_mask), so
+    // all that is left per frame is to rotate it from its authored "up" orientation to the travel
+    // heading and pin its tip to the route end -- one lv_draw_image, no geometry, no seams.
+    // head_heading is a WORLD heading; the camera adds its own rotation on top (world_to_screen
+    // used to supply it, back when the glyph's vertices went through that transform too).
     const float local_forward = -kPi / 2.0f;
-    const float rotation = head_heading - local_forward;
-    const float rc = std::cos(rotation), rs = std::sin(rotation);
-    nav_pt_t head_screen[NAV_ARROWHEAD_VERT_COUNT];
-    for (int i = 0; i < NAV_ARROWHEAD_VERT_COUNT; ++i) {
-        const nav_pt_t &v = NAV_ARROWHEAD_PERIMETER[i];
-        const nav_pt_t scaled = {v.x * kArrowheadScale, v.y * kArrowheadScale};
-        const nav_pt_t rotated = {scaled.x * rc - scaled.y * rs, scaled.x * rs + scaled.y * rc};
-        head_screen[i] = to_screen({rotated.x + head_point.x, rotated.y + head_point.y});
-    }
-    for (int i = 0; i < NAV_ARROWHEAD_TRI_COUNT; ++i) {
-        const uint8_t *tri = NAV_ARROWHEAD_TRIS[i];
-        fill_triangle(layer, head_screen[tri[0]], head_screen[tri[1]], head_screen[tri[2]],
-                      route_color(), kSeamOverlap);
-    }
+    const float rotation = head_heading - local_forward + cur_.rot;
+    const nav_pt_t tip_screen = to_screen(head_point);
+
+    lv_draw_image_dsc_t dsc;
+    lv_draw_image_dsc_init(&dsc);
+    dsc.src = &head_img_;
+    dsc.opa = LV_OPA_COVER;
+    // An A8 source carries coverage only; `recolor` is the colour LVGL blends through it.
+    dsc.recolor = route_color();
+    dsc.recolor_opa = LV_OPA_COVER;
+    dsc.antialias = true;
+    dsc.pivot = {static_cast<int32_t>(std::lround(head_pivot_.x)),
+                 static_cast<int32_t>(std::lround(head_pivot_.y))};
+    // lv_draw_image takes rotation in 0.1 degree units, positive clockwise -- the same sense as
+    // screen-space `rotation` here, since y points down.
+    int32_t rot_tenths = static_cast<int32_t>(std::lround(deg_of(rotation) * 10.0f)) % 3600;
+    if (rot_tenths < 0) rot_tenths += 3600;
+    dsc.rotation = rot_tenths;
+
+    // Placing the image so its pivot lands on the tip keeps the tip fixed under rotation.
+    lv_area_t head_area;
+    head_area.x1 = static_cast<int32_t>(std::lround(tip_screen.x - head_pivot_.x));
+    head_area.y1 = static_cast<int32_t>(std::lround(tip_screen.y - head_pivot_.y));
+    head_area.x2 = head_area.x1 + static_cast<int32_t>(head_img_.header.w) - 1;
+    head_area.y2 = head_area.y1 + static_cast<int32_t>(head_img_.header.h) - 1;
+    lv_draw_image(layer, &dsc, &head_area);
 }

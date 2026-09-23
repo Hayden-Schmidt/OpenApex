@@ -1,4 +1,11 @@
 # Name,   Type, SubType, Offset,  Size,     Flags
+# factory grew from 1M to 1536K: the 1M build was already at 83.7% before the drive logger, and
+# the dev-log build pushes it further. 4MB flash, so there is room.
+# logs (custom data subtype 0x9A, see drive_log.h) is written ONLY by the dev-only
+# `prototype_c3_devlog` env. It stays in the table for both envs so a production and a dev build
+# are flash-layout compatible -- swapping between them must not require an erase that would drop
+# the BLE bond in nvs.
 nvs,      data, nvs,     0x9000,  0x5000,
 phy_init, data, phy,     0xe000,  0x1000,
-factory,  app,  factory, 0x10000, 1M,
+factory,  app,  factory, 0x10000, 1536K,
+logs,     data, 0x9A,    0x190000, 1M,

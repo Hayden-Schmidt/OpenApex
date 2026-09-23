@@ -34,9 +34,10 @@ terminal_view_state_t make_fixture_frame(uint32_t elapsed_ms) {
     frame.battery_percent = 87;
 
     static const nav_icon_t kActiveIcons[] = {
-        NAV_ICON_STRAIGHT,      NAV_ICON_TURN_LEFT,       NAV_ICON_TURN_RIGHT,
-        NAV_ICON_SLIGHT_LEFT,   NAV_ICON_SLIGHT_RIGHT,    NAV_ICON_SHARP_LEFT,
-        NAV_ICON_SHARP_RIGHT,   NAV_ICON_ROUNDABOUT,      NAV_ICON_U_TURN,
+        NAV_ICON_STRAIGHT,          NAV_ICON_TURN_LEFT,          NAV_ICON_TURN_RIGHT,
+        NAV_ICON_SLIGHT_LEFT,       NAV_ICON_SLIGHT_RIGHT,       NAV_ICON_SHARP_LEFT,
+        NAV_ICON_SHARP_RIGHT,       NAV_ICON_ROUNDABOUT_LEFT,    NAV_ICON_ROUNDABOUT_RIGHT,
+        NAV_ICON_ROUNDABOUT_STRAIGHT, NAV_ICON_U_TURN,
     };
     constexpr uint32_t kActivePhaseMs = 3000;
     constexpr uint32_t kActiveTotalMs =

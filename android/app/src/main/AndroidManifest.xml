@@ -15,6 +15,12 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- The relay samples speed and heading with the phone in a pocket and the app not visible, so
+         "while in use" location is not enough: without this, promoting the service to an FGS of
+         type "location" is refused with "app must be in eligible state" and GNSS never starts (the
+         missing-compass fault). Needs "Allow all the time" granted in settings, which Android only
+         offers as a separate follow-up prompt after fine location. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
