@@ -192,47 +192,123 @@ void fill_circle(lv_layer_t *layer, float cx, float cy, float r, lv_color_t colo
     lv_draw_arc_dsc_init(&dsc);
     dsc.color = color;
     dsc.opa = LV_OPA_COVER;
-    dsc.center = {static_cast<int32_t>(cx), static_cast<int32_t>(cy)};
-    dsc.radius = static_cast<uint16_t>(r);
-    dsc.width = static_cast<int32_t>(r);
+    dsc.center = {static_cast<int32_t>(std::lround(cx)), static_cast<int32_t>(std::lround(cy))};
+    dsc.radius = static_cast<uint16_t>(std::lround(r));
+    dsc.width = static_cast<int32_t>(std::lround(r));
     dsc.start_angle = 0;
     dsc.end_angle = 360;
     lv_draw_arc(layer, &dsc);
 }
 
+// The one stroke width every primitive uses, in whole pixels and always even.
+//
+// Whole, because LVGL takes an integer width either way; even, because an arc's band centreline
+// sits at `radius - width/2`, and an odd width puts that centreline on a half pixel, which no
+// choice of integer radius can then line up with a line's integer endpoint.
+//
+// Shared, because it used to not be: stroke_line() truncated the float width while stroke_arc()
+// rounded it, so a 15.6px stroke drew straights 15px wide and curves 16px wide. A one-pixel width
+// difference between a straight and the curve it runs into offsets one edge of the silhouette by
+// a whole pixel, which reads as the curve sitting slightly to the side of the straight.
+int32_t stroke_width_px(float width) {
+    const int32_t w = 2 * static_cast<int32_t>(std::lround(width / 2.0f));
+    return w < 2 ? 2 : w;
+}
+
+// `anchor`, when non-null, is the pixel the preceding segment actually finished on. The line is
+// then translated BODILY onto it -- both endpoints by the same delta -- rather than having its
+// start pulled across, which would tilt it. A stem is normally axis-aligned and therefore
+// pixel-crisp; tilting it by even half a degree anti-aliases it along its whole length, so the
+// error is spent on the line's position (invisible) instead of its angle (very visible).
+// `out_end` reports where the far end was really drawn, for the next segment to anchor onto.
 void stroke_line(lv_layer_t *layer, float x1, float y1, float x2, float y2, float width,
-                  lv_color_t color, bool rounded = false) {
+                  lv_color_t color, bool rounded = false, const nav_pt_t *anchor = nullptr,
+                  nav_pt_t *out_end = nullptr) {
     if (width <= 0.0f) return;
+    if (anchor != nullptr) {
+        const float dx = anchor->x - std::round(x1), dy = anchor->y - std::round(y1);
+        x1 += dx; y1 += dy; x2 += dx; y2 += dy;
+    }
+    if (out_end != nullptr) *out_end = {std::round(x2), std::round(y2)};
     lv_draw_line_dsc_t dsc;
     lv_draw_line_dsc_init(&dsc);
-    dsc.p1 = {static_cast<lv_value_precise_t>(x1), static_cast<lv_value_precise_t>(y1)};
-    dsc.p2 = {static_cast<lv_value_precise_t>(x2), static_cast<lv_value_precise_t>(y2)};
+    // ROUND, never truncate. With LV_USE_FLOAT off, lv_value_precise_t is an integer, so a plain
+    // cast floors every endpoint while stroke_arc() rounds its centre -- a systematic half-pixel
+    // disagreement between a line and the arc it is supposed to be tangent to, which showed up as
+    // a visible lip at every straight-to-curve join.
+    dsc.p1 = {static_cast<lv_value_precise_t>(std::lround(x1)),
+              static_cast<lv_value_precise_t>(std::lround(y1))};
+    dsc.p2 = {static_cast<lv_value_precise_t>(std::lround(x2)),
+              static_cast<lv_value_precise_t>(std::lround(y2))};
     dsc.color = color;
-    dsc.width = static_cast<int32_t>(width);
+    dsc.width = stroke_width_px(width);
     dsc.round_start = rounded;
     dsc.round_end = rounded;
     lv_draw_line(layer, &dsc);
 }
 
 // A curve is one native LVGL arc -- the reason this renderer carries primitives rather than
-// sampled points. lv_draw_arc fills the band [radius - width, radius], so `radius` is pushed out
-// by half the stroke to centre the band on the true centreline. Rounded ends match
-// lv_draw_line's rounded caps so a straight-to-curve join closes without a separate disc.
-void stroke_arc(lv_layer_t *layer, const nav_pt_t &center, float radius, float start_deg,
-                 float end_deg, float width, lv_color_t color) {
+// sampled points.
+//
+// `anchor` is where this arc's start point was drawn by whatever it joins onto, in screen pixels.
+// The centre is then placed RELATIVE TO THAT rather than rounded off the ideal float centre.
+//
+// The reason is that lv_draw_arc quantises an arc as a rigid body: rounding dsc.center shifts the
+// whole curve by up to half a pixel, and rounding dsc.radius shifts it another half pixel along
+// its own radius. Both of those were rounded from the ideal geometry with no reference to where
+// the adjoining straight actually landed, which was rounded separately again -- so the curve
+// could sit a full pixel to the side of the straight it is supposed to flow out of. Against a
+// vertical stem the radius at the tangent point is horizontal, which is why it read as the arc
+// being pushed sideways.
+//
+// Deriving the centre from the anchor ties the two together: the arc translates bodily to meet
+// the straight, and a circle moved half a pixel is still a circle, whereas a straight moved half
+// a pixel loses its axis alignment and anti-aliases along its whole length. When the tangent is
+// axis-aligned -- the usual resting case, stem heading up -- `anchor + r_center * unit` is
+// integer plus integer, so the join is exact rather than merely close.
+void stroke_arc(lv_layer_t *layer, const nav_pt_t &center, const nav_pt_t &anchor, float radius,
+                 float start_deg, float end_deg, float width, lv_color_t color,
+                 bool path_end_at_start = false, nav_pt_t *out_end = nullptr) {
     if (radius <= 0.0f || width <= 0.0f || end_deg <= start_deg) return;
     lv_draw_arc_dsc_t dsc;
     lv_draw_arc_dsc_init(&dsc);
     dsc.color = color;
     dsc.opa = LV_OPA_COVER;
-    dsc.center = {static_cast<int32_t>(std::lround(center.x)),
-                  static_cast<int32_t>(std::lround(center.y))};
-    dsc.radius = static_cast<uint16_t>(std::lround(radius + width / 2.0f));
-    dsc.width = static_cast<int32_t>(std::lround(width));
+
+    const int32_t width_i = stroke_width_px(width);
+    const int32_t half_i = width_i / 2;
+    int32_t r_center = static_cast<int32_t>(std::lround(radius));
+    if (r_center < 1) r_center = 1;
+
+    const float ux = (center.x - anchor.x) / radius;
+    const float uy = (center.y - anchor.y) / radius;
+    const float ax = std::round(anchor.x);
+    const float ay = std::round(anchor.y);
+    dsc.center = {static_cast<int32_t>(std::lround(ax + ux * static_cast<float>(r_center))),
+                  static_cast<int32_t>(std::lround(ay + uy * static_cast<float>(r_center)))};
+    // lv_draw_arc fills the band [radius - width, radius], so the outer radius is the integer
+    // centreline pushed out by the (integral) half width -- the band centreline is exactly
+    // r_center, with no rounding left over.
+    dsc.radius = static_cast<uint16_t>(r_center + half_i);
+    dsc.width = width_i;
     dsc.rounded = 1;
-    dsc.start_angle = static_cast<lv_value_precise_t>(start_deg);
-    dsc.end_angle = static_cast<lv_value_precise_t>(end_deg);
+    // ROUND these too. start_angle/end_angle are lv_value_precise_t, i.e. whole degrees with
+    // LV_USE_FLOAT off, so a plain cast truncates both ends inward and the rounded cap is then
+    // centred on the displaced endpoint.
+    dsc.start_angle = static_cast<lv_value_precise_t>(std::lround(start_deg));
+    dsc.end_angle = static_cast<lv_value_precise_t>(std::lround(end_deg));
     lv_draw_arc(layer, &dsc);
+
+    // Report the pixel this curve really finished on, computed from the values LVGL was handed --
+    // integer centre, integer centreline radius, whole-degree angle. lv_draw_arc only ever sweeps
+    // start -> end in increasing degrees, so for a left-bending curve the path's end is the START
+    // of the sweep.
+    if (out_end != nullptr) {
+        const float a = static_cast<float>(path_end_at_start ? dsc.start_angle : dsc.end_angle) *
+                        kPi / 180.0f;
+        *out_end = {static_cast<float>(dsc.center.x) + static_cast<float>(r_center) * std::cos(a),
+                    static_cast<float>(dsc.center.y) + static_cast<float>(r_center) * std::sin(a)};
+    }
 }
 
 float deg_of(float rad) { return rad * 180.0f / kPi; }
@@ -527,20 +603,27 @@ nav_pt_t NavRenderer::world_to_screen(const nav_pt_t &p, const Pose &cam, float 
 // maneuver space stay a true circular arc on screen: its centre transforms as a point, its radius
 // scales uniformly, and both its angles simply shift by the camera rotation.
 void NavRenderer::draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam, float basis_c,
-                                float basis_s, const lv_area_t &coords, float width_px) const {
+                                float basis_s, const lv_area_t &coords, float width_px,
+                                const nav_pt_t *anchor, nav_pt_t *out_end) const {
     if (s.length <= 0.0f) return;
     if (s.type == NAV_SEG_LINE) {
         const nav_pt_t b = {s.p0.x + std::cos(s.h0) * s.length,
                             s.p0.y + std::sin(s.h0) * s.length};
         const nav_pt_t sa = world_to_screen(s.p0, cam, basis_c, basis_s, coords);
         const nav_pt_t sb = world_to_screen(b, cam, basis_c, basis_s, coords);
-        stroke_line(layer, sa.x, sa.y, sb.x, sb.y, width_px, route_color(), /*rounded=*/true);
+        stroke_line(layer, sa.x, sa.y, sb.x, sb.y, width_px, route_color(), /*rounded=*/true,
+                    anchor, out_end);
         return;
     }
     const float sign = s.turn >= 0.0f ? 1.0f : -1.0f;
     const nav_pt_t center = {s.p0.x + sign * s.radius * (-std::sin(s.h0)),
                              s.p0.y + sign * s.radius * (std::cos(s.h0))};
     const nav_pt_t center_screen = world_to_screen(center, cam, basis_c, basis_s, coords);
+    // Where this arc's start point lands on screen -- the same point the preceding straight drew
+    // its endpoint at, and the anchor stroke_arc() hangs the whole curve off.
+    const nav_pt_t ideal_start = world_to_screen(s.p0, cam, basis_c, basis_s, coords);
+    const nav_pt_t start_screen =
+        anchor != nullptr ? *anchor : nav_pt_t{std::round(ideal_start.x), std::round(ideal_start.y)};
     const float radius_px = s.radius * kDisplayScale * px_per_unit();
 
     // A point's angle about the centre runs a quarter turn behind/ahead of the travel heading
@@ -552,7 +635,8 @@ void NavRenderer::draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam,
     float a0 = deg_of(s.h0 - sign * kPi / 2.0f + cam.rot) - (s.turn < 0.0f ? sweep : 0.0f);
     a0 = std::fmod(a0, 360.0f);
     if (a0 < 0.0f) a0 += 360.0f;
-    stroke_arc(layer, center_screen, radius_px, a0, a0 + sweep, width_px, route_color());
+    stroke_arc(layer, center_screen, start_screen, radius_px, a0, a0 + sweep, width_px,
+               route_color(), /*path_end_at_start=*/s.turn < 0.0f, out_end);
 }
 
 void NavRenderer::draw_compass_ring(lv_layer_t *layer, const lv_area_t &coords) const {
@@ -606,11 +690,25 @@ void NavRenderer::draw(lv_layer_t *layer, const lv_area_t &coords) const {
     const float trimmed_head = std::max(cur_.base_dist, cur_.head_dist - kHeadDepth);
     const int window_n = slice_window(cur_.base_dist, trimmed_head, window, kRouteCapacity);
     const float width_px = kLineThickness * kDisplayScale * px_per_unit();
+    // Chain each segment onto the pixel its predecessor actually finished on, rather than onto the
+    // ideal float joint. Anchoring every segment to the ideal point fixed straight-to-curve, but
+    // left curve-to-curve still visibly mismatched: a curve's drawn end is
+    // `integer centre + integer radius` at a whole-degree angle, which is not the rounded ideal
+    // joint, so the next curve hung itself off a point the previous one never reached. The
+    // roundabouts chain four arcs and so showed it worst.
+    nav_pt_t joint;
+    bool have_joint = false;
     for (int i = 0; i < window_n; ++i) {
-        draw_segment(layer, window[i], cur_, basis_c, basis_s, coords, width_px);
+        nav_pt_t end;
+        draw_segment(layer, window[i], cur_, basis_c, basis_s, coords, width_px,
+                     have_joint ? &joint : nullptr, &end);
+        joint = end;
+        have_joint = true;
     }
-    // No join discs: consecutive segments are tangent and both ends are rounded, so each cap
-    // lands inside its neighbour's stroke.
+    // No join discs. An earlier pass stamped one at each interior joint to cover the step in the
+    // silhouette where a line and an arc had been quantised independently; stroke_arc() now hangs
+    // each curve off the point its neighbour actually drew, so there is no step left to cover, and
+    // a disc has the same rounded-centre problem it was meant to hide.
 
     nav_pt_t head_point;
     float head_heading;

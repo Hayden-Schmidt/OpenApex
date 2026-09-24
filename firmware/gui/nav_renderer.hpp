@@ -101,8 +101,12 @@ private:
     static nav_pt_t transform_point(const nav_pt_t &p, const Transform &t);
     Pose compute_pose(const nav_icon_data_t &data, const Transform &t) const;
 
+    // `anchor` is the pixel the previous segment was actually drawn to (null for the first), and
+    // `out_end` reports the same for this one, so joins are made against what LVGL really drew
+    // rather than against the ideal float geometry both sides quantise away from.
     void draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam, float basis_c,
-                      float basis_s, const lv_area_t &coords, float width_px) const;
+                      float basis_s, const lv_area_t &coords, float width_px,
+                      const nav_pt_t *anchor, nav_pt_t *out_end) const;
 
     // -- arrowhead glyph (pre-rasterized alpha mask) ---------------------------------------------
     // The arrowhead is a concave 7-gon, and LVGL has no polygon fill: splitting it into triangles
