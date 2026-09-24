@@ -10,6 +10,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import java.util.UUID
 
@@ -24,13 +26,21 @@ class RelayBleClient(private val context: Context) {
     private var gatt: BluetoothGatt? = null
     private var characteristic: BluetoothGattCharacteristic? = null
     private var connectedAddress: String? = null
-    private var negotiatedMtu = ATT_MTU_DEFAULT
-    private var mtuRequested = false
-
-    // False until an ATT exchange SUCCEEDS on the current link. A refused exchange (status 6,
-    // GATT_REQUEST_NOT_SUPPORTED) leaves the real MTU unknown, not small -- see onMtuChanged().
-    private var mtuKnown = false
     private var bondReceiver: BroadcastReceiver? = null
+
+    // Wraps 0-255, matching the firmware's uint8_t packet id (ble_link.c). Identifies which
+    // fragments belong to the same RawNotifPacket on the reassembling side.
+    private var nextPacketId = 0
+
+    // gatt.writeCharacteristic() queues into a shallow controller-side buffer even for
+    // WRITE_TYPE_NO_RESPONSE; firing all 9 fragments synchronously overflowed it and
+    // writeCharacteristic() returned false from fragment 1 onward on every single packet
+    // (2026-09-24: "packet=N fragment 1/9 queue failed" on every publish). Fragments are now
+    // paced one at a time, kicked off again from onCharacteristicWrite once the controller has
+    // drained the previous one.
+    private val pendingFragments = ArrayDeque<ByteArray>()
+    private var writeInFlight = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
@@ -101,100 +111,84 @@ class RelayBleClient(private val context: Context) {
         bondReceiver = null
     }
 
-    @SuppressLint("MissingPermission")
-    @Suppress("DEPRECATION") // writeCharacteristic(char, type, value) needs API 33; minSdk is 26
+    /**
+     * Sends [packet] as a run of small fixed-size fragments instead of one large write.
+     *
+     * The 2026-09-24 captures killed the MTU-negotiation approach that used to gate this: on that
+     * ride every connection's [BluetoothGatt.requestMtu] came back GATT_REQUEST_NOT_SUPPORTED
+     * (status 6) while the terminal logged a successful exchange to 256 on its side, and every
+     * write was still silently truncated by Android's stack to 20 bytes on the wire regardless --
+     * the two sides disagreed about the real ATT MTU and there was no way from here to tell.
+     * WRITE_TYPE_NO_RESPONSE gives no delivery feedback either, so a write that Android truncates
+     * just reports `queued=true` and vanishes.
+     *
+     * Chunking to [FRAG_WRITE_BYTES] sidesteps the whole question: that size fits inside the
+     * BLE-spec default 23-byte ATT MTU (20-byte payload) on every stack, negotiated or not, so
+     * correctness no longer depends on requestMtu() ever succeeding. The terminal reassembles in
+     * ble_link.c. A dropped fragment costs one packet, superseded by the next publish (~3Hz).
+     */
     fun write(packet: ByteArray) {
-        val g = gatt ?: run { Log.w(TAG, "write: no gatt, dropping"); return }
-        val char = characteristic ?: run { Log.w(TAG, "write: no characteristic, dropping"); return }
-        // Never hand a packet to a link that cannot carry it whole.
-        //
-        // WRITE_TYPE_NO_RESPONSE gives no delivery feedback, and the stack does not reject an
-        // oversized value -- it truncates it to (MTU - 3) and reports success. The terminal then
-        // receives a 20-byte fragment and discards it. On 2026-09-24 that happened for three
-        // entire sessions, 120 packets, with `queued=true` logged every time and a blank display
-        // on the bike. A silent success is the worst possible signal, so check explicitly.
-        // Only block when the MTU is KNOWN to be too small. An unknown MTU (the exchange was
-        // refused because one had already run) is sent optimistically: the terminal reports
-        // truncation if it is wrong, whereas blocking guarantees the packet is lost.
-        if (mtuKnown && negotiatedMtu < packet.size + ATT_HEADER_BYTES) {
-            Log.e(
-                TAG,
-                "write: MTU $negotiatedMtu too small for ${packet.size}-byte packet; " +
-                    "dropping and re-requesting MTU",
-            )
-            RelayRecorder.lifecycle("bleMtuTooSmall", "mtu=$negotiatedMtu need=${packet.size + ATT_HEADER_BYTES}")
-            requestMtuOnce(g)
-            return
+        val packetId = nextPacketId
+        nextPacketId = (nextPacketId + 1) and 0xFF
+        val frames = mutableListOf<ByteArray>()
+        var offset = 0
+        var fragIndex = 0
+        while (offset < packet.size) {
+            val chunkLen = minOf(FRAG_CHUNK_BYTES, packet.size - offset)
+            val frame = ByteArray(FRAG_HEADER_BYTES + chunkLen)
+            frame[0] = packetId.toByte()
+            frame[1] = fragIndex.toByte()
+            frame[2] = FRAG_COUNT.toByte()
+            System.arraycopy(packet, offset, frame, FRAG_HEADER_BYTES, chunkLen)
+            frames += frame
+            offset += chunkLen
+            fragIndex++
         }
-        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        char.value = packet
-        val ok = g.writeCharacteristic(char)
-        Log.i(TAG, "write: len=${packet.size} mtu=$negotiatedMtu queued=$ok")
+        synchronized(pendingFragments) {
+            // A newer publish (~3Hz) supersedes whatever of the previous packet hasn't gone out
+            // yet; the reassembler on the terminal keys off packet_id so a partial old packet is
+            // harmless, not corrupting.
+            pendingFragments.clear()
+            pendingFragments.addAll(frames)
+        }
+        Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$FRAG_COUNT queued")
+        pumpQueue()
     }
 
-    /**
-     * Requests the MTU at most once per connection attempt.
-     *
-     * requestMtu() while an exchange is already outstanding fails, and a second exchange on a
-     * link that already has one is rejected by many peripherals, so this guards rather than
-     * retrying blindly. Cleared on every connection state change.
-     */
     @SuppressLint("MissingPermission")
-    private fun requestMtuOnce(g: BluetoothGatt) {
-        if (mtuRequested) return
-        mtuRequested = true
-        val ok = g.requestMtu(MTU_BYTES)
-        Log.i(TAG, "requestMtu($MTU_BYTES) -> $ok")
-        if (!ok) mtuRequested = false
+    @Suppress("DEPRECATION") // writeCharacteristic(char, type, value) needs API 33; minSdk is 26
+    private fun pumpQueue() {
+        val g = gatt ?: return
+        val char = characteristic ?: return
+        synchronized(pendingFragments) {
+            if (writeInFlight) return
+            val frame = pendingFragments.firstOrNull() ?: return
+            char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            char.value = frame
+            if (g.writeCharacteristic(char)) {
+                writeInFlight = true
+                pendingFragments.removeFirst()
+            } else {
+                // Controller-side write buffer is momentarily full; retry shortly instead of
+                // dropping the fragment outright.
+                mainHandler.postDelayed({ pumpQueue() }, FRAG_RETRY_DELAY_MS)
+            }
+        }
     }
 
     private val callback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             Log.i(TAG, "connection state change: status=$status newState=$newState")
-            // Every state change invalidates what we knew about the link. Assume the BLE default
-            // (23) until an exchange tells us otherwise: assuming the last connection's MTU is
-            // exactly how truncated writes got sent believing they were fine.
-            negotiatedMtu = ATT_MTU_DEFAULT
-            mtuRequested = false
-            mtuKnown = false
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                // Default ATT MTU is 23 bytes (20-byte payload after the 3-byte ATT header), far
-                // smaller than the 146-byte RawNotifPacket. Without negotiating a larger MTU
-                // first, writeCharacteristic() silently truncates every packet down to whatever
-                // the current MTU allows, which the firmware then rejects as malformed rather
-                // than decoding a partial packet.
-                requestMtuOnce(g)
+                // write() fragments to a fixed size that fits the BLE-spec default MTU regardless
+                // of negotiation (see write() KDoc), so nothing here depends on an MTU exchange.
+                g.discoverServices()
             } else {
                 characteristic = null
                 connectedAddress = null
-                RelayStateHolder.noteBleDisconnected()
+                RelayStateHolder.noteBleDisconnected(status)
             }
-        }
-
-        @SuppressLint("MissingPermission")
-        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-            // A FAILED exchange does not mean the MTU is 23.
-            //
-            // The 2026-09-24 afternoon ride caught this: status=6
-            // (GATT_REQUEST_NOT_SUPPORTED) means an exchange has already happened on this link and
-            // Android will not run a second one -- it says nothing about the value. The terminal
-            // logged MTU=256 on every one of those same connections. Treating the failure as 23
-            // made write() block 408 packets across the ride on links that were fine, which is a
-            // worse outcome than the truncation it was added to prevent.
-            //
-            // So: only a successful exchange sets a known MTU. A failure marks the MTU UNKNOWN,
-            // and write() sends optimistically in that state -- the terminal detects and reports
-            // truncation (DRIVE_LOG_BLE_TRUNCATED) if the guess is wrong, so an optimistic write
-            // can only lose the same packet a blocked write loses for certain.
-            mtuKnown = status == BluetoothGatt.GATT_SUCCESS
-            if (mtuKnown) negotiatedMtu = mtu
-            Log.i(TAG, "mtu changed: mtu=$mtu status=$status known=$mtuKnown")
-            RelayRecorder.lifecycle("bleMtuChanged", "mtu=$mtu status=$status known=$mtuKnown")
-            if (mtuKnown && negotiatedMtu < RAW_NOTIF_PACKET_SIZE + ATT_HEADER_BYTES) {
-                Log.e(TAG, "mtu $negotiatedMtu cannot carry a $RAW_NOTIF_PACKET_SIZE-byte packet")
-            }
-            g.discoverServices()
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
@@ -203,6 +197,15 @@ class RelayBleClient(private val context: Context) {
             if (characteristic != null) {
                 RelayStateHolder.noteBleConnected()
             }
+        }
+
+        override fun onCharacteristicWrite(
+            g: BluetoothGatt,
+            char: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            synchronized(pendingFragments) { writeInFlight = false }
+            pumpQueue()
         }
     }
 
@@ -213,13 +216,19 @@ class RelayBleClient(private val context: Context) {
         val SERVICE_UUID: UUID = UUID.fromString("c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f")
         val CHAR_UUID: UUID = UUID.fromString("c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f")
 
-        /** ATT opcode (1) + attribute handle (2) ahead of the value in a write PDU. */
-        const val ATT_HEADER_BYTES = 3
+        /** Packet id (1) + fragment index (1) + fragment count (1) ahead of each chunk's payload. */
+        private const val FRAG_HEADER_BYTES = 3
 
-        /** The BLE-spec default ATT MTU, i.e. a 20-byte payload. Assumed until an exchange says otherwise. */
-        const val ATT_MTU_DEFAULT = 23
+        /** Payload bytes per fragment. FRAG_HEADER_BYTES + this must fit MTU 23 - 3 = 20. Mirrors ble_link.c. */
+        private const val FRAG_CHUNK_BYTES = 17
 
-        // RawNotifPacket is 146 bytes; + the 3-byte ATT header, with headroom.
-        private const val MTU_BYTES = RAW_NOTIF_PACKET_SIZE + ATT_HEADER_BYTES + 16
+        private const val FRAG_WRITE_BYTES = FRAG_HEADER_BYTES + FRAG_CHUNK_BYTES
+        private val FRAG_COUNT = (RAW_NOTIF_PACKET_SIZE + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES
+
+        private const val FRAG_RETRY_DELAY_MS = 15L
+
+        init {
+            check(FRAG_WRITE_BYTES <= 20) { "fragment write must fit the default 23-byte ATT MTU" }
+        }
     }
 }

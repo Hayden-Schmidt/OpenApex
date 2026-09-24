@@ -221,7 +221,7 @@ class RelayService : Service() {
             }
             is RelayStateEvent.BleDisconnected -> {
                 connected = false
-                RelayRecorder.lifecycle("bleDisconnected")
+                RelayRecorder.lifecycle("bleDisconnected", "status=${event.status}")
                 startOwnScan((getSystemService(BluetoothManager::class.java))?.adapter)
             }
         }

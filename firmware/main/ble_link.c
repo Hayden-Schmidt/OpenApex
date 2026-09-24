@@ -34,6 +34,25 @@ static void start_advertising(void);
 static uint32_t s_consecutive_decode_failures;
 static uint16_t s_negotiated_mtu;
 
+// Fragment framing for the nav characteristic.
+//
+// The 2026-09-24 captures showed the central's ATT MTU exchange cannot be relied on: Android
+// reported GATT_REQUEST_NOT_SUPPORTED on every connection of a whole session while this side kept
+// negotiating MTU=256, and every write still arrived here truncated to 20 bytes regardless. Rather
+// than depend on that exchange for correctness, every write is now a small fixed-size fragment
+// (3-byte header + up to 17 payload bytes = 20 bytes total) that fits inside the BLE-spec default
+// 23-byte ATT MTU on every stack, negotiated or not. MTU is still logged as a diagnostic below, but
+// nothing depends on it succeeding.
+#define BLE_FRAG_HEADER_BYTES 3U
+#define BLE_FRAG_CHUNK_BYTES 17U
+#define BLE_FRAG_COUNT ((RAW_NOTIF_PACKET_SIZE + BLE_FRAG_CHUNK_BYTES - 1U) / BLE_FRAG_CHUNK_BYTES)
+_Static_assert(BLE_FRAG_COUNT <= 16, "fragment count must fit the uint16_t received-mask");
+
+static uint8_t s_reasm_buf[RAW_NOTIF_PACKET_SIZE];
+static uint8_t s_reasm_packet_id;
+static uint16_t s_reasm_have_mask;
+static bool s_reasm_active;
+
 // Whether the link is currently unusable: nothing has decoded for a long run of writes. The GUI
 // reads this to show a fault instead of a frozen last-good screen.
 bool ble_link_is_faulted(void) {
@@ -54,15 +73,16 @@ uint16_t ble_link_negotiated_mtu(void) {
  * milestone, which keeps the shape of a long outage (when it started, how long it ran) at a cost
  * of a few dozen records instead of thousands.
  */
-static void note_decode_failure(uint16_t out_len) {
+// expected_len is what a well-formed write at this point in the protocol should have been; a
+// write shorter than that is a truncating link, not a corrupt/stale-format packet, and gets its
+// own event (it has a different fix). Callers with no meaningful expectation (e.g. an invalid
+// frag_count that isn't a length problem at all) pass expected_len == out_len to force DECODE_FAILED.
+static void note_decode_failure(uint16_t out_len, uint16_t expected_len) {
     static uint16_t last_len;
     const uint32_t n = ++s_consecutive_decode_failures;
 
-    // A write too short to be a packet is a truncating link (MTU never negotiated up), not a
-    // corrupt or stale-format packet. Worth its own event -- it has a different fix.
-    const drive_log_ble_event_t event = (out_len < RAW_NOTIF_PACKET_SIZE)
-                                            ? DRIVE_LOG_BLE_TRUNCATED
-                                            : DRIVE_LOG_BLE_DECODE_FAILED;
+    const drive_log_ble_event_t event =
+        (out_len < expected_len) ? DRIVE_LOG_BLE_TRUNCATED : DRIVE_LOG_BLE_DECODE_FAILED;
 
     const bool milestone = (n <= 3) || (out_len != last_len) || ((n & (n - 1)) == 0);
     last_len = out_len;
@@ -70,14 +90,18 @@ static void note_decode_failure(uint16_t out_len) {
         return;
     }
     if (event == DRIVE_LOG_BLE_TRUNCATED) {
-        ESP_LOGW(TAG, "truncated write: got %u bytes, need %u (ATT MTU is %u; central never "
-                      "negotiated up?) [%lu consecutive]",
-                 out_len, (unsigned)RAW_NOTIF_PACKET_SIZE, s_negotiated_mtu, (unsigned long)n);
+        ESP_LOGW(TAG, "truncated fragment write: got %u bytes, need %u (ATT MTU is %u) [%lu consecutive]",
+                 out_len, expected_len, s_negotiated_mtu, (unsigned long)n);
     } else {
-        ESP_LOGW(TAG, "dropped malformed/unsupported-version packet (len=%u) [%lu consecutive]",
+        ESP_LOGW(TAG, "dropped malformed/unsupported-version write (len=%u) [%lu consecutive]",
                  out_len, (unsigned long)n);
     }
     drive_log_ble(event, (int32_t)out_len);
+}
+
+static void reasm_reset(void) {
+    s_reasm_active = false;
+    s_reasm_have_mask = 0;
 }
 
 static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -88,14 +112,54 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
         return BLE_ATT_ERR_UNLIKELY;
     }
-    uint8_t buf[RAW_NOTIF_PACKET_SIZE];
+    uint8_t buf[BLE_FRAG_HEADER_BYTES + BLE_FRAG_CHUNK_BYTES];
     uint16_t out_len = 0;
     if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &out_len) != 0) {
         return BLE_ATT_ERR_UNLIKELY;
     }
+    if (out_len < BLE_FRAG_HEADER_BYTES) {
+        note_decode_failure(out_len, BLE_FRAG_HEADER_BYTES);
+        return 0;
+    }
+
+    const uint8_t packet_id = buf[0];
+    const uint8_t frag_index = buf[1];
+    const uint8_t frag_count = buf[2];
+    // frag_count is a protocol constant, not a per-write value -- a mismatch means the relay is
+    // running a different fragmentation scheme (stale build), which is not a length problem.
+    if (frag_count != BLE_FRAG_COUNT || frag_index >= frag_count) {
+        note_decode_failure(out_len, out_len);
+        return 0;
+    }
+
+    const size_t expected_chunk = (frag_index == frag_count - 1)
+                                       ? (RAW_NOTIF_PACKET_SIZE - (size_t)frag_index * BLE_FRAG_CHUNK_BYTES)
+                                       : BLE_FRAG_CHUNK_BYTES;
+    const size_t got_chunk = (size_t)out_len - BLE_FRAG_HEADER_BYTES;
+    if (got_chunk != expected_chunk) {
+        note_decode_failure(out_len, (uint16_t)(BLE_FRAG_HEADER_BYTES + expected_chunk));
+        return 0;
+    }
+
+    // A new packet id (or no reassembly in progress) starts fresh. A dropped fragment then just
+    // leaves a stale partial that free-runs until the next publish (~3Hz) supersedes it, rather
+    // than jamming reassembly forever on one lost write.
+    if (!s_reasm_active || packet_id != s_reasm_packet_id) {
+        s_reasm_active = true;
+        s_reasm_packet_id = packet_id;
+        s_reasm_have_mask = 0;
+    }
+    memcpy(&s_reasm_buf[(size_t)frag_index * BLE_FRAG_CHUNK_BYTES], &buf[BLE_FRAG_HEADER_BYTES], got_chunk);
+    s_reasm_have_mask = (uint16_t)(s_reasm_have_mask | (1u << frag_index));
+    const uint16_t full_mask = (uint16_t)((1u << frag_count) - 1u);
+    if (s_reasm_have_mask != full_mask) {
+        return 0; // waiting on the rest of this packet's fragments
+    }
+    reasm_reset();
+
     raw_notif_t raw;
-    if (!packet_decode(buf, out_len, &raw)) {
-        note_decode_failure(out_len);
+    if (!packet_decode(s_reasm_buf, RAW_NOTIF_PACKET_SIZE, &raw)) {
+        note_decode_failure(RAW_NOTIF_PACKET_SIZE, RAW_NOTIF_PACKET_SIZE);
         return 0; // ATT-level success; the packet is simply discarded downstream
     }
     s_consecutive_decode_failures = 0;
@@ -138,9 +202,11 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         if (event->connect.status == 0) {
             ESP_LOGI(TAG, "central connected, conn_handle=%u", event->connect.conn_handle);
             drive_log_ble(DRIVE_LOG_BLE_CONNECTED, (int32_t)event->connect.conn_handle);
-            // Fresh link: the previous connection's MTU and failure run say nothing about it.
+            // Fresh link: the previous connection's MTU, failure run and any in-flight fragment
+            // reassembly say nothing about it.
             s_consecutive_decode_failures = 0;
             s_negotiated_mtu = BLE_ATT_MTU_DFLT;
+            reasm_reset();
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
             start_advertising();
