@@ -26,6 +26,10 @@ class RelayBleClient(private val context: Context) {
     private var connectedAddress: String? = null
     private var negotiatedMtu = ATT_MTU_DEFAULT
     private var mtuRequested = false
+
+    // False until an ATT exchange SUCCEEDS on the current link. A refused exchange (status 6,
+    // GATT_REQUEST_NOT_SUPPORTED) leaves the real MTU unknown, not small -- see onMtuChanged().
+    private var mtuKnown = false
     private var bondReceiver: BroadcastReceiver? = null
 
     @SuppressLint("MissingPermission")
@@ -53,7 +57,12 @@ class RelayBleClient(private val context: Context) {
         Log.i(TAG, "connecting to ${device.address}")
         gatt?.close()
         connectedAddress = device.address
-        gatt = device.connectGatt(context, true, callback)
+        // autoConnect=false: a DIRECT connection always performs a fresh ATT MTU exchange. With
+        // autoConnect=true the stack reuses cached link state across a terminal reboot, and the
+        // re-requested exchange comes back GATT_REQUEST_NOT_SUPPORTED, leaving the MTU unverifiable
+        // (2026-09-24 afternoon ride: three of four sessions). Nothing is lost by dropping the
+        // background auto-reconnect -- RelayService re-scans and reconnects itself on disconnect.
+        gatt = device.connectGatt(context, false, callback)
     }
 
     @SuppressLint("MissingPermission")
@@ -104,7 +113,10 @@ class RelayBleClient(private val context: Context) {
         // receives a 20-byte fragment and discards it. On 2026-09-24 that happened for three
         // entire sessions, 120 packets, with `queued=true` logged every time and a blank display
         // on the bike. A silent success is the worst possible signal, so check explicitly.
-        if (negotiatedMtu < packet.size + ATT_HEADER_BYTES) {
+        // Only block when the MTU is KNOWN to be too small. An unknown MTU (the exchange was
+        // refused because one had already run) is sent optimistically: the terminal reports
+        // truncation if it is wrong, whereas blocking guarantees the packet is lost.
+        if (mtuKnown && negotiatedMtu < packet.size + ATT_HEADER_BYTES) {
             Log.e(
                 TAG,
                 "write: MTU $negotiatedMtu too small for ${packet.size}-byte packet; " +
@@ -145,6 +157,7 @@ class RelayBleClient(private val context: Context) {
             // exactly how truncated writes got sent believing they were fine.
             negotiatedMtu = ATT_MTU_DEFAULT
             mtuRequested = false
+            mtuKnown = false
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 // Default ATT MTU is 23 bytes (20-byte payload after the 3-byte ATT header), far
                 // smaller than the 146-byte RawNotifPacket. Without negotiating a larger MTU
@@ -161,14 +174,24 @@ class RelayBleClient(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-            // Trust the reported value, not the requested one. A failed exchange still fires this
-            // callback, and on a re-connect to a bonded peer Android may report a cached MTU the
-            // peripheral does not actually have -- which is the failure this whole path exists to
-            // catch. write() re-checks before every packet for that reason.
-            negotiatedMtu = if (status == BluetoothGatt.GATT_SUCCESS) mtu else ATT_MTU_DEFAULT
-            Log.i(TAG, "mtu changed: mtu=$mtu status=$status -> using $negotiatedMtu")
-            RelayRecorder.lifecycle("bleMtuChanged", "mtu=$mtu status=$status")
-            if (negotiatedMtu < RAW_NOTIF_PACKET_SIZE + ATT_HEADER_BYTES) {
+            // A FAILED exchange does not mean the MTU is 23.
+            //
+            // The 2026-09-24 afternoon ride caught this: status=6
+            // (GATT_REQUEST_NOT_SUPPORTED) means an exchange has already happened on this link and
+            // Android will not run a second one -- it says nothing about the value. The terminal
+            // logged MTU=256 on every one of those same connections. Treating the failure as 23
+            // made write() block 408 packets across the ride on links that were fine, which is a
+            // worse outcome than the truncation it was added to prevent.
+            //
+            // So: only a successful exchange sets a known MTU. A failure marks the MTU UNKNOWN,
+            // and write() sends optimistically in that state -- the terminal detects and reports
+            // truncation (DRIVE_LOG_BLE_TRUNCATED) if the guess is wrong, so an optimistic write
+            // can only lose the same packet a blocked write loses for certain.
+            mtuKnown = status == BluetoothGatt.GATT_SUCCESS
+            if (mtuKnown) negotiatedMtu = mtu
+            Log.i(TAG, "mtu changed: mtu=$mtu status=$status known=$mtuKnown")
+            RelayRecorder.lifecycle("bleMtuChanged", "mtu=$mtu status=$status known=$mtuKnown")
+            if (mtuKnown && negotiatedMtu < RAW_NOTIF_PACKET_SIZE + ATT_HEADER_BYTES) {
                 Log.e(TAG, "mtu $negotiatedMtu cannot carry a $RAW_NOTIF_PACKET_SIZE-byte packet")
             }
             g.discoverServices()

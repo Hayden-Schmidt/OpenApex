@@ -112,6 +112,19 @@ static const glyph_entry_t MANEUVER_GLYPHS[] = {
 
 static const glyph_entry_t ROUNDABOUT_GLYPHS[] = {
     {169, NAV_ICON_ROUNDABOUT_STRAIGHT},  // 0xa5c5b7f3 "continue straight onto ..."
+    // Both added from the 2026-09-24 afternoon ride, and both were previously falling through to
+    // the ROUNDABOUT_STRAIGHT default. Handedness here is NOT guessed from the phrasing or the
+    // angle -- it is measured from the GNSS track, by taking the course over ground before the
+    // maneuver and 12 s after it:
+    //
+    //   87  "take the 2nd exit onto Antares Pl"   42 packets, bearing delta  -3 deg -> straight
+    //   208 "Exit the roundabout onto Antares Pl"  6 packets, bearing delta +112 deg -> RIGHT
+    //
+    // 208 is the reported defect: a right-hand exit rendered as a straight-through. 87 was also
+    // unknown to this table, but its default happened to be correct, which is exactly why an
+    // unseen roundabout glyph must be reported rather than left to a silent fallback.
+    {87,  NAV_ICON_ROUNDABOUT_STRAIGHT},
+    {208, NAV_ICON_ROUNDABOUT_RIGHT},
     // 0xcb794cdc is the "take the 1st exit" glyph. On the capture (New Zealand, left-hand traffic)
     // that exit was a left-hand one. Whether Maps ships a mirrored glyph in right-hand-traffic
     // countries is untested -- if a right-hand-drive capture ever shows 135 on a right-hand exit,

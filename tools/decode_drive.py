@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -169,6 +170,34 @@ def pair_by_sequence(records):
         yield raw, models.get((raw["boot_id"], raw["seq"]))
 
 
+def known_glyph_angles() -> set:
+    """Reads the glyph angles the terminal actually knows, straight out of normalize.c.
+
+    Parsed rather than duplicated here on purpose: a copy of the tables in this file would drift,
+    and a stale copy in a tool whose whole job is to report missing entries is worse than no tool.
+    Returns an empty set if the source cannot be found, which makes the report fall back to the
+    weaker "resolved to UNKNOWN" test rather than claiming everything is unknown.
+    """
+    source = Path(__file__).resolve().parent.parent / "firmware" / "main" / "normalize.c"
+    try:
+        text = source.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        print(f"warning: cannot read {source}; falling back to UNKNOWN-only detection",
+              file=sys.stderr)
+        return set()
+
+    angles = set()
+    for table in ("MANEUVER_GLYPHS", "ROUNDABOUT_GLYPHS"):
+        start = text.find(f"{table}[] = {{")
+        if start < 0:
+            continue
+        body = text[start:text.find("};", start)]
+        # Entries look like `{247, NAV_ICON_TURN_RIGHT},`; comments in between are ignored because
+        # the pattern requires a brace-digit-comma-NAV_ICON sequence.
+        angles.update(int(m) for m in re.findall(r"\{\s*(-?\d+)\s*,\s*NAV_ICON_", body))
+    return angles
+
+
 def report_glyphs(records) -> int:
     """Lists every maneuver-glyph angle in the capture and what the terminal made of it.
 
@@ -177,6 +206,7 @@ def report_glyphs(records) -> int:
     firmware logging is needed for this: the RAW record already carries icon_rotation_deg for every
     packet and the MODEL record carries the resulting icon.
     """
+    known = known_glyph_angles()
     seen = {}
     for raw, model in pair_by_sequence(records):
         angle = raw["icon_rotation_deg"]
@@ -196,16 +226,26 @@ def report_glyphs(records) -> int:
         print(f"{label:>7}  {entry['count']:>5}  {icons}")
         for title in sorted(entry["titles"])[:3]:
             print(f"{'':>16}{title!r}")
-        # An angle is "unseen by the glyph tables" only if it exists AND produced UNKNOWN. A null
-        # angle producing UNKNOWN just means the notification had no maneuver icon to measure.
-        if angle is not None and entry["icons"].get("UNKNOWN"):
+        # "Resolved to UNKNOWN" is NOT a sufficient test, and relying on it hid a real defect.
+        #
+        # derive_maneuver_from_angle() falls back to UNKNOWN, so a missing MANEUVER glyph is loud.
+        # derive_roundabout_direction() falls back to ROUNDABOUT_STRAIGHT, because a roundabout
+        # must never resolve to a plain turn -- so a missing ROUNDABOUT glyph is silent, and just
+        # renders as straight-through. On the 2026-09-24 afternoon ride that turned a right-hand
+        # exit (glyph 208, measured +112 degrees of course change) into a straight-ahead arrow, and
+        # this report said "every glyph is known".
+        #
+        # So ask the firmware what it actually knows, rather than inferring it from the output.
+        if angle is not None and angle not in known:
+            unseen.append((angle, entry["count"]))
+        elif angle is not None and entry["icons"].get("UNKNOWN"):
             unseen.append((angle, entry["icons"]["UNKNOWN"]))
 
     if unseen:
         print("\nAngles NOT in the terminal's glyph tables (add to normalize.c after confirming "
               "the maneuver from the titles above):", file=sys.stderr)
         for angle, count in unseen:
-            print(f"  {angle} ({count} packet(s) resolved to UNKNOWN)", file=sys.stderr)
+            print(f"  {angle} ({count} packet(s))", file=sys.stderr)
     else:
         print("\nevery maneuver glyph in this capture is known to the terminal", file=sys.stderr)
     return 0
