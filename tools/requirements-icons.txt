@@ -1,0 +1,4 @@
+# Deps for tools/build_icon_raster.py. Install with:
+#   python -m pip install -r tools/requirements-icons.txt
+resvg-py>=0.5.0
+Pillow>=10.0.0

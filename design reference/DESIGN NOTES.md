@@ -53,6 +53,22 @@ Current compile-time config surface lives in `firmware/main/board_profile.h`:
 There is **no runtime config store yet** (no NVS schema, no phone→device config packet). Flagged
 for post-UI-sprint backend work.
 
+### Icon assets: SVG → device rasterization ✅ (pipeline only, no page consumes it yet)
+
+Status/marker icons (battery, bluetooth, location pins, warning, etc. — **not** the turn-by-turn
+maneuver arrows, which stay procedural, see `firmware/gui/nav_renderer.cpp`) are authored as SVG in
+`design reference/nav_icons_svg/` and rasterized at build time to per-board-profile LVGL bitmaps.
+Full pipeline docs live in `design/icons/README.md`; the short version, when a page in this folder
+needs a status icon:
+
+1. Add the SVG to `design reference/nav_icons_svg/` (square viewBox) and register it in
+   `design/icons/icons_manifest.json` with its render size at the 240px reference profile.
+2. `python -m pip install -r tools/requirements-icons.txt` (first time only), then
+   `python tools/build_icon_raster.py` — writes `firmware/gui/generated/icons_<profile>.h` for
+   every board profile in `firmware/main/board_profile.h`, correctly scaled per screen.
+3. Reference `&ICON_DESC[ICON_<NAME>]` from the generated header as an `lv_image_dsc_t*` in the
+   page's GUI code.
+
 ---
 
 ## Step 3 — UI development
