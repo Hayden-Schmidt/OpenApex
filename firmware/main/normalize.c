@@ -112,18 +112,15 @@ static const glyph_entry_t MANEUVER_GLYPHS[] = {
 
 static const glyph_entry_t ROUNDABOUT_GLYPHS[] = {
     {169, NAV_ICON_ROUNDABOUT_STRAIGHT},  // 0xa5c5b7f3 "continue straight onto ..."
-    // Both added from the 2026-09-24 afternoon ride, and both were previously falling through to
-    // the ROUNDABOUT_STRAIGHT default. Handedness here is NOT guessed from the phrasing or the
-    // angle -- it is measured from the GNSS track, by taking the course over ground before the
-    // maneuver and 12 s after it:
-    //
-    //   87  "take the 2nd exit onto Antares Pl"   42 packets, bearing delta  -3 deg -> straight
-    //   208 "Exit the roundabout onto Antares Pl"  6 packets, bearing delta +112 deg -> RIGHT
-    //
-    // 208 is the reported defect: a right-hand exit rendered as a straight-through. 87 was also
-    // unknown to this table, but its default happened to be correct, which is exactly why an
-    // unseen roundabout glyph must be reported rather than left to a silent fallback.
-    {87,  NAV_ICON_ROUNDABOUT_STRAIGHT},
+    // 87 was reported as STRAIGHT from the 2026-09-24 afternoon ride's bearing-delta heuristic
+    // (course over ground 12 s after the maneuver). That heuristic was measuring the wrong thing --
+    // the 2026-09-24 evening ride replayed the identical "take the 2nd exit onto Antares Pl" glyph
+    // 87 and it was a right-hand exit, matching the earlier afternoon capture of the SAME approach,
+    // which also turned out right once glyph 208 fired seconds later. Two independent, unbroken
+    // (no reroute/restart) runs of this exact maneuver both went 87 -> 208 (right) at the very end,
+    // with 87 held the entire approach and never resolving to anything else. Retired the bearing
+    // heuristic for this entry; 87 now maps straight to RIGHT rather than STRAIGHT.
+    {87,  NAV_ICON_ROUNDABOUT_RIGHT},
     {208, NAV_ICON_ROUNDABOUT_RIGHT},
     // 0xcb794cdc is the "take the 1st exit" glyph. On the capture (New Zealand, left-hand traffic)
     // that exit was a left-hand one. Whether Maps ships a mirrored glyph in right-hand-traffic
