@@ -20,6 +20,7 @@ Coordinate convention matches SVG: x right, **y down**. A `curve` with
 | straight | Straight | no | 240-unit vertical |
 | turn_left / turn_right | Turn Left / Right | no | 90 deg, radius 80 |
 | turn_slight_left / turn_slight_right | Slight Left / Right | no | 35 deg, radius 80 |
+| turn_sharp_left / turn_sharp_right | Sharp Left / Right | no | 125 deg, radius 45, short exit leg |
 | u_turn_left / u_turn_right | U-Turn Left / Right | no | 180 deg, radius 100 |
 | roundabout_left | Roundabout Left | no | 90 deg loop sweep -- net exit left |
 | roundabout_straight | Roundabout Straight | no | 180 deg loop sweep -- net exit straight |

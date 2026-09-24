@@ -45,6 +45,17 @@ typedef enum {
     DRIVE_LOG_BLE_DISCONNECTED = 2,
     DRIVE_LOG_BLE_DECODE_FAILED = 3,
     DRIVE_LOG_BLE_QUEUE_FULL = 4,
+    // Negotiated ATT MTU, logged once per connection. Detail is the MTU in bytes.
+    //
+    // Without this the 2026-09-24 capture could only infer the link was truncating packets from
+    // DECODE_FAILED's length (always 20 = the 23-byte default MTU minus the 3-byte ATT header).
+    // Logging the exchange directly turns "every packet was rejected and we don't know why" into
+    // one record naming the cause.
+    DRIVE_LOG_BLE_MTU = 5,
+    // A write arrived that is too short to be a packet at all -- the signature of a link that
+    // never negotiated up from the default MTU. Distinguished from DECODE_FAILED, which also
+    // covers a well-sized packet with a bad magic/version.
+    DRIVE_LOG_BLE_TRUNCATED = 6,
 } drive_log_ble_event_t;
 
 // GCC/Clang spell struct packing as an attribute, MSVC as a pragma. Both are needed: the firmware

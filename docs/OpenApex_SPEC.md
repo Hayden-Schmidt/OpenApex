@@ -537,6 +537,13 @@ remain smartphone-side features.
    (see §16.2): ESP-IDF 5.x + LVGL 9.
 6. Confirm dock pin count, wake/ID pin requirements, and external buck converter packaging.
 7. Decide whether the embedded project remains under `firmware/` in this repository.
+8. **[2026-09-24 UPDATE]** Service-lifetime churn is resolved, and it was not a radio problem.
+   `OpenApexCompanionService.relayStop()` called `stopService()` on every CDM "device disappeared"
+   event, so a momentary BLE drop destroyed and recreated `RelayService` — seven lifetimes in 70
+   minutes on the 2026-09-24 capture, `bleDisconnected -> serviceDestroy` within 35 ms each time.
+   It now leaves the service running to reconnect itself. The NimBLE reason-531 question below is
+   separate and still open.
+
 8. Root-cause the ~9-30s BLE central/peripheral disconnect churn (NimBLE reason 531) previously
    observed between the C3 and an Android peripheral (tested on a OnePlus 15), before roles were
    flipped in §16.5. A `ble_gap_update_params()` call from the central made disconnects happen
@@ -909,3 +916,139 @@ phone source adapter -> normalized notification/GNSS model -> BLE packet
 Routing, maps, geocoding, PMTiles, Valhalla, Ferrostar, and route geometry must remain outside this
 path. A future developer should be able to build and test the C3 POC without downloading map data
 or understanding the phone's later offline-routing implementation.
+
+
+## 17. 2026-09-24 ride capture: findings and fixes
+
+The second full capture (7 phone sessions, 8,176 terminal records) confirmed the 2026-09-23 glyph
+work and exposed two transport faults that had been silently destroying most of the data.
+
+**Confirmed correct.** Replaying all 478 decoded packets through the current normalizer reproduces
+what the terminal displayed exactly — 0 mismatches, where the pre-fix normalizer differed on 150.
+Maneuvers resolved: TURN_RIGHT 154, ROUNDABOUT_STRAIGHT 148, TURN_LEFT 91, ROUNDABOUT_LEFT 22,
+STRAIGHT 17, ARRIVED 8, UNKNOWN 7 (6 empty titles, 1 "Rerouting..."). The duplicate-GNSS-callback
+fix holds: zero duplicate fix timestamps, one callback instance per session.
+
+**Fault 1 — no GNSS in 4 of 7 sessions.** `ACCESS_BACKGROUND_LOCATION` was declared but not
+granted, so any background-started `RelayService` could not promote itself to the `location` FGS
+type; the promotion threw, was retried every 30 s, and was denied every time. The ride out
+(09:22–09:26, foreground start) had 226 samples and 93% bearing coverage; everything after the
+09:26 service restart had none. The terminal log corroborates exactly — heading present on 334/351
+packets in the good session, unknown on 109/109 in the next.
+
+*Fixed by:* requesting the permission as an explicit second stage in `MainActivity`, deep-linking
+to Settings when the system dialog is spent, distinguishing the permanent case from the transient
+one in `tryStartGnss()`, and posting a high-priority "No speed or compass" notification instead of
+degrading silently. Riding past a dead compass with no indication is the failure being fixed, as
+much as the permission itself.
+
+**Fault 2 — 3 of 7 sessions delivered nothing at all.** The terminal logged 6,690 `DECODE_FAILED`
+against 8 `CONNECTED`, every failure with `detail=20` — the default-ATT-MTU payload (23 − 3). The
+phone sent all 622 packets at 146 bytes; `WRITE_TYPE_NO_RESPONSE` truncated them to 20 and reported
+success. The display sat on its boot screen for three entire sessions while the phone logged
+`queued=true` throughout. One stale connection also burned 6,565 ring slots — 80% of the 1 MB log
+partition — on nothing but repeated identical failures.
+
+*Fixed by:* tracking the negotiated MTU on the phone and refusing to write a packet the link cannot
+carry whole; handling `BLE_GAP_EVENT_MTU` in firmware so the negotiated value is logged rather than
+inferred; a distinct `TRUNCATED` event; rate-limiting repeated failures so a dead link cannot eat
+the ring; and marking the view stale via `ble_link_is_faulted()` so the dial greys instead of
+holding a frame forever. A dedicated fault screen naming the cause is follow-up work — `gui_app`
+distinguishes only idle from dial today.
+
+**Glyph tables now match with tolerance.** Angles are measurements of rendered bitmaps, so
+exact-match would answer UNKNOWN for a glyph that merely shifted a degree between Maps releases.
+Matching is within ±3°, guarded by `test_glyph_tables_are_separable()`, which fails if any two
+entries in a table come within 2x the tolerance. Note 133 (arrived) and 135 (roundabout, 1st exit)
+are only 2° apart but live in different families, selected by title text before either is consulted.
+
+**Coverage is still the main risk.** Only 6 of 13 maneuver classes have ever been observed;
+`SLIGHT_RIGHT`, `SHARP_LEFT`, `U_TURN` and `ROUNDABOUT_RIGHT` have no glyph entry at all and survive
+only on English text matching. No capture has ever contained a km-scale distance. See
+[Capture_Ride_Plan.md](Capture_Ride_Plan.md).
+
+## 18. Nav arrow join quantisation (2026-09-24)
+
+### Symptom
+
+At every place a straight ran into a curve, the curve appeared shifted slightly sideways from the
+straight, leaving a visible lip in the silhouette. Roundabouts were worst.
+
+### Cause
+
+`NavRenderer` carries maneuvers as primitives (line, arc) rather than sampled points, and hands
+each one to LVGL separately. Consecutive primitives are exactly tangent in maneuver space and stay
+tangent through `world_to_screen()`, which is a similarity. Everything is lost at the LVGL handoff:
+with `LV_USE_FLOAT 0`, `lv_value_precise_t` is an integer, so a line takes integer endpoints while
+an arc takes an integer centre, an integer radius and whole-degree end angles. Those quantisations
+were independent of each other, and an arc quantises as a *rigid body* -- rounding its centre or
+its radius translates the whole curve, and against a vertical stem the radius at the tangent point
+is horizontal, which is why it read as the arc being pushed to one side.
+
+Four distinct defects, in descending order of how much each contributed:
+
+1. **The stroke width disagreed between primitives.** `stroke_line()` truncated the float width
+   while `stroke_arc()` rounded it. At a 240px display the width is `22 * 1.1 * 240/600 = 9.68px`,
+   so straights drew 9px wide and curves 10px. A whole-pixel width difference offsets one edge of
+   the silhouette across the entire join.
+2. **Line endpoints were truncated, arc centres rounded** -- a systematic half-pixel disagreement.
+3. **The arc's radius was double-rounded.** `dsc.radius` came from `lround(radius + width/2)` and
+   LVGL then fills `[radius - width, radius]`, leaving the band centreline on a half pixel whenever
+   rounding the width changed its parity.
+4. **Arc end angles were truncated** to whole degrees, so both ends pulled inward, and because
+   `dsc.rounded` centres a semicircular cap on the endpoint, the cap bulged past its neighbour.
+
+### Fix
+
+`stroke_width_px()` is now the single width every primitive uses: whole pixels, and always even so
+that an arc's `radius - width/2` centreline stays integral. All rounding is `lround`, never a cast.
+`dsc.radius` is `lround(radius) + width/2`, so the band centreline is exact.
+
+`stroke_arc()` takes an `anchor` -- the pixel the preceding segment was actually drawn to -- and
+places its centre at `round(anchor) + r_center * unit` rather than rounding the ideal float centre.
+The curve then translates bodily to meet its neighbour. This direction matters: a circle moved half
+a pixel is still a circle, whereas a straight moved half a pixel off its axis anti-aliases along its
+whole length. For the same reason `stroke_line()`, when anchored, translates both endpoints by the
+same delta rather than dragging one across, which would tilt it.
+
+`draw()` chains the real drawn endpoint from each segment into the next, because a curve's drawn end
+is `integer centre + integer radius` at a whole-degree angle -- not the rounded ideal joint. An
+earlier pass that anchored every segment to the ideal joint fixed straight-to-curve but left
+curve-to-curve mismatched.
+
+An even earlier pass stamped a disc at each interior joint to cover the step. That is removed: a
+disc has the same rounded-centre problem it was meant to hide, and it had to be recomputed per frame
+from values that move as `tick()` eases `cur_.rot` and `cur_.base_dist`, so it could pop a pixel
+mid-animation.
+
+### What remains, and why it was not fixed
+
+Straight-to-curve is now clean. **Curve-to-curve is still imperfect**, and cannot be made exact by
+this approach. Where a tangent is axis-aligned -- the usual resting case of a vertical stem meeting
+a curve -- the anchor arithmetic is integer plus integer and the join is exact. A roundabout's
+transition arcs meet the loop at oblique angles, where no choice of integer centre and integer
+radius puts the tangent point on an integer pixel. The residual is up to half a pixel per join, and
+a roundabout chains four of them.
+
+The real fix is to stop composing quantised primitives and hand LVGL one path. LVGL 9.6 has the
+API for exactly this in `include/lvgl/draw/lv_draw_vector.h`: `lv_fpoint_t` is float, and
+`lv_vector_path_move_to()` / `lv_vector_path_line_to()` / `lv_vector_path_append_arc()` build a
+single path that `lv_draw_vector_dsc_set_stroke_width()` strokes in one pass with a proper stroker
+handling the joins. That would delete `stroke_line()`, `stroke_arc()`, the anchor plumbing and the
+width-parity rule outright.
+
+It is not viable on this hardware. `LV_USE_VECTOR_GRAPHIC` requires `LV_USE_MATRIX`
+(`lv_conf_internal.h:5271`), which requires `LV_USE_FLOAT` (`:5395`), and the software backend is
+ThorVG -- 2.3 MB of vendored C++ source. The target is an `esp32-c3-devkitm-1`: single RISC-V core,
+~400 KB SRAM, no PSRAM, no FPU. `LV_USE_FLOAT` turns every LVGL coordinate operation into a
+soft-float call, and ThorVG's software rasterizer wants a full ARGB8888 canvas -- 240x240x4 =
+225 KB before its own allocations. `dial_screen.cpp` already records rejecting an `lv_canvas` over
+that same 225 KB.
+
+The fallback, if the join quality ever matters enough: pre-rasterize each maneuver's stroked path to
+an alpha mask offline in `build_icons.py`, where a real float renderer is available, and blit it at
+runtime -- the same trick `build_arrowhead_mask()` already uses for the arrowhead. The cost is that
+the route is currently animated (`tick()` slides `base_dist`, rotates the camera, and clips segments
+per frame), and a baked mask cannot do that without baking frames or giving up the tween.
+
+Accepted as-is: a sub-pixel defect on the oblique joins of roundabouts only.

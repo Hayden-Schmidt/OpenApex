@@ -17,6 +17,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.provider.Settings
 import android.os.ParcelUuid
 import android.util.Log
 import android.hardware.Sensor
@@ -281,12 +283,82 @@ class RelayService : Service() {
             gnssStarted = true
             Log.i(TAG, "tryStartGnss: GNSS started")
             RelayRecorder.lifecycle("gnssStarted")
+            clearDegradedNotification()
         } catch (e: SecurityException) {
+            // Two very different failures land here, and the 2026-09-24 capture showed the cost of
+            // treating them the same: 30-second retries, denied identically every time, for a whole
+            // ride, with nothing on screen or in the notification saying the compass was dead.
+            //
+            //  - ACCESS_BACKGROUND_LOCATION missing: PERMANENT while the service runs from the
+            //    background. The OS treats location as foreground-only, so no amount of retrying
+            //    will ever promote this service. Only the user can fix it, in Settings.
+            //  - Permission held, but the process is momentarily not in an eligible state: genuinely
+            //    transient, and the timer is the right answer.
+            val backgroundLocationMissing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
+                PackageManager.PERMISSION_GRANTED
+            if (backgroundLocationMissing) {
+                Log.e(TAG, "tryStartGnss: ACCESS_BACKGROUND_LOCATION not granted — no speed/heading/compass this ride", e)
+                RelayRecorder.lifecycle("gnssBackgroundPermissionMissing", e.message)
+                showDegradedNotification()
+                // Still retry, but slowly: the user may grant it mid-ride, and a 30-second hammer
+                // on a permission only a human can change is just wasted wakeups.
+                handler.removeCallbacks(gnssRetry)
+                handler.postDelayed(gnssRetry, GNSS_PERMISSION_RETRY_MS)
+                return
+            }
             Log.w(TAG, "tryStartGnss: location FGS promotion denied, retrying in ${GNSS_RETRY_MS}ms", e)
             RelayRecorder.lifecycle("gnssPromotionDenied", e.message)
             handler.removeCallbacks(gnssRetry)
             handler.postDelayed(gnssRetry, GNSS_RETRY_MS)
         }
+    }
+
+    /**
+     * A separate, high-importance notification for "the relay is running but the compass is dead".
+     *
+     * Deliberately NOT folded into the ongoing relay notification, which is IMPORTANCE_LOW and by
+     * design says nothing interesting — the rider would never see it. This one is meant to be
+     * noticed before setting off, and taps through to the settings page that can fix it.
+     */
+    private fun showDegradedNotification() {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    DEGRADED_CHANNEL_ID,
+                    "Relay problems",
+                    NotificationManager.IMPORTANCE_HIGH,
+                ),
+            )
+        }
+        val settings = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", packageName, null))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = PendingIntent.getActivity(this, 1, settings, PendingIntent.FLAG_IMMUTABLE)
+        nm.notify(
+            DEGRADED_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, DEGRADED_CHANNEL_ID)
+                .setContentTitle("No speed or compass")
+                .setContentText("Set Location to \"Allow all the time\" for OpenApex")
+                .setStyle(
+                    NotificationCompat.BigTextStyle().bigText(
+                        "OpenApex only has location while the app is open, so the terminal gets no " +
+                            "speed, heading or compass while riding. Tap to open Settings and choose " +
+                            "\"Allow all the time\".",
+                    ),
+                )
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_ERROR)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build(),
+        )
+    }
+
+    private fun clearDegradedNotification() {
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(DEGRADED_NOTIFICATION_ID)
     }
 
     @SuppressLint("MissingPermission")
@@ -412,5 +484,10 @@ class RelayService : Service() {
         // Retry cadence for the location-FGS promotion. Long enough not to churn, short enough
         // that GNSS is live well inside a drive if the exemption arrives late.
         private const val GNSS_RETRY_MS = 30_000L
+
+        /** Only a human can grant background location, so poll for it slowly, not every 30 s. */
+        private const val GNSS_PERMISSION_RETRY_MS = 5 * 60_000L
+        private const val DEGRADED_CHANNEL_ID = "relay_degraded"
+        private const val DEGRADED_NOTIFICATION_ID = 2
     }
 }

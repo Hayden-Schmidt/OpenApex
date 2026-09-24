@@ -55,6 +55,30 @@
     "name": "Slight Left",
     "mirror_of": "turn_slight_right"
   },
+  "turn_sharp_right": {
+    "name": "Sharp Right",
+    "_comment": "Same skeleton as turn_right, read as 'more turn, less reach'. The bend is 125 deg rather than 90 and the radius is 45 rather than 60, so the arrow both swings past square and does it in a tighter arc -- at a 90 deg bend the exit leg runs flat across the display, which is exactly what made a sharp turn indistinguishable from an ordinary one while it reused turn_right. Past 90 deg the exit heading is +35 deg, i.e. pointing back down the display, which is the part a rider reads as 'tighter than a normal turn'. The exit leg is shortened to 115 (turn_right uses 140) to keep the horizontal extent lower than turn_right's despite the wider sweep: ~165 across, against ~200.",
+    "steps": [
+      {
+        "type": "straight",
+        "length": 130
+      },
+      {
+        "type": "curve",
+        "dir": "right",
+        "angle": 125,
+        "radius": 45
+      },
+      {
+        "type": "straight",
+        "length": 115
+      }
+    ]
+  },
+  "turn_sharp_left": {
+    "name": "Sharp Left",
+    "mirror_of": "turn_sharp_right"
+  },
   "u_turn_right": {
     "name": "U-Turn Right",
     "steps": [

@@ -68,8 +68,28 @@ class OpenApexCompanionService : CompanionDeviceService() {
         )
     }
 
+    /**
+     * A CDM "disappeared" event must NOT tear the relay down.
+     *
+     * It used to call stopService(), and the 2026-09-24 capture shows what that cost: a momentary
+     * BLE drop produced bleDisconnected -> serviceDestroy within 35 ms, then an immediate restart
+     * from the background on the next "appeared". Seven service lifetimes in 70 minutes, and each
+     * restart was a fresh chance to lose two things permanently for the rest of the ride:
+     *
+     *   - GNSS: a background-started service cannot promote itself to the "location" FGS type
+     *     without ACCESS_BACKGROUND_LOCATION, so speed/heading/compass stayed dead (4 of 7
+     *     sessions had zero telemetry).
+     *   - MTU: the fresh GATT connection renegotiates, and where it didn't, every 146-byte packet
+     *     was truncated to 20 bytes and rejected by the terminal (3 of 7 sessions decoded nothing).
+     *
+     * CDM presence is a hint that the terminal is out of radio range, not an instruction to
+     * discard state. RelayService already re-scans and reconnects itself on BLE disconnect, so the
+     * correct response here is to let it keep running: it holds the GNSS stream, the location FGS
+     * promotion and the packet sequence across the gap, and picks the link back up when the
+     * terminal returns. The service is stopped only by the user, or by the OS.
+     */
     private fun relayStop() {
-        stopService(Intent(this, RelayService::class.java))
+        Log.i(TAG, "terminal out of range; leaving RelayService running to reconnect itself")
     }
 
     companion object {

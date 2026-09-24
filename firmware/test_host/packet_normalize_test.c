@@ -319,6 +319,84 @@ static void test_street_name_does_not_flip_direction(void) {
     assert(strcmp(m.street_name, "Wright St") == 0);
 }
 
+/**
+ * The invariant that makes tolerance matching safe.
+ *
+ * Glyph angles are matched within normalize_glyph_tolerance_deg() so that a Maps release nudging a
+ * bitmap by a degree does not silently degrade to UNKNOWN. That is only sound while every pair of
+ * entries in a table is more than 2x the tolerance apart -- at exactly 2x, an angle midway between
+ * two entries is within tolerance of both, and the lookup would start answering one maneuver for
+ * another. That is precisely the failure the glyph table was introduced to end, so it is checked
+ * here rather than trusted to whoever adds the next entry.
+ *
+ * The two tables are checked independently and deliberately NOT against each other: 133 (arrived)
+ * and 135 (roundabout, 1st exit) are two degrees apart but live in different families, and
+ * normalize_packet() decides which family applies from the title text before either is consulted.
+ */
+static void test_glyph_tables_are_separable(void) {
+    const int tolerance = normalize_glyph_tolerance_deg();
+    size_t maneuver_count = 0, roundabout_count = 0;
+    const glyph_entry_t *tables[2];
+    size_t counts[2];
+    tables[0] = normalize_maneuver_glyphs(&maneuver_count);
+    counts[0] = maneuver_count;
+    tables[1] = normalize_roundabout_glyphs(&roundabout_count);
+    counts[1] = roundabout_count;
+
+    for (int t = 0; t < 2; t++) {
+        for (size_t i = 0; i < counts[t]; i++) {
+            for (size_t j = i + 1; j < counts[t]; j++) {
+                const int sep = normalize_angle_separation(tables[t][i].angle_deg,
+                                                           tables[t][j].angle_deg);
+                assert(sep > 2 * tolerance);
+            }
+        }
+    }
+
+    // Wrapping is handled: 359 and 1 are 2 degrees apart, not 358.
+    assert(normalize_angle_separation(359, 1) == 2);
+    assert(normalize_angle_separation(1, 359) == 2);
+    assert(normalize_angle_separation(0, 180) == 180);
+}
+
+// A glyph that has drifted a degree or two still resolves; one that is genuinely unseen does not.
+static void test_glyph_angle_tolerance(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+    const int tolerance = normalize_glyph_tolerance_deg();
+
+    // 247 is the observed right-turn glyph. Title text carries no maneuver, so the glyph decides.
+    for (int delta = -tolerance; delta <= tolerance; delta++) {
+        build_packet_with_angle(p, "Daifuku Oceania", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                                RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, (int16_t)(247 + delta));
+        packet_decode(p, sizeof(p), &raw);
+        normalize_packet(&raw, &m);
+        assert(m.icon_type == NAV_ICON_TURN_RIGHT);
+    }
+
+    // Just outside the tolerance is an unseen glyph, and must NOT be guessed at.
+    build_packet_with_angle(p, "Daifuku Oceania", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                            RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, (int16_t)(247 + tolerance + 1));
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_UNKNOWN);
+
+    // Wrapping applies to the depart glyph at 0: 358 is two degrees away, not 358.
+    build_packet_with_angle(p, "Daifuku Oceania", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                            RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 358);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_STRAIGHT);
+
+    // A roundabout with an unseen exit glyph stays a roundabout -- never a plain turn.
+    build_packet_with_angle(p, "At the roundabout, take the 2nd exit", NULL, NULL, -1, -1,
+                            RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 99);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_ROUNDABOUT_STRAIGHT);
+}
+
 int main(void) {
     test_decode_rejects_malformed();
     test_normalize_turn_right();
@@ -332,6 +410,8 @@ int main(void) {
     test_lane_guidance_is_a_ramp_not_a_turn();
     test_kilometre_distance_parses();
     test_street_name_does_not_flip_direction();
+    test_glyph_tables_are_separable();
+    test_glyph_angle_tolerance();
     puts("packet + normalize tests passed");
     return 0;
 }

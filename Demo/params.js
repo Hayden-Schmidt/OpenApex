@@ -157,6 +157,8 @@ const DEMO_PARAMS = {
     turn_right: [70.0, -120.0],
     turn_left: [-70.0, -120.0],
     turn_slight_right: [34.6, -145.5],
+    turn_sharp_right: [58.0, -112.0],
+    turn_sharp_left: [-58.0, -112.0],
     turn_slight_left: [-34.6, -145.5],
     u_turn_right: [70.0, -130.0],
     u_turn_left: [-70.0, -130.0],

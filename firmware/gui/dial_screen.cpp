@@ -27,12 +27,19 @@ bool render_icon_for(nav_icon_t icon, nav_render_icon_t *out) {
             *out = NAV_RENDER_STRAIGHT;
             return true;
         case NAV_ICON_TURN_LEFT:
-        case NAV_ICON_SHARP_LEFT: // no distinct "sharp" glyph in the ported data; reuse turn_left
             *out = NAV_RENDER_TURN_LEFT;
             return true;
         case NAV_ICON_TURN_RIGHT:
-        case NAV_ICON_SHARP_RIGHT:
             *out = NAV_RENDER_TURN_RIGHT;
+            return true;
+        // Sharp turns now have their own geometry (125 deg bend, 45 radius, in maneuvers.json)
+        // rather than borrowing the 90 deg turn. Reusing the ordinary turn drew a sharp turn and
+        // a normal one identically, so the display could not tell the rider which one was coming.
+        case NAV_ICON_SHARP_LEFT:
+            *out = NAV_RENDER_TURN_SHARP_LEFT;
+            return true;
+        case NAV_ICON_SHARP_RIGHT:
+            *out = NAV_RENDER_TURN_SHARP_RIGHT;
             return true;
         case NAV_ICON_SLIGHT_LEFT:
             *out = NAV_RENDER_TURN_SLIGHT_LEFT;

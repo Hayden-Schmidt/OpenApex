@@ -43,6 +43,8 @@ typedef enum {
     NAV_RENDER_TURN_LEFT,
     NAV_RENDER_TURN_SLIGHT_RIGHT,
     NAV_RENDER_TURN_SLIGHT_LEFT,
+    NAV_RENDER_TURN_SHARP_RIGHT,
+    NAV_RENDER_TURN_SHARP_LEFT,
     NAV_RENDER_U_TURN_RIGHT,
     NAV_RENDER_U_TURN_LEFT,
     NAV_RENDER_ROUNDABOUT_RIGHT,
@@ -75,6 +77,16 @@ static const nav_segment_t nav_icon_turn_slight_left_main[] = {
     {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, -0.0000f, 0.0000f, 130.0000f},
     {NAV_SEG_ARC, {-0.00f, -130.00f}, -90.0000f, 36.6519f, 60.0000f, -35.0000f, 130.0000f, 166.6519f},
     {NAV_SEG_LINE, {-10.85f, -164.41f}, -125.0000f, 145.0000f, 0.0000f, -0.0000f, 166.6519f, 311.6519f},
+};
+static const nav_segment_t nav_icon_turn_sharp_right_main[] = {
+    {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, 0.0000f, 0.0000f, 130.0000f},
+    {NAV_SEG_ARC, {0.00f, -130.00f}, -90.0000f, 98.1748f, 45.0000f, 125.0000f, 130.0000f, 228.1748f},
+    {NAV_SEG_LINE, {70.81f, -166.86f}, 35.0000f, 115.0000f, 0.0000f, 0.0000f, 228.1748f, 343.1748f},
+};
+static const nav_segment_t nav_icon_turn_sharp_left_main[] = {
+    {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, -0.0000f, 0.0000f, 130.0000f},
+    {NAV_SEG_ARC, {-0.00f, -130.00f}, -90.0000f, 98.1748f, 45.0000f, -125.0000f, 130.0000f, 228.1748f},
+    {NAV_SEG_LINE, {-70.81f, -166.86f}, 145.0000f, 115.0000f, 0.0000f, -0.0000f, 228.1748f, 343.1748f},
 };
 static const nav_segment_t nav_icon_u_turn_right_main[] = {
     {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 180.0000f, 0.0000f, 0.0000f, 0.0000f, 180.0000f},
@@ -122,6 +134,8 @@ static const nav_icon_data_t NAV_ICON_DATA[NAV_RENDER_COUNT] = {
     [NAV_RENDER_TURN_LEFT] = { nav_icon_turn_left_main, 3, NULL, 0, {-70.0f, -120.0f} },
     [NAV_RENDER_TURN_SLIGHT_RIGHT] = { nav_icon_turn_slight_right_main, 3, NULL, 0, {34.6f, -145.5f} },
     [NAV_RENDER_TURN_SLIGHT_LEFT] = { nav_icon_turn_slight_left_main, 3, NULL, 0, {-34.6f, -145.5f} },
+    [NAV_RENDER_TURN_SHARP_RIGHT] = { nav_icon_turn_sharp_right_main, 3, NULL, 0, {58.0f, -112.0f} },
+    [NAV_RENDER_TURN_SHARP_LEFT] = { nav_icon_turn_sharp_left_main, 3, NULL, 0, {-58.0f, -112.0f} },
     [NAV_RENDER_U_TURN_RIGHT] = { nav_icon_u_turn_right_main, 3, NULL, 0, {70.0f, -130.0f} },
     [NAV_RENDER_U_TURN_LEFT] = { nav_icon_u_turn_left_main, 3, NULL, 0, {-70.0f, -130.0f} },
     [NAV_RENDER_ROUNDABOUT_RIGHT] = { nav_icon_roundabout_right_main, 5, NULL, 0, {40.0f, -145.0f} },

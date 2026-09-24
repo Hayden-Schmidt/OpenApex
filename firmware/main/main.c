@@ -67,6 +67,23 @@ static void countdown_task(void *argument) {
         uint32_t now = platform_now_ms();
         if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             view_state_tick(now, &shared_view);
+            // A link that is delivering writes we cannot decode is NOT the same as no link and
+            // NOT the same as "not navigating", but the terminal used to render all three
+            // identically. On 2026-09-24 three whole sessions sat on the idle screen while the
+            // phone believed it was relaying: every 146-byte packet was truncated to 20 bytes by
+            // an unnegotiated ATT MTU and discarded here, so the view never advanced past boot.
+            // The rider had no way to tell a quiet road from a broken link.
+            //
+            // Marking the view stale greys the dial (dial_screen.cpp), which at least says
+            // "what you are looking at is not live". A dedicated fault screen naming the cause
+            // would be better and is follow-up work -- gui_app only distinguishes idle from dial
+            // today, so a new state means a new screen class.
+            if (ble_link_is_faulted()) {
+                shared_view.stale = true;
+                if (shared_view.state == VIEW_ACTIVE) {
+                    shared_view.state = VIEW_STALE;
+                }
+            }
             xSemaphoreGive(view_mutex);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
