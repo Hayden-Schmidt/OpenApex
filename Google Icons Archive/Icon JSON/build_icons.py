@@ -56,6 +56,13 @@ FRAME_CENTER_OVERRIDES = {
     "turn_right": [70.0, -120.0],
     "turn_left": [-70.0, -120.0],
     "turn_slight_right": [34.6, -145.5],
+    # Sharp pair: the baked bbox centre is (82.5, -87.5), but a 125-degree bend puts the exit leg
+    # low and outboard, so the geometric centre sits below and right of where the eye reads the
+    # maneuver. Pulled in and up by the same proportion turn_right is (its baked centre is
+    # (100, -95) against a tuned (70, -120)), which keeps the two arrows optically centred the
+    # same way when the display cuts between them.
+    "turn_sharp_right": [58.0, -112.0],
+    "turn_sharp_left": [-58.0, -112.0],
     "turn_slight_left": [-34.6, -145.5],
     "u_turn_right": [70.0, -130.0],
     "u_turn_left": [-70.0, -130.0],
