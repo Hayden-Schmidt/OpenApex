@@ -84,6 +84,43 @@ steps than the eight rasters. Flash is cheap here; hand-measured geometry is not
 
 ---
 
+### Text: subsetted Montserrat faces ✅
+
+LVGL's built-in Montserrat fonts carry all of printable ASCII plus 61 FontAwesome symbols at
+*every* enabled size. Six enabled sizes came to **231 KB** -- about a fifth of the C3's 1.5 MB app
+partition -- to draw digits, a colon, a degree sign and four compass letters. Nothing in
+`firmware/gui` references `LV_SYMBOL_*`, so none of the symbol range was ever reachable.
+
+The faces are now subsetted per size, same shape as the icon pipeline:
+
+1. `design/fonts/fonts_manifest.json` lists each size and exactly which characters it carries,
+   with a `why` naming the labels that produce them.
+2. `python tools/build_font_subset.py` writes `firmware/gui/generated/font_montserrat_<size>.c`
+   plus a `fonts.h` of externs. Needs node (it runs `lv_font_conv` via `npx`); a normal build does
+   not. Output is byte-reproducible.
+3. `gui_font.cpp` holds the whole face list. No `sdkconfig`/`lv_conf.h` font option is involved
+   any more, except `LV_FONT_MONTSERRAT_14`.
+
+Measured on `prototype_c3`: **72.3% -> 58.9%** of flash, 207 KB back.
+
+Three things worth knowing before touching this:
+
+- **Size 14 is deliberately not subsetted.** It draws the street name and ETA, which arrive from
+  the phone as arbitrary text. It stays LVGL's built-in (8.6 KB, and already `LV_FONT_DEFAULT`).
+  Any future label fed by phone data must use a full-ASCII face for the same reason.
+- **A missing character is silent** -- it draws as an empty box, with no build error and no log.
+  This already bit once: the thousands separator in `"3,500 km"` was not in the 20px set and
+  reached a screenshot unnoticed. The simulator now guards it
+  (`firmware/sim_lvgl/src/font_check.cpp`): it walks every label each frame and prints the
+  codepoint, the string and the fix. **Run `--page all` after changing any label text.**
+- **Metrics are inherited, not recomputed.** Subsetting changes what `lv_font_conv` derives for
+  `line_height`/`base_line` (a digits-only 44px face reports 31/0 where the full face reports
+  49/9), and `cap_height`/`x_height` are new in LVGL 9.6 and not emitted at all. All four are
+  scraped from LVGL's own face for that size and patched in. Verified: every subset glyph's
+  `adv_w` and bitmap box is identical to the full face, so no label moved.
+
+---
+
 ## Step 3 — UI development
 
 Dev plan: work **one element at a time**, folder by folder through this directory. Each folder

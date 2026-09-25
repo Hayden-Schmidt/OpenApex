@@ -171,11 +171,14 @@ Write shots to a scratch directory, not into the repo. This path needs `LV_USE_S
 set in `firmware/sim_lvgl/include/lv_conf.h` only — the on-device build leaves it off, so nothing in
 `firmware/gui/` may depend on it.
 
-**Font sizes must be enabled in both `firmware/sim_lvgl/include/lv_conf.h` and
-`firmware/sdkconfig.defaults`.** `firmware/gui/gui_font.cpp` picks the nearest *enabled* Montserrat
-at or below the requested size, so a size turned on in only one of the two silently renders a page
-at a different size in the simulator than on the device. Every built-in face costs flash, which is
-why they are enabled per-page rather than wholesale.
+**Text uses subsetted fonts, and a missing character is silent.** The faces in
+`firmware/gui/generated/` carry only the characters `design/fonts/fonts_manifest.json` lists for
+each size; anything else draws as an empty box, with no build error. After changing any label's
+text, run `program.exe --page all` and watch for `font_check:` lines -- the simulator walks every
+label each frame and names the codepoint, the string and the fix. To add a character: edit the
+manifest, `python tools/build_font_subset.py`, rebuild. Sizes fed by phone-supplied strings
+(street name, ETA) must stay on a full-ASCII face. See "Text: subsetted Montserrat faces" in
+`design reference/DESIGN NOTES.md`.
 
 **Adding a source to `firmware/gui/CMakeLists.txt` does not always trigger an ESP-IDF
 reconfigure.** The PlatformIO sim picks it up (it globs), the device build does not: it links

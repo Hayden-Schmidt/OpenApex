@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "Subsetted Montserrat faces for the GUI. Built by tools/build_font_subset.py into",
+    "firmware/gui/generated/font_montserrat_<size>.h; see docs/DEVELOPMENT_SETUP.md.",
+    "",
+    "LVGL's built-in fonts carry all of printable ASCII plus 61 FontAwesome symbols at every",
+    "enabled size, which came to 231 KB of flash -- ~20% of the 1.5 MB app partition -- to draw",
+    "digits, a colon and four compass letters. Nothing in firmware/gui uses LV_SYMBOL_*, so the",
+    "FontAwesome range is dropped outright and each size carries only the glyphs its labels can",
+    "actually produce.",
+    "",
+    "RULE: if you give a label a new string at size N, add its characters here and rebuild, or the",
+    "glyph renders as a blank box. Sizes whose text comes from the phone (street name, ETA) must",
+    "stay full-ASCII -- we cannot know what they contain.",
+    "Size 14 is deliberately NOT subsetted: it renders the street name and ETA, which come from the phone as arbitrary text. It stays LVGL's built-in lv_font_montserrat_14, which is also LV_FONT_DEFAULT and only 8.6 KB -- subsetting it would mean shipping two 14px faces."
+  ],
+  "source": "Montserrat-Medium.ttf",
+  "bpp": 4,
+  "fonts": [
+    {
+      "size": 18,
+      "chars": "km",
+      "why": "odometer 'km' unit, a fixed literal."
+    },
+    {
+      "size": 20,
+      "chars": "0123456789, kmNESW",
+      "why": "idle odometer '%lu km' (grouped by hand with commas -- '3,500 km'), dial distance '%u m', odometer tenths digit, and the compass cardinals (only N/E/S/W appear in the 16-point names)."
+    },
+    {
+      "size": 28,
+      "chars": "0123456789:- °apm",
+      "why": "odometer heading '%u°' / '--°' and odometer clock 'HH:MM' / '--:--'. ' apm' is insurance: view_state.h specifies a 24h clock, but the string comes from the phone and a 12h 'am/pm' would otherwise render blank."
+    },
+    {
+      "size": 38,
+      "chars": "0123456789",
+      "why": "odometer whole-km digits, set one character at a time."
+    },
+    {
+      "size": 44,
+      "chars": "0123456789:- apm",
+      "why": "idle clock 'HH:MM' / '--:--', same 12h insurance as size 28."
+    }
+  ]
+}

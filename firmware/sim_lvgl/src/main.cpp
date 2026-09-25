@@ -18,6 +18,7 @@ extern "C" {
 }
 
 #include "gui_app.hpp"
+#include "font_check.hpp"
 #include "shot.hpp"
 
 #include <SDL2/SDL.h>
@@ -287,6 +288,9 @@ int main(int argc, char *argv[]) {
                                       : idle_page     ? make_idle_fixture_frame(elapsed)
                                                       : make_fixture_frame(elapsed);
         gui_app_update(&frame);
+        // Subsetted fonts fail silently (an empty box), so check every frame's labels rather
+        // than trusting a screenshot to be looked at closely. See font_check.hpp.
+        font_check_scan(lv_screen_active());
 
         uint32_t idle_ms = lv_timer_handler();
 
