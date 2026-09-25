@@ -34,4 +34,12 @@ typedef struct {
     bool phone_connected;          // GAP: ble_link.c logs connect/disconnect but does not publish it
     char clock[NAV_CLOCK_LEN];     // "HH:MM"; empty = unknown. GAP: no RTC on the C3, no phone time sync
     uint32_t odometer_meters;      // GAP: no odometer data model or NVS persistence yet
+
+    // --- Trip/traffic ring (design reference/3.Turn by Turn, the "Google Trip Data" variant).
+    // BACKEND GAP: nothing populates these. The source is the progress section of Google Maps'
+    // navigation notification, which the Android relay does not parse or transmit yet -- it is not
+    // in the packet format at all. firmware/sim_lvgl's fixture is the only writer today.
+    nav_traffic_span_t traffic[NAV_TRAFFIC_MAX_SPANS];
+    uint8_t traffic_count;            // 0 = no traffic data; the ring renders neutral, not "clear"
+    uint16_t trip_progress_permille;  // 0..1000 of the whole trip; the ring is consumed up to here
 } terminal_view_state_t;

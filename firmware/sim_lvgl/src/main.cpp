@@ -75,6 +75,33 @@ terminal_view_state_t make_odometer_fixture_frame(uint32_t elapsed_ms) {
     return frame;
 }
 
+// Trip-arc fixture (--page trip): pins VIEW_ACTIVE with a fixed maneuver and walks
+// trip_progress_permille from 0 to 1000 over 30s, so the traffic ring visibly empties from the
+// start. The spans are invented -- nothing parses Google's progress bar yet (view_state.h).
+terminal_view_state_t make_trip_fixture_frame(uint32_t elapsed_ms) {
+    terminal_view_state_t frame;
+    std::memset(&frame, 0, sizeof(frame));
+    frame.sequence = elapsed_ms;
+    frame.state = VIEW_ACTIVE;
+    frame.icon_type = NAV_ICON_TURN_RIGHT;
+    frame.speed_kmh_x10 = 450;
+    frame.heading_deg = static_cast<uint16_t>((elapsed_ms / 80u) % 360u);
+    frame.battery_percent = 87;
+    frame.distance_meters = 250;
+    std::snprintf(frame.street_name, sizeof(frame.street_name), "Elm St");
+    std::snprintf(frame.eta, sizeof(frame.eta), "14 min");
+
+    static const nav_traffic_span_t kSpans[] = {
+        {0, 240, NAV_TRAFFIC_FREE},    {240, 360, NAV_TRAFFIC_SLOW},
+        {360, 470, NAV_TRAFFIC_HEAVY}, {470, 520, NAV_TRAFFIC_STOPPED},
+        {520, 700, NAV_TRAFFIC_SLOW},  {700, 1000, NAV_TRAFFIC_FREE},
+    };
+    frame.traffic_count = sizeof(kSpans) / sizeof(kSpans[0]);
+    std::memcpy(frame.traffic, kSpans, sizeof(kSpans));
+    frame.trip_progress_permille = static_cast<uint16_t>((elapsed_ms / 30u) % 1001u);
+    return frame;
+}
+
 terminal_view_state_t make_fixture_frame(uint32_t elapsed_ms) {
     terminal_view_state_t frame;
     std::memset(&frame, 0, sizeof(frame));
@@ -153,6 +180,7 @@ int main(int argc, char *argv[]) {
     const char *shot_path = nullptr;
     bool idle_page = false;
     bool odometer_page = false;
+    bool trip_page = false;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -166,6 +194,8 @@ int main(int argc, char *argv[]) {
                 idle_page = true;
             } else if (std::strcmp(argv[i], "odometer") == 0) {
                 odometer_page = true;
+            } else if (std::strcmp(argv[i], "trip") == 0) {
+                trip_page = true;
             } else if (std::strcmp(argv[i], "all") != 0) {
                 std::fprintf(stderr, "sim_lvgl: unknown page '%s'\n", argv[i]);
                 print_usage(argv[0]);
@@ -240,6 +270,7 @@ int main(int argc, char *argv[]) {
     // The odometer is a rider-selected page rather than a view_state_t, so it is reached through
     // the page-override seam, not by feeding a different state.
     if (odometer_page) gui_app_set_page_override(GUI_PAGE_ODOMETER);
+    if (trip_page) gui_app_set_dial_outer(GUI_DIAL_OUTER_TRIP_ARC);
 
     std::printf("sim_lvgl: window open at %dx%d\n", disp_w, disp_h);
 
@@ -251,9 +282,10 @@ int main(int argc, char *argv[]) {
     const uint32_t start_ms = SDL_GetTicks();
     for (;;) {
         uint32_t elapsed = SDL_GetTicks() - start_ms;
-        terminal_view_state_t frame = odometer_page ? make_odometer_fixture_frame(elapsed)
-                                      : idle_page    ? make_idle_fixture_frame(elapsed)
-                                                     : make_fixture_frame(elapsed);
+        terminal_view_state_t frame = trip_page     ? make_trip_fixture_frame(elapsed)
+                                      : odometer_page ? make_odometer_fixture_frame(elapsed)
+                                      : idle_page     ? make_idle_fixture_frame(elapsed)
+                                                      : make_fixture_frame(elapsed);
         gui_app_update(&frame);
 
         uint32_t idle_ms = lv_timer_handler();

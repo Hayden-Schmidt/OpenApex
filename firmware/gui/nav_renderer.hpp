@@ -42,6 +42,9 @@ public:
     // side length == display_diameter_px passed to the constructor).
     void draw(lv_layer_t *layer, const lv_area_t &coords) const;
 
+    // Same, minus the compass ring: for pages that put something else in that slot (see TripArc).
+    void draw_route_only(lv_layer_t *layer, const lv_area_t &coords) const;
+
 private:
     struct Pose {
         float base_dist = 0.0f;

@@ -7,5 +7,6 @@
 class RichTheme : public GuiTheme {
 public:
     lv_color_t palette() const override;
+    lv_color_t arrived_surface() const override;
     void apply_state_change(Screen *prev, Screen *next) override;
 };

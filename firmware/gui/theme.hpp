@@ -13,6 +13,12 @@ public:
 
     virtual lv_color_t palette() const = 0;
 
+    // Semantic status colour for a completed navigation (the arrived pop-up's surface). Separate
+    // from palette() because it means "success", not "brand" -- it must stay green when the rider
+    // themes the device purple. Lives on the theme rather than as a literal in ArrivedScreen so a
+    // tier or a future runtime config can move it.
+    virtual lv_color_t arrived_surface() const = 0;
+
     // Switches the active screen from `prev` (nullptr on first load) to `next`.
     virtual void apply_state_change(Screen *prev, Screen *next) = 0;
 };

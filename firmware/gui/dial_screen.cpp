@@ -4,9 +4,38 @@
 #include <cstdio>
 #include <initializer_list>
 
+#include "gui_app.hpp"
+#include "gui_font.hpp"
+#include "theme.hpp"
+
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
+
+// PROVISIONAL LAYOUT. These are the positions the page has always had, now named and gathered so a
+// redesign is a change to this block rather than a hunt through the file. Expressed as reference
+// pixels against the 240px frame the exported "Turn by Turn ref (*).svg" is authored at, and scaled
+// at runtime, matching every other page.
+//
+// The distance figure is the one number read at speed, so it takes the largest type that clears the
+// arrow rather than LVGL's 14px default.
+// Measured off "design reference/3.Turn by Turn/OpenApex Hardware Design Ref.svg": the street name
+// sits just under the arrow and the distance under that, so the eye runs arrow -> where -> how far.
+constexpr float kDistanceGlyphH = 14.4f;  // -> 20px
+constexpr float kDistanceCy = 203.0f;
+constexpr float kStreetGlyphH = 10.47f;   // -> 14px
+constexpr float kStreetCy = 186.85f;
+// Only drawn by the trip-arc variant, which reserves the gap at the bottom of the ring for it.
+constexpr float kEtaGlyphH = 10.47f;      // -> 14px
+constexpr float kEtaCy = 224.85f;
+// The design's street name is a SHORT name ("Elm St", not "Elm Street North"): it has ~47px of the
+// 240 frame and must not wrap or ellipsize into uselessness.
+constexpr float kStreetMaxW = 150.0f;
+constexpr float kFontPerGlyphH = 1.0f / 0.70f;
+
+// VIEW_STALE renders last-known-good greyed rather than hidden -- a held distance reads far better
+// on the road than an empty dial, but it must not look live.
+constexpr uint32_t kStaleGrey = 0x808080;
 
 lv_point_precise_t pt(float x, float y) {
     return {static_cast<lv_value_precise_t>(x), static_cast<lv_value_precise_t>(y)};
@@ -72,6 +101,7 @@ bool render_icon_for(nav_icon_t icon, nav_render_icon_t *out) {
 // at runtime without recompiling firmware/gui.
 DialScreen::DialScreen()
     : renderer_(lv_display_get_horizontal_resolution(lv_display_get_default())),
+      trip_arc_(lv_display_get_horizontal_resolution(lv_display_get_default())),
       status_box_size_((lv_display_get_horizontal_resolution(lv_display_get_default()) * 55) / 100) {
     lv_obj_set_style_bg_color(root_, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
@@ -103,9 +133,42 @@ DialScreen::DialScreen()
         lv_obj_set_hidden(line, true);
     }
 
+    const int32_t diameter = lv_display_get_horizontal_resolution(lv_display_get_default());
+    const float scale = static_cast<float>(diameter) / 240.0f;
+    const auto px = [scale](float ref_240) {
+        return static_cast<int32_t>(std::lround(ref_240 * scale));
+    };
+
     distance_label_ = lv_label_create(root_);
     lv_obj_set_style_text_color(distance_label_, lv_color_white(), 0);
-    lv_obj_align(distance_label_, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_text_font(distance_label_,
+                               montserrat_at_most(px(kDistanceGlyphH * kFontPerGlyphH)), 0);
+    lv_label_set_text(distance_label_, "");
+
+    // street_name and eta are produced by normalize.c and carried in terminal_view_state_t, but
+    // nothing drew them until now. Dimmer than the distance so they stay secondary to it.
+    street_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_color(street_label_, gui_theme().palette(), 0);
+    lv_obj_set_style_text_font(street_label_,
+                               montserrat_at_most(px(kStreetGlyphH * kFontPerGlyphH)), 0);
+    lv_label_set_long_mode(street_label_, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(street_label_, px(kStreetMaxW));
+    lv_obj_set_style_text_align(street_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(street_label_, "");
+
+    eta_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_color(eta_label_, lv_color_hex(kStaleGrey), 0);
+    lv_obj_set_style_text_font(eta_label_, montserrat_at_most(px(kEtaGlyphH * kFontPerGlyphH)), 0);
+    lv_label_set_text(eta_label_, "");
+    lv_obj_set_hidden(eta_label_, true); // compass is the default outer element
+
+    lv_obj_update_layout(root_);
+    lv_obj_align(distance_label_, LV_ALIGN_TOP_MID, 0,
+                 px(kDistanceCy) - lv_obj_get_height(distance_label_) / 2);
+    lv_obj_align(street_label_, LV_ALIGN_TOP_MID, 0,
+                 px(kStreetCy) - lv_obj_get_height(street_label_) / 2);
+    lv_obj_align(eta_label_, LV_ALIGN_TOP_MID, 0,
+                 px(kEtaCy) - lv_obj_get_height(eta_label_) / 2);
 }
 
 void DialScreen::draw_event_cb(lv_event_t *e) {
@@ -114,7 +177,23 @@ void DialScreen::draw_event_cb(lv_event_t *e) {
     lv_obj_t *obj = static_cast<lv_obj_t *>(lv_event_get_target(e));
     lv_area_t coords;
     lv_obj_get_coords(obj, &coords);
-    self->renderer_.draw(layer, coords);
+    // The compass ring is drawn by NavRenderer (it owns the shared CompassRing); the trip arc
+    // replaces it, so in that mode the ring must not also be drawn.
+    if (self->outer_ == GUI_DIAL_OUTER_TRIP_ARC) {
+        self->trip_arc_.draw(layer, coords);
+        self->renderer_.draw_route_only(layer, coords);
+    } else {
+        self->renderer_.draw(layer, coords);
+    }
+}
+
+void DialScreen::set_outer(gui_dial_outer_t outer) {
+    if (outer == outer_) return;
+    outer_ = outer;
+    // The ETA belongs to the trip-arc variant: it lives in the gap the arc leaves at the bottom,
+    // and the compass variant has no gap to put it in.
+    lv_obj_set_hidden(eta_label_, outer_ != GUI_DIAL_OUTER_TRIP_ARC);
+    lv_obj_invalidate(canvas_obj_);
 }
 
 void DialScreen::draw_status_glyph(nav_icon_t icon) {
@@ -157,12 +236,25 @@ void DialScreen::update(const terminal_view_state_t &state) {
         std::snprintf(text, sizeof(text), "%u m", static_cast<unsigned>(state.distance_meters));
         lv_label_set_text(distance_label_, text);
         lv_obj_set_style_text_color(distance_label_,
-                                    state.state == VIEW_STALE ? lv_color_hex(0x808080)
+                                    state.state == VIEW_STALE ? lv_color_hex(kStaleGrey)
                                                               : lv_color_white(),
                                     0);
     } else {
         lv_label_set_text(distance_label_, "");
     }
+
+    // Both are optional in the model -- an empty string means the maps app did not supply one, and
+    // must render as nothing rather than as a placeholder.
+    const bool navigating = state.state == VIEW_ACTIVE || state.state == VIEW_STALE;
+    lv_label_set_text(street_label_, navigating ? state.street_name : "");
+    lv_label_set_text(eta_label_, navigating ? state.eta : "");
+    if (outer_ == GUI_DIAL_OUTER_TRIP_ARC) {
+        trip_arc_.set_state(state);
+        lv_obj_invalidate(canvas_obj_);
+    }
+    lv_obj_set_style_text_color(
+        street_label_, state.state == VIEW_STALE ? lv_color_hex(kStaleGrey) : gui_theme().palette(),
+        0);
 
     nav_render_icon_t render_icon;
     const bool has_render_icon = render_icon_for(state.icon_type, &render_icon);

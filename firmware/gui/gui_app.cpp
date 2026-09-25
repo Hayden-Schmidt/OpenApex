@@ -1,5 +1,6 @@
 #include "gui_app.hpp"
 
+#include "arrived_screen.hpp"
 #include "basic_theme.hpp"
 #include "board_profile.h"
 #include "dial_screen.hpp"
@@ -43,6 +44,7 @@ Screen *screen_for_state(view_state_t state) {
     static IdleScreen idle;
     static DialScreen dial;
     static OdometerScreen odometer;
+    static ArrivedScreen arrived;
 
     // A rider-selected page outranks the idle state, but never an active maneuver: being shown the
     // odometer instead of the turn you are about to miss would be actively dangerous. Navigation
@@ -51,12 +53,19 @@ Screen *screen_for_state(view_state_t state) {
         if (state == VIEW_IDLE) return &odometer;
         s_page_override = GUI_PAGE_AUTO;
     }
+    if (state == VIEW_ARRIVED) return &arrived;
     return state == VIEW_IDLE ? static_cast<Screen *>(&idle) : static_cast<Screen *>(&dial);
 }
 
 } // namespace
 
 void gui_app_set_page_override(gui_page_override_t page) { s_page_override = page; }
+
+void gui_app_set_dial_outer(gui_dial_outer_t outer) {
+    // Routes through screen_for_state so the DialScreen instance is the same static one the page
+    // routing hands out, rather than a second copy.
+    static_cast<DialScreen *>(screen_for_state(VIEW_ACTIVE))->set_outer(outer);
+}
 
 const GuiTheme &gui_theme(void) { return s_theme; }
 

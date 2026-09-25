@@ -13,7 +13,11 @@ constexpr float kDesignDiameter = 600.0f; // maneuvers.json / nav_icons_data.h a
 constexpr float kDisplayScale = 1.1f;
 constexpr float kLineThickness = 22.0f;     // route units, before displayScale
 constexpr float kArrowheadScale = 0.25f;
-constexpr float kVerticalOffset = 1.0f;     // route units, screen space
+// Route units, screen space. Shifts the whole maneuver up so it clears the street/distance stack
+// at the bottom of the page. -28.545 puts the arrow exactly where "OpenApex Hardware Design Ref.svg"
+// draws it: one route unit is kDisplayScale * (diameter/600) px, i.e. 0.44px at 240, and the design
+// moved the arrow 13px up from the old +1.0 offset.
+constexpr float kVerticalOffset = -28.545f;
 constexpr float kSeamOverlap = 0.5f;        // px
 constexpr float kRevealSpeed = 0.9f;        // route units / ms
 constexpr uint32_t kMinRevealMs = 1000;
@@ -629,9 +633,12 @@ void NavRenderer::draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam,
 }
 
 void NavRenderer::draw(lv_layer_t *layer, const lv_area_t &coords) const {
-    if (!has_route_) return;
-
     compass_.draw(layer, coords);
+    draw_route_only(layer, coords);
+}
+
+void NavRenderer::draw_route_only(lv_layer_t *layer, const lv_area_t &coords) const {
+    if (!has_route_) return;
 
     const float basis_c = std::cos(cur_.rot), basis_s = std::sin(cur_.rot);
     const auto to_screen = [&](const nav_pt_t &p) {

@@ -25,6 +25,27 @@ typedef enum {
 
 #define NAV_STREET_LEN 64
 #define NAV_ETA_LEN 32
+// Upcoming-traffic runs along the remaining route, from Google Maps' notification progress bar
+// (design reference/3.Turn by Turn). Eight is well past what the notification ever shows; spans
+// beyond it are dropped rather than growing the view state, which is memcpy'd every frame.
+#define NAV_TRAFFIC_MAX_SPANS 8
+
+typedef enum {
+    NAV_TRAFFIC_UNKNOWN = 0, // no data for this stretch -- render neutral, never as "clear"
+    NAV_TRAFFIC_FREE,
+    NAV_TRAFFIC_SLOW,
+    NAV_TRAFFIC_HEAVY,
+    NAV_TRAFFIC_STOPPED,
+} nav_traffic_level_t;
+
+// Per-mille of the WHOLE trip, not of the remaining part, so a span's numbers do not shift under it
+// as the rider advances. start < end always.
+typedef struct {
+    uint16_t start_permille;
+    uint16_t end_permille;
+    uint8_t level; // nav_traffic_level_t
+} nav_traffic_span_t;
+
 #define NAV_CLOCK_LEN 8  // "HH:MM" wall clock, room for a 24h string plus terminator
 
 // Normalized navigation model produced by the normalizer (source-agnostic). Missing fields use

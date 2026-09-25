@@ -31,6 +31,20 @@ typedef enum {
 
 void gui_app_set_page_override(gui_page_override_t page);
 
+// Which element rides around the outside of the turn-by-turn page: the compass ring, or the
+// upcoming-traffic ring built from Google's notification progress bar (design reference/3.Turn by
+// Turn). Swappable live -- both are the same slot, and the page keeps its arrow/street/distance
+// either way.
+//
+// BACKEND GAP: as with the page override, nothing on the device calls this. How the rider picks
+// (screen swipe, phone toggle) is undecided, and the C3 has no input hardware modelled for it.
+typedef enum {
+    GUI_DIAL_OUTER_COMPASS = 0,
+    GUI_DIAL_OUTER_TRIP_ARC,
+} gui_dial_outer_t;
+
+void gui_app_set_dial_outer(gui_dial_outer_t outer);
+
 #ifdef __cplusplus
 }
 

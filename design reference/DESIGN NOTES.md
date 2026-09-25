@@ -93,7 +93,7 @@ details one "page" and the elements on that page.
 |------|------|----------------|
 | 1. Startup / boot screen | `1. Startup Screen/bootscreen.md` | ✅ (rendered; logo asset is a placeholder) |
 | 2. Idle screen | `2. Idle Screen/2. idle screen.md` | ✅ (rendered + connect animation; data is fixture-only) |
-| 3. Turn-by-turn | `3.Turn by Turn/turn by turn.md` | 🔶 (model + pipeline done, render stub) |
+| 3. Turn-by-turn | `3.Turn by Turn/turn by turn.md` | ✅ (rendered; traffic ring has no data source) |
 | 4. Odometer page | `4. Odometer page/odometer page.md` | ✅ (rendered; data fixture-only, no input to reach it) |
 
 Update this doc and each page doc as you go to reflect current status and outstanding items
@@ -110,9 +110,11 @@ The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` hierarchy from `docs/Open
   compile time by `BOARD_GFX_TIER`. The theme owns the *how*; the page owns the *what*. Reach it
   from a page via `gui_theme()` in `gui_app.hpp`.
 - `gui_app.cpp` — routes `view_state_t` to a page and forwards every frame to it.
-- `splash_screen.cpp`, `idle_screen.cpp`, `odometer_screen.cpp`, `dial_screen.cpp` — the pages
-  that exist.
+- `splash_screen.cpp`, `idle_screen.cpp`, `odometer_screen.cpp`, `dial_screen.cpp`,
+  `arrived_screen.cpp` — the pages that exist.
 - `compass_ring.{hpp,cpp}` — the compass ring shared by the turn-by-turn and odometer pages.
+- `trip_arc.{hpp,cpp}` — the upcoming-traffic ring, the runtime alternative to the compass in the
+  turn-by-turn page's outer slot.
 - `gui_font.{hpp,cpp}` — `montserrat_at_most()`, the one place a page turns a glyph height
   measured off a Figma SVG into a built-in font.
 - `icons.hpp` / `icons.cpp` — accessors for the generated raster set.
@@ -165,10 +167,14 @@ and should be collated into a new doc in `docs/` once the UI sprint finishes. Cu
 backend gaps:
 
 1. **Rerouting** maneuver (no `nav_icon_t` value, not surfaced by any maps app adapter yet).
+1a. **Google traffic data is not parsed or transmitted.** The turn-by-turn page's traffic ring
+   renders `terminal_view_state_t.traffic[]`, but the Android relay does not read the navigation
+   notification's progress section and it is not in the packet format. Largest single gap in the UI.
 1b. **Page switching has no input source.** `gui_app_set_page_override()` is the seam rider-selected
    pages route through, but nothing on the device calls it: the C3 models no buttons and
    `BOARD_HAS_TOUCH` is 0. The odometer page is therefore unreachable on hardware today — only
-   `firmware/sim_lvgl --page` gets to it.
+   `firmware/sim_lvgl --page` gets to it. The same is true of `gui_app_set_dial_outer()`, which
+   swaps the turn-by-turn page's compass for the traffic ring.
 2. **Odometer** data model + NVS persistence. `terminal_view_state_t.odometer_meters` exists and both
    the idle and odometer screens render it, but nothing writes it. Capacity is part of this
    decision: the odometer page's four boxes hold 999.9km, which is not a lifetime figure. Per-device

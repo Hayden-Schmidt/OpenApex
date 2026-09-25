@@ -148,9 +148,11 @@ firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe 466      # resolution override
 
 `--page <name>` selects the fixture: `all` (default) cycles every `view_state_t`; `idle` pins
 `VIEW_IDLE` and flips the phone link every 5s to replay the idle screen's connect transition;
-`odometer` sweeps the heading a full turn every 20s and climbs the odometer, and is the only way to
-reach that page at all — it is rider-selected rather than a `view_state_t`, and the device has no
-input source wired to `gui_app_set_page_override()` yet.
+`odometer` sweeps the heading a full turn every 20s and climbs the odometer; `trip` shows the
+turn-by-turn page with the traffic ring instead of the compass, walking the trip progress 0..100%
+over 30s. `odometer` and `trip` are the only way to reach those two at all: both are rider-selected
+rather than `view_state_t` values, and the device has no input source wired to
+`gui_app_set_page_override()` / `gui_app_set_dial_outer()` yet.
 
 Every run opens on the boot screen for 2s before the fixture is honoured (`BOARD_HAS_SPLASH`,
 `gui_app.cpp`) — restart the window to replay it, and add 2000ms to any `--shot` time meant to land
@@ -174,6 +176,12 @@ set in `firmware/sim_lvgl/include/lv_conf.h` only — the on-device build leaves
 at or below the requested size, so a size turned on in only one of the two silently renders a page
 at a different size in the simulator than on the device. Every built-in face costs flash, which is
 why they are enabled per-page rather than wholesale.
+
+**Adding a source to `firmware/gui/CMakeLists.txt` does not always trigger an ESP-IDF
+reconfigure.** The PlatformIO sim picks it up (it globs), the device build does not: it links
+happily against a stale object list and fails with `undefined reference` to everything in the new
+file, or a missing vtable. Seen twice. Fix is `rm -rf firmware/.pio/build/prototype_c3` and rebuild
+— there is no need to hunt for anything in the source.
 
 **`int32_t` is `int` under MinGW and `long` on riscv32.** A `std::max(1, some_int32)` compiles clean
 in the simulator and fails the device build with "no matching function". The simulator is not a

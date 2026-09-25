@@ -58,8 +58,9 @@
       "size_240": 28
     },
     "location_on": {
+      "_comment": "54px, sized off the arrived pop-up's pin in 'design reference/3.Turn by Turn/Arrived Pop Up.svg' (ink 36.67x45.83 there). ArrivedScreen is the only consumer; a future map marker wanting a different size needs its own entry rather than a resize here.",
       "svg": "design reference/nav_icons_svg/location_on_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
-      "size_240": 28
+      "size_240": 54
     },
     "warning": {
       "svg": "design reference/nav_icons_svg/warning.svg",

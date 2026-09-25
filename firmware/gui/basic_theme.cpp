@@ -8,6 +8,9 @@ lv_color_t BasicTheme::palette() const {
     return lv_color_hex(0x00C2FF);
 }
 
+// #1E8D3E, straight off "design reference/3.Turn by Turn/Arrived Pop Up.svg".
+lv_color_t BasicTheme::arrived_surface() const { return lv_color_hex(0x1E8D3E); }
+
 void BasicTheme::apply_state_change(Screen *prev, Screen *next) {
     (void)prev;
     lv_screen_load(next->root());

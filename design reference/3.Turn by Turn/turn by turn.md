@@ -62,43 +62,86 @@ Beeline odometer page (photo in this dir) — reference for the **compass only**
 
 ---
 
-## Current code status: 🔶 model complete, placeholder render (all 3 elements landed)
+## Current code status: ✅ rendered (traffic ring has no data source)
 
-### What exists (data / pipeline)
+`firmware/gui/dial_screen.{hpp,cpp}` + `nav_renderer.cpp` + `compass_ring.cpp` + `trip_arc.cpp`.
+Laid out against `OpenApex Hardware Design Ref.svg`.
 
-The entire maneuver→countdown→view-state path is implemented and host-tested:
+```powershell
+firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe              # compass variant, all states
+firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe --page trip  # traffic-ring variant
+```
 
-- `nav_icon_t` (`firmware/main/nav_model.h`) — the normalized maneuver set, **including**
-  `NAV_ICON_SHARP_LEFT`/`NAV_ICON_SHARP_RIGHT` (the original spec enum was missing them):
-  `STRAIGHT, TURN_LEFT, TURN_RIGHT, SLIGHT_LEFT, SLIGHT_RIGHT, SHARP_LEFT, SHARP_RIGHT,
-  ROUNDABOUT, U_TURN, ARRIVED, UNKNOWN`.
-- `normalize.c` (`derive_maneuver`) — English-keyword matching on the raw title text → `nav_icon_t`.
-  Brittle across locales/phrasings; the terminal-side single source of truth.
-- `countdown.c` — speed-filtered distance interpolation (10 s max hold → `stale`).
-- `pipeline.c` — `view_state_apply_packet()` / `view_state_tick()` producing
-  `terminal_view_state_t` with `distance_meters`, `speed_kmh_x10`, `heading_deg`, `street_name`,
-  `eta`, `stale`.
-- `view_state.h` — `view_state_t` states: `VIEW_IDLE`, `VIEW_ACTIVE`, `VIEW_STALE`, `VIEW_ARRIVED`.
-- Host tests: `firmware/test_host/pipeline_test.c`, `packet_normalize_test.c`, `countdown_test.c`.
+### Element 1 — the arrow
 
-### What exists (render)
+Real vector geometry, not glyphs: `nav_renderer.cpp` strokes the exact straights/arcs from
+`nav_icons_data.h` with one `lv_draw_arc` per curve, and tweens between maneuvers. The
+"morphing suite" the Rich tier asks for is effectively already here for both tiers.
 
-`firmware/gui/dial_screen.{hpp,cpp}` now renders all three elements, Simple-tier only, as
-placeholders (no final art/theme pass):
+Its vertical position is `kVerticalOffset` in `nav_renderer.cpp`, now -28.545 route units so the
+arrow clears the street/distance stack, matching the design ref.
 
-- **Distance marker** — live text, `distance_meters`, blanked outside `VIEW_ACTIVE`.
-- **Arrow** — LVGL built-in symbol glyphs (no custom art yet): `LV_SYMBOL_UP` rotated per
-  `nav_icon_t` for STRAIGHT/SLIGHT/TURN/SHARP/U_TURN; fixed glyphs for ROUNDABOUT (`LOOP`),
-  ARRIVED (`OK`), UNKNOWN (`WARNING`).
-- **Compass ring** — grey circular ring + red north-marker dot, heading-up (whole ring rotates by
-  raw `heading_deg`, no smoothing — see gap #2 below); marker hidden when heading is unknown
-  (`0xFFFF`).
+### Element 2 — the compass exterior
 
-### What does not exist yet (render)
+`compass_ring.{hpp,cpp}`, shared with the odometer page (page 4 reuses the same object, it is not a
+lookalike). Revised for this design:
 
-- **Real arrow/compass art** — current glyphs/shapes are LVGL-drawn placeholders, not final icon
-  assets.
+- **72 ticks**, up from 36. `kMajorEvery` went 3 -> 6 so the majors still land every 30 deg, on the
+  same twelve compass points — leaving it at 3 would have doubled the majors too.
+- Majors are now the **same width** as minors and **full white** instead of twice as thick and grey.
+- North marker resized to the design's 16x16 (`M128 0H112 L120 16`).
+- The marker's point carries a **small radius**. LVGL has no corner radius on a filled triangle, so
+  the point is truncated at the circle's tangent points and the corner filled with that circle —
+  stamping a circle onto the full triangle would leave the sharp point poking through it.
 
-### Backend gaps flagged
+### Element 3 — distance marker
 
-1. arrival screen missing, to be developed 25.09
+Live text, 20px, under the street name, per the design ref. Greyed rather than hidden in
+`VIEW_STALE`: a held distance reads better on the road than an empty dial, but must not look live.
+
+### Street name and ETA
+
+Both were already carried in `terminal_view_state_t` and produced by `normalize.c`, but nothing drew
+them. Now rendered. **The street name must be a SHORT name** ("Elm St", not "Elm Street North") —
+it has ~47px of the 240 frame. It is currently whatever the maps app supplies, ellipsized to fit.
+
+### Traffic ring (the "Google Trip Data" variant)
+
+`trip_arc.{hpp,cpp}` — an alternative to the compass in the same slot, swapped live via
+`gui_app_set_dial_outer()`. Google's notification progress bar bent around the screen: coloured runs
+of free/slow/heavy/stopped, clockwise from lower-left over the top to lower-right, consumed from the
+START as the ride progresses, with the ETA in the gap at the bottom.
+
+The gap is **not** a mask. The design ref cuts it with a black circle (r=44 at (120,246)); the arc
+simply stops at the two angles where that circle crosses the ring — 110.366 deg and 429.634 deg —
+which is geometrically identical and leaves clean rounded ends instead of square-chopped ones.
+
+With no traffic data the ring draws one neutral grey arc, never "all clear": absent data must not
+look like a clear road.
+
+## Backend gaps flagged
+
+1. **Google traffic data is not parsed or transmitted.** `terminal_view_state_t.traffic[]`,
+   `traffic_count` and `trip_progress_permille` exist and the ring renders them, but the Android
+   relay does not read the notification's progress section and it is not in the packet format at
+   all. The simulator fixture is the only writer. **This is the largest gap on this page.**
+2. **No input to swap the outer element.** `gui_app_set_dial_outer()` works, but how the rider picks
+   (screen swipe, phone toggle) is undecided and the C3 models no input hardware. Same gap as the
+   odometer page's routing.
+3. **Traffic colours are unconfirmed.** Only `#009AA6` is pinned down by the design ref; the
+   slow/heavy/stopped colours follow Google's palette by eye and need checking against a real
+   notification capture.
+4. **Street short-name.** Nothing shortens what the maps app supplies; long names ellipsize.
+5. **Arrival: built, but not a "pop up".** `arrived_screen.{hpp,cpp}` renders
+   `Arrived Pop Up.svg` as a full screen on `VIEW_ARRIVED`. If it should animate IN over the dial
+   rather than replace it, that is a transition — `GuiTheme::apply_state_change` is the hook and is
+   still an instant `lv_screen_load` on both tiers.
+6. **Rerouting** maneuver: no `nav_icon_t` value, not surfaced by any maps app adapter yet.
+7. **Distance granularity rolling** (Rich: round to 10m until within 20m) needs the runtime config
+   store.
+
+## Tooling
+
+`tools/export_page_svg.py` re-exports this page as an editable SVG from the live firmware geometry,
+for redesign work. `--list` shows the maneuvers. It covers a single settled maneuver only — not
+chaining, not the reveal tween.
