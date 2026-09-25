@@ -53,6 +53,7 @@ class RelayService : Service() {
     private var locationCallback: LocationCallback? = null
     private var speedKmh: Float? = null
     private var headingDeg: Int? = null
+    private var bearingAccuracyDeg: Float? = null
     private var fixValid = false
     private var nav: RawNavNotification? = null
     private var listening = false
@@ -240,6 +241,9 @@ class RelayService : Service() {
             headingDeg = headingDeg,
             fixValid = fixValid,
             batteryPercent = batteryPercent(),
+            bearingAccuracyDeg = bearingAccuracyDeg,
+            yawDeg = lastYawDeg,
+            yawRateDps = lastYawRateDps,
         )
         val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
         val seq = sequence.incrementAndGet()
@@ -379,6 +383,8 @@ class RelayService : Service() {
                     speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
                     headingDeg = if (loc.hasBearing()) loc.bearing.toInt().mod(360) else null
                     fixValid = loc.hasSpeed() || loc.hasBearing()
+                    bearingAccuracyDeg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                        loc.hasBearingAccuracy()) loc.bearingAccuracyDegrees else null
                     // Log the RAW inputs separately, never pre-fused: the terminal-side filter
                     // needs GPS course and phone yaw as distinct quantities in distinct frames.
                     RelayRecorder.telemetry(
@@ -387,8 +393,7 @@ class RelayService : Service() {
                         fixValid = fixValid,
                         batteryPercent = batteryPercent(),
                         bearingDeg = if (loc.hasBearing()) loc.bearing else null,
-                        bearingAccuracyDeg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                            loc.hasBearingAccuracy()) loc.bearingAccuracyDegrees else null,
+                        bearingAccuracyDeg = bearingAccuracyDeg,
                         speedAccuracyMps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                             loc.hasSpeedAccuracy()) loc.speedAccuracyMetersPerSecond else null,
                         accuracyM = if (loc.hasAccuracy()) loc.accuracy else null,

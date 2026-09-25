@@ -14,8 +14,14 @@
 // It is a rough estimate and its handedness is mirrored relative to the displayed arrow, so the
 // normalizer treats it as a FALLBACK behind title-text parsing (see normalize.c) — except for
 // roundabout exit direction, which the title text never states.
-#define RAW_NOTIF_PACKET_SIZE 146U
-#define RAW_NOTIF_VERSION 2U
+//
+// v3 adds the raw heading-fusion inputs the terminal-side filter needs (see
+// docs/Heading_Sensor_Fusion_Plan.md): bearing_accuracy_deg_x10 (offset 145), yaw_deg (offset
+// 147) and yaw_rate_dps_x10 (offset 149). heading_deg (offset 8) is unchanged on the wire — it was
+// always the raw GPS course; what changes is the terminal no longer treats it as the final display
+// heading, it's one input to heading_fusion.c alongside these three.
+#define RAW_NOTIF_PACKET_SIZE 152U
+#define RAW_NOTIF_VERSION 3U
 
 // Field buffer sizes.
 #define RAW_DIST_STR_LEN 16
@@ -46,6 +52,12 @@ typedef struct {
     // Maneuver arrow rotation angle extracted from the notification icon bitmap, degrees,
     // 0 = up/straight, clockwise positive. RAW_I16_UNKNOWN = not extracted/unavailable.
     int16_t icon_rotation_deg;
+    // Raw heading-fusion inputs (v3), never fused on the phone — see
+    // docs/Heading_Sensor_Fusion_Plan.md. heading_deg above is the raw GPS course; these are its
+    // reliability and the independent phone-yaw witness that heading_fusion.c blends it with.
+    uint16_t bearing_accuracy_deg_x10; // RAW_U16_UNKNOWN = unavailable (pre-API26 or no fix)
+    uint16_t yaw_deg;                  // 0-359, RAW_U16_UNKNOWN = no rotation-vector reading
+    int16_t yaw_rate_dps_x10;          // gyro Z, RAW_I16_UNKNOWN = no gyro reading
 } raw_notif_t;
 
 // Decodes a raw packet into out. Returns false on wrong version or short length (malformed

@@ -1,7 +1,9 @@
 # Heading Sensor Fusion — Design Plan
 
-Status: **planned, not implemented.** Raw-input logging landed first (see "Data collection"),
-so the filter can be built and tuned against recorded rides rather than by guessing and re-driving.
+Status: **implemented** (`firmware/main/heading_fusion.c` + `heading_store.c`, packet v3). Raw-input
+logging landed first (see "Data collection") so the filter could be tuned against recorded rides
+rather than by guessing and re-driving. Tuning of the speed thresholds and offset time constant
+below against a v3 capture, and the on-road verification pass, remain open (see "Open questions").
 
 ## The faults this fixes
 
@@ -144,18 +146,24 @@ typedef struct {
 
 Validity flags on every field, same sentinel discipline as the rest of the pipeline.
 
-## Packet impact (v3)
+## Packet impact (v3) — as built
 
-The packet currently carries a single fused `heading_deg`. The terminal needs the **raw** inputs
-instead:
+The packet carried a single fused `heading_deg` (GPS course, unchanged on the wire). The terminal
+now also gets the raw phone-side inputs it needs to fuse, appended after `icon_rotation_deg`:
 
-- GPS course + validity
-- GPS accuracy
-- phone yaw (rotation vector) + validity
-- yaw rate + validity
+| Offset | Size | Field                     | Encoding                                |
+|--------|------|---------------------------|------------------------------------------|
+| 145    | 2    | `bearing_accuracy_deg_x10`| uint16 LE, `RAW_U16_UNKNOWN` = unknown   |
+| 147    | 2    | `yaw_deg`                 | uint16 LE (0-359), `RAW_U16_UNKNOWN` = unknown |
+| 149    | 2    | `yaw_rate_dps_x10`        | int16 LE, `RAW_I16_UNKNOWN` = unknown    |
 
-That is a `RAW_NOTIF_VERSION` bump to 3, changing both sides together. Motion samples
-(`accel_mg`/`gyro_mdps`) are already present in the packet but currently unused.
+`RAW_NOTIF_VERSION` is 3, `RAW_NOTIF_PACKET_SIZE` is 152 bytes (`packet.h`, mirrored in
+`RawNotifPacket.kt`). `bearing_accuracy_deg_x10` comes from `Location.getBearingAccuracyDegrees()`
+(API 26+, null/sentinel below that); `yaw_deg`/`yaw_rate_dps_x10` come from the existing
+`TYPE_ROTATION_VECTOR`/gyro-Z readings `RelayService` already computed for `RelayRecorder`.
+Existing motion samples (`accel_mg`/`gyro_mdps`) remain present and still unused by the fusion
+filter, which only consumes the fields above plus `heading_deg`/`speed_kmh_x10` from the existing
+v1/v2 fields.
 
 ## Data collection (done)
 

@@ -48,6 +48,11 @@ static void build_packet_with_angle(uint8_t *p, const char *title, const char *e
     }
     p[143] = (uint8_t)(icon_rotation_deg & 0xFF);
     p[144] = (uint8_t)(((uint16_t)icon_rotation_deg >> 8) & 0xFF);
+    // v3 heading-fusion inputs default to unknown in every fixture built here -- none of these
+    // tests exercise heading_fusion, only normalize_packet(), which never reads these fields.
+    p[145] = p[146] = 0xFF; // bearing_accuracy_deg_x10
+    p[147] = p[148] = 0xFF; // yaw_deg
+    p[149] = p[150] = 0xFF; // yaw_rate_dps_x10 (0x7FFF == RAW_I16_UNKNOWN)
 }
 
 // Same as build_packet_with_angle(), but with icon_rotation_deg left at RAW_I16_UNKNOWN --

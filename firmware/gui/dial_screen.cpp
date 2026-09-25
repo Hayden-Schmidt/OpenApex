@@ -181,8 +181,9 @@ void DialScreen::update(const terminal_view_state_t &state) {
         lv_obj_invalidate(canvas_obj_);
     }
 
-    // Heading-up ring: 0xFFFF = unknown (view_state.h). No smoothing -- same acceptable backend
-    // gap the old dial_screen.cpp flagged (design reference/3.Turn by Turn).
+    // Heading-up ring: 0xFFFF = unknown (view_state.h). Smoothing (circular low-pass + 90 deg/s
+    // slew cap, at the 10Hz countdown_task tick) already happened upstream in heading_fusion.c;
+    // this is just the display of an already-smoothed value, not a raw passthrough.
     const bool heading_known = state.heading_deg != 0xFFFFu;
     renderer_.set_north_heading(state.heading_deg * kPi / 180.0f, heading_known);
     const bool heading_changed = state.heading_deg != last_heading_deg_;

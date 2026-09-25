@@ -3,6 +3,7 @@
 #include "drive_log.h"
 #include "display_driver.h"
 #include "gui_app.hpp"
+#include "heading_store.h"
 #include "packet.h"
 #include "pipeline.h"
 #include "view_state.h"
@@ -65,6 +66,8 @@ static void countdown_task(void *argument) {
         }
 
         uint32_t now = platform_now_ms();
+        // Self-throttled to ~30s; cheap to call on every 100ms tick (see heading_store.h).
+        heading_store_maybe_save(now);
         if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             view_state_tick(now, &shared_view);
             // A link that is delivering writes we cannot decode is NOT the same as no link and
@@ -122,8 +125,12 @@ void app_main(void) {
     drive_log_boot("PROTOTYPE_C3_GC9A01");
 
     // ble_link_init spawns NimBLE's own host task (single-producer into raw_packet_queue); there
-    // is no separate ble_handler_task to create.
+    // is no separate ble_handler_task to create. It also brings up NVS (for BLE bonding), which
+    // heading_store_load() below depends on -- load the cached heading/mount-offset only after this,
+    // and before countdown_task starts decoding packets so the first packet already has a warm
+    // offset estimator instead of reconverging from scratch every ride.
     ble_link_init(raw_packet_queue);
+    heading_store_load();
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);
     // 4096 was enough while the distance label only ever rendered "" (distance was always unknown
     // pre-fix, see pipeline.c), so LVGL's font/glyph rendering path was never exercised on real

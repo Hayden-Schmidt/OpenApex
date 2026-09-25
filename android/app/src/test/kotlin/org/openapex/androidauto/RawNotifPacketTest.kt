@@ -22,6 +22,9 @@ class RawNotifPacketTest {
                 headingDeg = 90,
                 fixValid = true,
                 batteryPercent = 85,
+                bearingAccuracyDeg = 2.5f,
+                yawDeg = 271f,
+                yawRateDps = -12.5f,
             ),
         )
         assertEquals(RAW_NOTIF_PACKET_SIZE, packet.size)
@@ -42,6 +45,12 @@ class RawNotifPacketTest {
         assertEquals("250", readString(packet, 19))
         // eta at 35
         assertEquals("12 min", readString(packet, 35))
+        // bearing_accuracy_deg_x10 = 25 at offset 145
+        assertEquals(25, (packet[145].toInt() and 0xFF) or ((packet[146].toInt() and 0xFF) shl 8))
+        // yaw_deg = 271 at offset 147
+        assertEquals(271, (packet[147].toInt() and 0xFF) or ((packet[148].toInt() and 0xFF) shl 8))
+        // yaw_rate_dps_x10 = -125 at offset 149
+        assertEquals(-125, readI16(packet, 149))
     }
 
     @Test
@@ -84,6 +93,9 @@ class RawNotifPacketTest {
         assertEquals(0xFF, packet[10].toInt() and 0xFF)
         assertEquals(0xFFFFFFFF.toInt(), (packet[11].toInt() and 0xFF) or ((packet[12].toInt() and 0xFF) shl 8) or ((packet[13].toInt() and 0xFF) shl 16) or ((packet[14].toInt() and 0xFF) shl 24))
         assertEquals("", readString(packet, 19))
+        assertEquals(0xFFFF, (packet[145].toInt() and 0xFF) or ((packet[146].toInt() and 0xFF) shl 8))
+        assertEquals(0xFFFF, (packet[147].toInt() and 0xFF) or ((packet[148].toInt() and 0xFF) shl 8))
+        assertEquals(0x7FFF, readI16(packet, 149))
     }
 
     @Test

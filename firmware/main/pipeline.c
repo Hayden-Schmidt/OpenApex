@@ -5,6 +5,7 @@
 // Dev-only drive logger. This file stays host-testable: every drive_log_* call compiles to a
 // static inline no-op unless OPENAPEX_DRIVE_LOG is defined, which the host tests never define.
 #include "drive_log.h"
+#include "heading_fusion.h"
 #include "normalize.h"
 #include "packet.h"
 
@@ -40,6 +41,31 @@ void pipeline_reset(void) {
     s_maneuver_id = 0;
     s_have_maneuver = false;
     countdown_reset();
+    heading_fusion_reset();
+}
+
+// Builds heading_fusion's input from the raw packet fields it needs directly -- gps course
+// accuracy, phone yaw and yaw rate never survive into nav_model_t, which only carries the
+// telemetry fields the display shows verbatim (see normalize.c). Sentinel-checked the same way
+// packet_decode leaves them: RAW_U16_UNKNOWN/RAW_I16_UNKNOWN mean "no reading", never zero.
+static void build_heading_input(const raw_notif_t *raw, uint32_t now_ms, heading_input_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->timestamp_ms = now_ms;
+
+    out->gps_course_valid = raw->heading_deg != RAW_U16_UNKNOWN;
+    out->gps_course_deg = out->gps_course_valid ? (float)raw->heading_deg : 0.0f;
+
+    out->gps_accuracy_valid = raw->bearing_accuracy_deg_x10 != RAW_U16_UNKNOWN;
+    out->gps_accuracy_deg = out->gps_accuracy_valid ? (float)raw->bearing_accuracy_deg_x10 / 10.0f : 0.0f;
+
+    out->speed_valid = raw->speed_kmh_x10 != RAW_U16_UNKNOWN;
+    out->speed_kmh = out->speed_valid ? (float)raw->speed_kmh_x10 / 10.0f : 0.0f;
+
+    out->yaw_valid = raw->yaw_deg != RAW_U16_UNKNOWN;
+    out->yaw_deg = out->yaw_valid ? (float)raw->yaw_deg : 0.0f;
+
+    out->yaw_rate_valid = raw->yaw_rate_dps_x10 != (int16_t)RAW_I16_UNKNOWN;
+    out->yaw_rate_dps = out->yaw_rate_valid ? (float)raw->yaw_rate_dps_x10 / 10.0f : 0.0f;
 }
 
 void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_view_state_t *out) {
@@ -65,9 +91,12 @@ void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_v
     input.maneuver_sequence = maneuver_identity(&model);
     countdown_accept(&input);
 
+    heading_input_t heading_input;
+    build_heading_input(raw, now_ms, &heading_input);
+    heading_fusion_accept(&heading_input);
+
     out->icon_type = model.icon_type;
     out->speed_kmh_x10 = model.speed_kmh_x10;
-    out->heading_deg = model.heading_deg;
     out->battery_percent = model.battery_percent;
     out->sequence = model.sequence;
     strncpy(out->street_name, model.street_name, sizeof(out->street_name) - 1);
@@ -94,6 +123,14 @@ void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_v
 }
 
 void view_state_tick(uint32_t now_ms, terminal_view_state_t *out) {
+    // Compass output is independent of nav state -- the terminal is a speed/heading display first
+    // and a nav display second (see RelayService.publish()), so this runs even in VIEW_IDLE, ahead
+    // of the countdown-only early return below.
+    heading_output_t heading = heading_fusion_estimate(now_ms);
+    out->heading_deg = heading.valid ? (uint16_t)(((uint32_t)(heading.heading_deg + 0.5f)) % 360U) : NAV_U16_UNKNOWN;
+    out->heading_confidence = heading.confidence;
+    out->heading_frozen = heading.frozen;
+
     if (out->state != VIEW_ACTIVE && out->state != VIEW_STALE) {
         return;
     }

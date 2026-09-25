@@ -20,7 +20,9 @@ typedef struct {
     uint32_t distance_meters;  // countdown-interpolated; meaningless when state != VIEW_ACTIVE
     bool stale;
     uint16_t speed_kmh_x10;    // 0xFFFF = unknown
-    uint16_t heading_deg;      // 0xFFFF = unknown
+    uint16_t heading_deg;      // 0xFFFF = unknown; fused by heading_fusion.c, not a raw passthrough
+    float heading_confidence;  // 0..1; meaningless when heading_deg is unknown
+    bool heading_frozen;       // heading held from the last good estimate rather than live
     uint8_t battery_percent;   // 0xFF = unknown
     char street_name[NAV_STREET_LEN];
     char eta[NAV_ETA_LEN];

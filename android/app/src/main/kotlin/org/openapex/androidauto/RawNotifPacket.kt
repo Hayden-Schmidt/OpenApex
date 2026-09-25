@@ -27,8 +27,12 @@ import java.nio.charset.StandardCharsets
  * | 131    | 6    | accel_mg         | 3x int16 LE, milli-g, 0x7FFF = unknown |
  * | 137    | 6    | gyro_mdps        | 3x int16 LE, milli-deg/s, 0x7FFF = unk |
  * | 143    | 2    | icon_rotation_deg| int16 LE, 0=up/straight, cw+, 0x7FFF=unk|
+ * | 145    | 2    | bearing_accuracy_deg_x10 | uint16 LE, 0xFFFF = unknown     |
+ * | 147    | 2    | yaw_deg          | uint16 LE (0-359), 0xFFFF = unknown    |
+ * | 149    | 2    | yaw_rate_dps_x10 | int16 LE, 0x7FFF = unknown              |
  * --------------------------------------------------------------------------------------------
- * Total: 146 bytes. One BLE notification after MTU negotiation (ESP32 central requests MTU >= 185).
+ * Total: 152 bytes. One BLE notification, fixed-size fragmented/reassembled regardless of the
+ * negotiated MTU (see BleLink's fragmentation, ESP32 side ble_link.c).
  *
  * accel_mg/gyro_mdps are raw phone motion samples for terminal-side diagnostics/future use only —
  * they are never classified or fed into the normalized navigation/countdown model (that stays the
@@ -42,9 +46,14 @@ import java.nio.charset.StandardCharsets
  * (left/right swapped) relative to the displayed arrow, so the normalizer now uses it only as a
  * fallback behind title-text parsing — except for roundabout exit direction, where the title text
  * ("take the Nth exit") never states a direction and this is the only source.
+ *
+ * bearing_accuracy_deg_x10/yaw_deg/yaw_rate_dps_x10 (v3) are the raw inputs the ESP32-side
+ * heading_fusion.c filter needs (docs/Heading_Sensor_Fusion_Plan.md): heading_deg above stays the
+ * raw GPS course exactly as it always was — the terminal no longer treats it as the final display
+ * heading, it's one input to the fusion filter alongside these three.
  */
-const val RAW_NOTIF_PACKET_SIZE = 146
-const val RAW_NOTIF_VERSION = 2
+const val RAW_NOTIF_PACKET_SIZE = 152
+const val RAW_NOTIF_VERSION = 3
 
 private const val DIST_STR_BYTES = 16
 private const val ETA_STR_BYTES = 32
@@ -73,6 +82,10 @@ data class GnssTelemetry(
     val headingDeg: Int?,
     val fixValid: Boolean,
     val batteryPercent: Int?,
+    // v3: raw inputs for the ESP32-side heading_fusion.c filter. Null = no usable reading.
+    val bearingAccuracyDeg: Float? = null,
+    val yawDeg: Float? = null,
+    val yawRateDps: Float? = null,
 )
 
 /**
@@ -109,6 +122,10 @@ fun packRawNotifPacket(
     putMotionVector(p, 131, motion.accelMs2, scale = 1000.0 / MS2_PER_G)
     putMotionVector(p, 137, motion.gyroRadS, scale = 1000.0 * RAD_PER_S_TO_DEG_PER_S)
     putI16(p, 143, nav.iconRotationDeg?.mod(360) ?: I16_UNKNOWN)
+
+    putU16(p, 145, gnss.bearingAccuracyDeg?.let { Math.round(it * 10f).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
+    putU16(p, 147, gnss.yawDeg?.let { Math.round(it).mod(360).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
+    putI16(p, 149, gnss.yawRateDps?.let { Math.round(it * 10f).coerceIn(-0x7FFE, 0x7FFE) } ?: I16_UNKNOWN)
     return p
 }
 

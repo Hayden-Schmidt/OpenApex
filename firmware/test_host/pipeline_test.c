@@ -22,6 +22,11 @@ static void build_packet(uint8_t *p, const char *title, const char *dist, uint16
     p[15] = p[16] = p[17] = p[18] = 0xFF; // progress_max unknown
     if (dist != NULL) strncpy((char *)&p[19], dist, RAW_DIST_STR_LEN - 1);
     if (title != NULL) strncpy((char *)&p[67], title, RAW_TITLE_STR_LEN - 1);
+    // v3 heading-fusion inputs: unknown in every fixture here, since these tests exercise
+    // countdown/distance behavior, not heading_fusion.
+    p[145] = p[146] = 0xFF; // bearing_accuracy_deg_x10
+    p[147] = p[148] = 0xFF; // yaw_deg
+    p[149] = p[150] = 0xFF; // yaw_rate_dps_x10 (0x7FFF == RAW_I16_UNKNOWN)
 }
 
 int main(void) {

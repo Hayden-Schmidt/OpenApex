@@ -55,7 +55,8 @@ Replay a capture through the current parser to see whether a change regressed a 
 
 ```powershell
 gcc -std=c11 -o replay firmware/test_host/replay.c firmware/main/normalize.c `
-    firmware/main/packet.c firmware/main/countdown.c firmware/main/pipeline.c -lm
+    firmware/main/packet.c firmware/main/countdown.c firmware/main/pipeline.c `
+    firmware/main/heading_fusion.c -lm
 ./replay esp_log.bin
 ```
 

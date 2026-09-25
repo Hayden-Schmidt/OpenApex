@@ -56,5 +56,9 @@ bool packet_decode(const uint8_t *data, size_t len, raw_notif_t *out) {
     out->gyro_mdps[1] = read_i16(&data[139]);
     out->gyro_mdps[2] = read_i16(&data[141]);
     out->icon_rotation_deg = read_i16(&data[143]);
+
+    out->bearing_accuracy_deg_x10 = read_u16(&data[145]);
+    out->yaw_deg = read_u16(&data[147]);
+    out->yaw_rate_dps_x10 = read_i16(&data[149]);
     return true;
 }
