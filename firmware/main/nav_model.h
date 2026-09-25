@@ -62,4 +62,7 @@ typedef struct {
     uint32_t sequence;
     char street_name[NAV_STREET_LEN];
     char eta[NAV_ETA_LEN];
+    nav_traffic_span_t traffic[NAV_TRAFFIC_MAX_SPANS];
+    uint8_t traffic_count;            // 0 = no traffic data
+    uint16_t trip_progress_permille;  // NAV_U16_UNKNOWN = unknown
 } nav_model_t;

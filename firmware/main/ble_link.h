@@ -22,5 +22,8 @@ void ble_link_init(QueueHandle_t raw_packet_queue);
 // forever, which is what the terminal did for three whole sessions on 2026-09-24.
 bool ble_link_is_faulted(void);
 
+// True while the relay (BLE central) is connected. Drives the idle screen's phone-connected state.
+bool ble_link_is_connected(void);
+
 // Last negotiated ATT MTU, or BLE_ATT_MTU_DFLT (23) if the central never exchanged. Diagnostic.
 uint16_t ble_link_negotiated_mtu(void);

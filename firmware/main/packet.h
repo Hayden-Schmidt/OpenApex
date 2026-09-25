@@ -20,8 +20,13 @@
 // 147) and yaw_rate_dps_x10 (offset 149). heading_deg (offset 8) is unchanged on the wire — it was
 // always the raw GPS course; what changes is the terminal no longer treats it as the final display
 // heading, it's one input to heading_fusion.c alongside these three.
-#define RAW_NOTIF_PACKET_SIZE 152U
-#define RAW_NOTIF_VERSION 3U
+//
+// v4 adds the phone's wall clock (epoch_s at 152, tz_offset_min at 156) -- the C3 has no RTC -- and
+// Google Maps' progress-bar segments (count at 158, 8x {u16 end_permille, u8 r, g, b} from 159):
+// the traffic colouring along the whole route, raw RGB, classified by normalize.c.
+#define RAW_NOTIF_PACKET_SIZE 200U
+#define RAW_NOTIF_VERSION 4U
+#define RAW_MAX_SEGMENTS 8U
 
 // Field buffer sizes.
 #define RAW_DIST_STR_LEN 16
@@ -58,6 +63,17 @@ typedef struct {
     uint16_t bearing_accuracy_deg_x10; // RAW_U16_UNKNOWN = unavailable (pre-API26 or no fix)
     uint16_t yaw_deg;                  // 0-359, RAW_U16_UNKNOWN = no rotation-vector reading
     int16_t yaw_rate_dps_x10;          // gyro Z, RAW_I16_UNKNOWN = no gyro reading
+    // Phone wall clock (v4). epoch_s is UTC seconds, RAW_U32_UNKNOWN = unknown; local time is
+    // epoch_s + tz_offset_min * 60, RAW_I16_UNKNOWN = unknown offset.
+    uint32_t epoch_s;
+    int16_t tz_offset_min;
+    // Maps progress-bar segments (v4), route order. end_permille is cumulative over the whole
+    // route; a segment starts where the previous one ended (the first at 0).
+    uint8_t segment_count;
+    struct {
+        uint16_t end_permille;
+        uint8_t r, g, b;
+    } segments[RAW_MAX_SEGMENTS];
 } raw_notif_t;
 
 // Decodes a raw packet into out. Returns false on wrong version or short length (malformed

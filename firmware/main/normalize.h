@@ -11,6 +11,9 @@
 // both are handled here.
 void normalize_packet(const raw_notif_t *raw, nav_model_t *out);
 
+// Classifies one Maps progress-bar segment colour into a traffic level. Exposed for the host tests.
+nav_traffic_level_t normalize_traffic_color(uint8_t r, uint8_t g, uint8_t b);
+
 // ---------------------------------------------------------------------------------------------
 // Glyph table introspection — for tests and tooling, not the terminal's runtime path.
 //

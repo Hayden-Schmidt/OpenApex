@@ -29,16 +29,14 @@ typedef struct {
     uint32_t sequence;
 
     // --- Idle-screen fields (design reference/2. Idle Screen). Meaningful in every state, but
-    // only VIEW_IDLE renders them today. All three are BACKEND GAPS: nothing populates them yet,
-    // so they stay at their zero/unknown values outside firmware/sim_lvgl's fixture.
-    bool phone_connected;          // GAP: ble_link.c logs connect/disconnect but does not publish it
-    char clock[NAV_CLOCK_LEN];     // "HH:MM"; empty = unknown. GAP: no RTC on the C3, no phone time sync
-    uint32_t odometer_meters;      // GAP: no odometer data model or NVS persistence yet
+    // only VIEW_IDLE renders them today.
+    bool phone_connected;          // BLE central connected; set by countdown_task from ble_link_is_connected()
+    char clock[NAV_CLOCK_LEN];     // "HH:MM" local, from the phone's clock (packet v4); empty = never synced
+    uint32_t odometer_meters;      // device odometer (odometer.c), NVS-persisted by odometer_store.c
 
     // --- Trip/traffic ring (design reference/3.Turn by Turn, the "Google Trip Data" variant).
-    // BACKEND GAP: nothing populates these. The source is the progress section of Google Maps'
-    // navigation notification, which the Android relay does not parse or transmit yet -- it is not
-    // in the packet format at all. firmware/sim_lvgl's fixture is the only writer today.
+    // Source: the ProgressStyle segments of Google Maps' navigation notification (packet v4),
+    // classified by normalize_traffic_color(); progress from android.progress/progressMax.
     nav_traffic_span_t traffic[NAV_TRAFFIC_MAX_SPANS];
     uint8_t traffic_count;            // 0 = no traffic data; the ring renders neutral, not "clear"
     uint16_t trip_progress_permille;  // 0..1000 of the whole trip; the ring is consumed up to here

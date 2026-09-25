@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 New-Item -ItemType Directory -Force -Path build\host | Out-Null
 
-$common = @('firmware\main\countdown.c', 'firmware\main\packet.c', 'firmware\main\normalize.c', 'firmware\main\pipeline.c', 'firmware\main\heading_fusion.c')
+$common = @('firmware\main\countdown.c', 'firmware\main\packet.c', 'firmware\main\normalize.c', 'firmware\main\pipeline.c', 'firmware\main\heading_fusion.c', 'firmware\main\odometer.c')
 
 # A GCC installed under a path containing a space is unusable: its `ld` splits the internal
 # -L path on the space and fails looking for default-manifest.o under the truncated prefix.
@@ -31,6 +31,8 @@ if ($compiler) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $compiler.Source -std=c11 -Wall -Wextra -Werror @common firmware\test_host\heading_fusion_test.c -o build\host\heading_fusion_test.exe
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $compiler.Source -std=c11 -Wall -Wextra -Werror @common firmware\test_host\odometer_test.c -o build\host\odometer_test.exe
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
     # MSVC fallback (no gcc/clang on PATH). Requires VS Build Tools C++ workload.
     $vcvars = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
@@ -44,7 +46,7 @@ if ($compiler) {
     # from a scratch dir -- otherwise the repo root fills with countdown.obj, vc140.pdb and friends.
     New-Item -ItemType Directory -Force -Path build\obj | Out-Null
     $srcs = (($common | ForEach-Object { "..\..\$_" }) -join ' ')
-    foreach ($t in @('countdown_test', 'packet_normalize_test', 'pipeline_test', 'heading_fusion_test')) {
+    foreach ($t in @('countdown_test', 'packet_normalize_test', 'pipeline_test', 'heading_fusion_test', 'odometer_test')) {
         cmd /c "`"$vcvars`" >nul 2>&1 && cd /d build\obj && cl /nologo /std:c11 /TC /W3 $defs $srcs ..\..\firmware\test_host\$t.c /Fe:..\..\build\host\$t.exe"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
@@ -57,3 +59,5 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & build\host\pipeline_test.exe
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & build\host\heading_fusion_test.exe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& build\host\odometer_test.exe

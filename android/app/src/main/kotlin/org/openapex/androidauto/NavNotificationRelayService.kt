@@ -118,6 +118,7 @@ class NavNotificationRelayService : NotificationListenerService() {
             progressMax = extras.getInt("android.progressMax", -1).takeIf { it >= 0 },
             iconRotationDeg = extractIconRotationDeg(sbn.notification, isRoundabout = extras.getCharSequence("android.title")
                 ?.toString()?.contains("roundabout", ignoreCase = true) == true),
+            segments = extractProgressSegments(sbn.notification),
         )
         if (nav.title.isNullOrBlank() && nav.distanceText.isNullOrBlank() && nav.progress == null) {
             return // not a navigation notification worth relaying
@@ -137,9 +138,24 @@ class NavNotificationRelayService : NotificationListenerService() {
             progress = nav.progress,
             progressMax = nav.progressMax,
             iconRotationDeg = nav.iconRotationDeg,
+            segments = nav.segments,
         )
         Log.d(TAG, "relay nav: title=${nav.title} dist=${nav.distanceText} progress=${nav.progress}/${nav.progressMax} iconRotationDeg=${nav.iconRotationDeg}")
         RelayStateHolder.updateNav(nav)
+    }
+
+    /**
+     * Google Maps' progress-bar segments (traffic colouring along the route), via the public
+     * ProgressStyle API rather than the undocumented Bundle keys the diagnostic dump walks.
+     * Empty below Android 16 or when Maps posts no ProgressStyle.
+     */
+    private fun extractProgressSegments(notification: android.app.Notification): List<ProgressSegment> {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.BAKLAVA) return emptyList()
+        return runCatching {
+            val style = android.app.Notification.Builder.recoverBuilder(this, notification).style
+            (style as? android.app.Notification.ProgressStyle)?.progressSegments
+                ?.map { ProgressSegment(it.length, it.color) }
+        }.getOrNull().orEmpty()
     }
 
     /**

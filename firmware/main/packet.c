@@ -60,5 +60,17 @@ bool packet_decode(const uint8_t *data, size_t len, raw_notif_t *out) {
     out->bearing_accuracy_deg_x10 = read_u16(&data[145]);
     out->yaw_deg = read_u16(&data[147]);
     out->yaw_rate_dps_x10 = read_i16(&data[149]);
+
+    out->epoch_s = read_u32(&data[152]);
+    out->tz_offset_min = read_i16(&data[156]);
+    // A count past the cap is a malformed packet, not a reason to read past the segment table.
+    out->segment_count = data[158] <= RAW_MAX_SEGMENTS ? data[158] : 0;
+    for (size_t i = 0; i < RAW_MAX_SEGMENTS; i++) {
+        const uint8_t *s = &data[159 + i * 5];
+        out->segments[i].end_permille = read_u16(s);
+        out->segments[i].r = s[2];
+        out->segments[i].g = s[3];
+        out->segments[i].b = s[4];
+    }
     return true;
 }

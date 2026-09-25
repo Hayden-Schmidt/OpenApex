@@ -59,6 +59,14 @@ bool ble_link_is_faulted(void) {
     return s_consecutive_decode_failures >= BLE_LINK_FAULT_THRESHOLD;
 }
 
+// Written only from the NimBLE host task's GAP callback, read from countdown_task. A single
+// aligned bool store/load is atomic on the C3, so no lock.
+static volatile bool s_connected;
+
+bool ble_link_is_connected(void) {
+    return s_connected;
+}
+
 uint16_t ble_link_negotiated_mtu(void) {
     return s_negotiated_mtu;
 }
@@ -207,6 +215,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
             s_consecutive_decode_failures = 0;
             s_negotiated_mtu = BLE_ATT_MTU_DFLT;
             reasm_reset();
+            s_connected = true;
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
             start_advertising();
@@ -215,6 +224,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "central disconnected; reason=%d", event->disconnect.reason);
         drive_log_ble(DRIVE_LOG_BLE_DISCONNECTED, (int32_t)event->disconnect.reason);
+        s_connected = false;
         start_advertising();
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:

@@ -65,6 +65,33 @@ int main(void) {
     assert(view.state == VIEW_ACTIVE);
     assert(view.distance_meters == 100);
 
+    // 5. Clock: empty until the phone sends time, then carried forward on the monotonic clock.
+    pipeline_reset();
+    memset(&view, 0, sizeof(view));
+    build_packet(p, NULL, NULL, 0);
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 1000, &view);
+    assert(view.clock[0] == '\0'); // zero-filled epoch is not 1970
+
+    // 2026-09-25 10:15:30 UTC = 1790331330; UTC+10 = 600 min -> 20:15 local.
+    uint32_t epoch = 1790331330U;
+    p[152] = (uint8_t)epoch; p[153] = (uint8_t)(epoch >> 8); p[154] = (uint8_t)(epoch >> 16); p[155] = (uint8_t)(epoch >> 24);
+    p[156] = 600 & 0xFF; p[157] = 600 >> 8;
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 2000, &view);
+    assert(strcmp(view.clock, "20:15") == 0);
+    view_state_tick(2000 + 30000, &view); // 10:16:00 UTC
+    assert(strcmp(view.clock, "20:16") == 0);
+    view_state_tick(2000 + 4 * 3600 * 1000U, &view); // wraps midnight
+    assert(strcmp(view.clock, "00:15") == 0);
+
+    // 6. Odometer reaches the view: 36 km/h for 2 s = 20 m.
+    build_packet(p, NULL, NULL, 360);
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 50000, &view);
+    view_state_apply_packet(&raw, 52000, &view);
+    assert(view.odometer_meters == 20);
+
     puts("pipeline tests passed");
     return 0;
 }

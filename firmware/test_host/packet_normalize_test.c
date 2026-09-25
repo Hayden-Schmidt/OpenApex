@@ -402,6 +402,76 @@ static void test_glyph_angle_tolerance(void) {
     assert(m.icon_type == NAV_ICON_ROUNDABOUT_STRAIGHT);
 }
 
+static void put_segment(uint8_t *p, int i, uint16_t end_permille, uint32_t rgb) {
+    uint8_t *s = &p[159 + i * 5];
+    s[0] = (uint8_t)(end_permille & 0xFF);
+    s[1] = (uint8_t)(end_permille >> 8);
+    s[2] = (uint8_t)(rgb >> 16);
+    s[3] = (uint8_t)(rgb >> 8);
+    s[4] = (uint8_t)rgb;
+}
+
+static void test_traffic_color_classes(void) {
+    // Google's route palette: clear teal (the design's #009AA6) and blue, orange, red, dark red.
+    assert(normalize_traffic_color(0x00, 0x9A, 0xA6) == NAV_TRAFFIC_FREE);
+    assert(normalize_traffic_color(0x1A, 0x73, 0xE8) == NAV_TRAFFIC_FREE);
+    assert(normalize_traffic_color(0x1E, 0x8E, 0x3E) == NAV_TRAFFIC_FREE);
+    assert(normalize_traffic_color(0xF2, 0x99, 0x00) == NAV_TRAFFIC_SLOW);
+    assert(normalize_traffic_color(0xE8, 0x71, 0x0A) == NAV_TRAFFIC_SLOW);
+    assert(normalize_traffic_color(0xEA, 0x43, 0x35) == NAV_TRAFFIC_HEAVY);
+    assert(normalize_traffic_color(0xD9, 0x30, 0x25) == NAV_TRAFFIC_HEAVY);
+    assert(normalize_traffic_color(0xA5, 0x0E, 0x0E) == NAV_TRAFFIC_STOPPED);
+    assert(normalize_traffic_color(0x8B, 0x00, 0x00) == NAV_TRAFFIC_STOPPED);
+    // Neutral track and black are "no data", never "clear".
+    assert(normalize_traffic_color(0x80, 0x86, 0x8B) == NAV_TRAFFIC_UNKNOWN);
+    assert(normalize_traffic_color(0xE3, 0xE3, 0xE3) == NAV_TRAFFIC_UNKNOWN);
+    assert(normalize_traffic_color(0x00, 0x00, 0x00) == NAV_TRAFFIC_UNKNOWN);
+}
+
+static void test_decode_v4_clock_and_traffic(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    build_packet(p, "Turn left onto Main St", NULL, "300", 250, 1000, 300, 0, 80, true);
+    p[152] = 0x80; p[153] = 0xC8; p[154] = 0xB0; p[155] = 0x6A; // epoch 0x6AB0C880
+    p[156] = (uint8_t)(-300 & 0xFF); p[157] = (uint8_t)((-300 >> 8) & 0xFF);
+    p[158] = 3;
+    put_segment(p, 0, 400, 0x009AA6);
+    put_segment(p, 1, 700, 0xE8710A);
+    put_segment(p, 2, 1000, 0xA50E0E);
+
+    raw_notif_t raw;
+    assert(packet_decode(p, sizeof(p), &raw));
+    assert(raw.epoch_s == 0x6AB0C880U);
+    assert(raw.tz_offset_min == -300);
+    assert(raw.segment_count == 3);
+
+    nav_model_t m;
+    normalize_packet(&raw, &m);
+    assert(m.trip_progress_permille == 250);
+    assert(m.traffic_count == 3);
+    assert(m.traffic[0].start_permille == 0 && m.traffic[0].end_permille == 400);
+    assert(m.traffic[0].level == NAV_TRAFFIC_FREE);
+    assert(m.traffic[1].start_permille == 400 && m.traffic[1].level == NAV_TRAFFIC_SLOW);
+    assert(m.traffic[2].end_permille == 1000 && m.traffic[2].level == NAV_TRAFFIC_STOPPED);
+
+    // A backwards end is a malformed table: keep what came before it, draw nothing after.
+    put_segment(p, 1, 300, 0xE8710A);
+    assert(packet_decode(p, sizeof(p), &raw));
+    normalize_packet(&raw, &m);
+    assert(m.traffic_count == 1);
+
+    // Count past the cap never reads past the table.
+    p[158] = 200;
+    assert(packet_decode(p, sizeof(p), &raw));
+    assert(raw.segment_count == 0);
+
+    // No progress means unknown, not "start of trip".
+    build_packet(p, "Turn left onto Main St", NULL, "300", -1, -1, 300, 0, 80, true);
+    assert(packet_decode(p, sizeof(p), &raw));
+    normalize_packet(&raw, &m);
+    assert(m.trip_progress_permille == NAV_U16_UNKNOWN);
+    assert(m.traffic_count == 0);
+}
+
 int main(void) {
     test_decode_rejects_malformed();
     test_normalize_turn_right();
@@ -417,6 +487,8 @@ int main(void) {
     test_street_name_does_not_flip_direction();
     test_glyph_tables_are_separable();
     test_glyph_angle_tolerance();
+    test_traffic_color_classes();
+    test_decode_v4_clock_and_traffic();
     puts("packet + normalize tests passed");
     return 0;
 }

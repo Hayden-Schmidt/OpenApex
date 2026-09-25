@@ -159,6 +159,7 @@ object RelayRecorder {
         progress: Int?,
         progressMax: Int?,
         iconRotationDeg: Int?,
+        segments: List<ProgressSegment> = emptyList(),
     ) {
         event("parsed") {
             put("pkg", pkg)
@@ -168,6 +169,9 @@ object RelayRecorder {
             put("progress", progress ?: JSONObject.NULL)
             put("progressMax", progressMax ?: JSONObject.NULL)
             put("iconRotationDeg", iconRotationDeg ?: JSONObject.NULL)
+            // Raw ARGB kept as hex: the colour -> traffic-level table on the terminal is only as
+            // good as the captures checked against it.
+            put("segments", org.json.JSONArray(segments.map { "${it.length}:#%08X".format(it.color) }))
         }
     }
 

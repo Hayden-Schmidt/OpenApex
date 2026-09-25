@@ -3,7 +3,7 @@ package org.openapex.androidauto
 import java.nio.charset.StandardCharsets
 
 /**
- * v1 raw-notification relay packet. The phone reads raw Google Maps navigation notification
+ * v4 raw-notification relay packet. The phone reads raw Google Maps navigation notification
  * extras + phone GNSS telemetry and relays them verbatim to the ESP32 terminal. The phone does
  * NO classification here — maneuver/distance/street parsing is the ESP normalizer's job (shared
  * with the iOS/ANCS path, where raw text arrives on the terminal directly).
@@ -30,8 +30,14 @@ import java.nio.charset.StandardCharsets
  * | 145    | 2    | bearing_accuracy_deg_x10 | uint16 LE, 0xFFFF = unknown     |
  * | 147    | 2    | yaw_deg          | uint16 LE (0-359), 0xFFFF = unknown    |
  * | 149    | 2    | yaw_rate_dps_x10 | int16 LE, 0x7FFF = unknown              |
+ * | 151    | 1    | reserved         | 0                                      |
+ * | 152    | 4    | epoch_s          | uint32 LE, phone wall clock (UTC), 0xFFFFFFFF = unknown |
+ * | 156    | 2    | tz_offset_min    | int16 LE, local = UTC + this, 0x7FFF = unknown |
+ * | 158    | 1    | segment_count    | uint8, 0..8 progress-bar segments below |
+ * | 159    | 40   | segments         | 8x {uint16 LE end_permille, uint8 r, g, b} |
+ * | 199    | 1    | reserved         | 0                                      |
  * --------------------------------------------------------------------------------------------
- * Total: 152 bytes. One BLE notification, fixed-size fragmented/reassembled regardless of the
+ * Total: 200 bytes. One BLE notification, fixed-size fragmented/reassembled regardless of the
  * negotiated MTU (see BleLink's fragmentation, ESP32 side ble_link.c).
  *
  * accel_mg/gyro_mdps are raw phone motion samples for terminal-side diagnostics/future use only —
@@ -51,9 +57,19 @@ import java.nio.charset.StandardCharsets
  * heading_fusion.c filter needs (docs/Heading_Sensor_Fusion_Plan.md): heading_deg above stays the
  * raw GPS course exactly as it always was — the terminal no longer treats it as the final display
  * heading, it's one input to the fusion filter alongside these three.
+ *
+ * epoch_s/tz_offset_min (v4) are the terminal's only time source -- the C3 has no RTC. Sent on
+ * every packet, navigating or not, so the idle-screen clock works without a route.
+ *
+ * segments (v4) are Google Maps' ProgressStyle progress-bar segments (the traffic colouring along
+ * the whole route), verbatim: cumulative end position as per-mille of the summed segment lengths,
+ * plus the segment's raw RGB. Turning a colour into a traffic level is the terminal's job, like
+ * every other classification. Segments past the 8th are dropped; the terminal treats the rest of
+ * the route as "no data".
  */
-const val RAW_NOTIF_PACKET_SIZE = 152
-const val RAW_NOTIF_VERSION = 3
+const val RAW_NOTIF_PACKET_SIZE = 200
+const val RAW_NOTIF_VERSION = 4
+const val MAX_PROGRESS_SEGMENTS = 8
 
 private const val DIST_STR_BYTES = 16
 private const val ETA_STR_BYTES = 32
@@ -74,7 +90,12 @@ data class RawNavNotification(
     // Maneuver arrow rotation angle extracted from the notification icon bitmap, degrees,
     // 0 = up/straight, clockwise positive. Null = not extracted/unavailable.
     val iconRotationDeg: Int? = null,
+    // v4: ProgressStyle segments in route order. Empty = none in the notification.
+    val segments: List<ProgressSegment> = emptyList(),
 )
+
+/** One Notification.ProgressStyle.Segment: its length in the style's own units and ARGB colour. */
+data class ProgressSegment(val length: Int, val color: Int)
 
 /** Phone GNSS + battery telemetry. Null speed/heading/battery = no usable reading. */
 data class GnssTelemetry(
@@ -102,6 +123,8 @@ fun packRawNotifPacket(
     nav: RawNavNotification,
     gnss: GnssTelemetry,
     motion: MotionTelemetry = MotionTelemetry(null, null),
+    nowEpochMs: Long? = System.currentTimeMillis(),
+    tzOffsetMin: Int? = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000,
 ): ByteArray {
     val p = ByteArray(RAW_NOTIF_PACKET_SIZE)
     p[0] = RAW_NOTIF_VERSION.toByte()
@@ -126,7 +149,33 @@ fun packRawNotifPacket(
     putU16(p, 145, gnss.bearingAccuracyDeg?.let { Math.round(it * 10f).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
     putU16(p, 147, gnss.yawDeg?.let { Math.round(it).mod(360).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
     putI16(p, 149, gnss.yawRateDps?.let { Math.round(it * 10f).coerceIn(-0x7FFE, 0x7FFE) } ?: I16_UNKNOWN)
+
+    putU32(p, 152, nowEpochMs?.takeIf { it >= 0 }?.let { (it / 1000L).toInt() } ?: U32_UNKNOWN)
+    putI16(p, 156, tzOffsetMin?.coerceIn(-0x7FFE, 0x7FFE) ?: I16_UNKNOWN)
+    putSegments(p, 158, nav.segments)
     return p
+}
+
+// Cumulative per-mille ends are computed over ALL segments, so dropping those past the cap leaves
+// the kept ones at their true positions rather than stretching them over the whole route.
+private fun putSegments(buf: ByteArray, offset: Int, segments: List<ProgressSegment>) {
+    val valid = segments.filter { it.length > 0 }
+    val total = valid.sumOf { it.length.toLong() }
+    if (total <= 0L) {
+        buf[offset] = 0
+        return
+    }
+    val kept = valid.take(MAX_PROGRESS_SEGMENTS)
+    buf[offset] = kept.size.toByte()
+    var cumulative = 0L
+    kept.forEachIndexed { i, seg ->
+        cumulative += seg.length
+        val at = offset + 1 + i * 5
+        putU16(buf, at, ((cumulative * 1000L) / total).toInt().coerceIn(0, 1000))
+        buf[at + 2] = ((seg.color shr 16) and 0xFF).toByte()
+        buf[at + 3] = ((seg.color shr 8) and 0xFF).toByte()
+        buf[at + 4] = (seg.color and 0xFF).toByte()
+    }
 }
 
 private const val MS2_PER_G = 9.80665

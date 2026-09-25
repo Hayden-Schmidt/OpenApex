@@ -4,6 +4,7 @@
 #include "display_driver.h"
 #include "gui_app.hpp"
 #include "heading_store.h"
+#include "odometer_store.h"
 #include "packet.h"
 #include "pipeline.h"
 #include "view_state.h"
@@ -59,6 +60,7 @@ static void countdown_task(void *argument) {
             terminal_view_state_t next;
             memset(&next, 0, sizeof(next));
             view_state_apply_packet(&raw, platform_now_ms(), &next);
+            next.phone_connected = ble_link_is_connected();
             if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 shared_view = next;
                 xSemaphoreGive(view_mutex);
@@ -68,8 +70,10 @@ static void countdown_task(void *argument) {
         uint32_t now = platform_now_ms();
         // Self-throttled to ~30s; cheap to call on every 100ms tick (see heading_store.h).
         heading_store_maybe_save(now);
+        odometer_store_maybe_save(now);
         if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             view_state_tick(now, &shared_view);
+            shared_view.phone_connected = ble_link_is_connected();
             // A link that is delivering writes we cannot decode is NOT the same as no link and
             // NOT the same as "not navigating", but the terminal used to render all three
             // identically. On 2026-09-24 three whole sessions sat on the idle screen while the
@@ -150,5 +154,6 @@ void app_main(void) {
     // offset estimator instead of reconverging from scratch every ride.
     ble_link_init(raw_packet_queue);
     heading_store_load();
+    odometer_store_load();
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);
 }

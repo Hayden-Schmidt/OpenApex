@@ -272,6 +272,39 @@ static int32_t parse_distance_metres(const char *s) {
     return (int32_t)v;
 }
 
+// Google Maps draws route traffic in four levels -- clear, slow, heavy, stopped -- as blue/teal,
+// orange, red and dark red (the design pins clear to #009AA6). The exact shades the notification
+// uses are unconfirmed and Maps restyles them between releases, so this classifies by hue and
+// brightness rather than matching hex values: an unseen shade of orange still reads as slow.
+// Greys and near-black are "no data" -- Maps' neutral track, never to be drawn as a clear road.
+nav_traffic_level_t normalize_traffic_color(uint8_t r, uint8_t g, uint8_t b) {
+    int max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    int min = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    int chroma = max - min;
+    if (max < 48 || chroma * 4 < max) { // too dark, or saturation < 25%
+        return NAV_TRAFFIC_UNKNOWN;
+    }
+    int hue; // degrees, 0..359
+    if (max == r) {
+        hue = (60 * (g - b) / chroma + 360) % 360;
+    } else if (max == g) {
+        hue = 60 * (b - r) / chroma + 120;
+    } else {
+        hue = 60 * (r - g) / chroma + 240;
+    }
+    if (hue >= 80 && hue < 280) {
+        return NAV_TRAFFIC_FREE; // green through teal to blue
+    }
+    if (hue >= 18 && hue < 80) {
+        return NAV_TRAFFIC_SLOW; // orange/amber/yellow
+    }
+    if (hue >= 280 && hue < 330) {
+        return NAV_TRAFFIC_UNKNOWN; // purple/magenta: not a traffic colour
+    }
+    // Red. Maps separates heavy from stopped by darkening the red, not by changing its hue.
+    return max >= 0xC0 ? NAV_TRAFFIC_HEAVY : NAV_TRAFFIC_STOPPED;
+}
+
 void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     memset(out, 0, sizeof(*out));
     out->icon_type = NAV_ICON_UNKNOWN;
@@ -315,8 +348,27 @@ void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     }
 
     // Remaining trip distance from progress/progressMax, when both are present and ordered.
+    out->trip_progress_permille = NAV_U16_UNKNOWN;
     if (raw->progress >= 0 && raw->progress_max > 0 && raw->progress <= raw->progress_max) {
         out->remaining_meters = raw->progress_max - raw->progress;
+        out->trip_progress_permille = (uint16_t)(((int64_t)raw->progress * 1000) / raw->progress_max);
+    }
+
+    // Traffic spans from the progress-bar segments. Out-of-order or out-of-range ends mean a
+    // malformed table; stop there rather than draw spans that overlap or run backwards.
+    out->traffic_count = 0;
+    uint16_t start = 0;
+    for (uint8_t i = 0; i < raw->segment_count && i < NAV_TRAFFIC_MAX_SPANS; i++) {
+        uint16_t end = raw->segments[i].end_permille;
+        if (end <= start || end > 1000) {
+            break;
+        }
+        nav_traffic_span_t *span = &out->traffic[out->traffic_count++];
+        span->start_permille = start;
+        span->end_permille = end;
+        span->level = (uint8_t)normalize_traffic_color(raw->segments[i].r, raw->segments[i].g,
+                                                       raw->segments[i].b);
+        start = end;
     }
 
     // Telemetry passthrough with sentinel preservation.

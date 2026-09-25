@@ -121,6 +121,56 @@ class RawNotifPacketTest {
         assertEquals(40, (packet[8].toInt() and 0xFF) or ((packet[9].toInt() and 0xFF) shl 8))
     }
 
+    @Test
+    fun `wall clock packs as epoch seconds and tz offset, unknown as sentinels`() {
+        val nav = RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null)
+        val gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null)
+        val packet = packRawNotifPacket(1, nav, gnss, nowEpochMs = 1_790_000_000_123L, tzOffsetMin = -300)
+        assertEquals(1_790_000_000L, readU32(packet, 152))
+        assertEquals(-300, readI16(packet, 156))
+
+        val unknown = packRawNotifPacket(1, nav, gnss, nowEpochMs = null, tzOffsetMin = null)
+        assertEquals(0xFFFFFFFFL, readU32(unknown, 152))
+        assertEquals(0x7FFF, readI16(unknown, 156))
+    }
+
+    @Test
+    fun `segments pack as cumulative permille over all segments with raw rgb`() {
+        val segments = listOf(
+            ProgressSegment(250, 0xFF009AA6.toInt()),
+            ProgressSegment(0, 0xFF123456.toInt()), // zero-length: dropped
+            ProgressSegment(750, 0xFFE8710A.toInt()),
+        )
+        val packet = packRawNotifPacket(
+            1,
+            RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null, segments = segments),
+            GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+        )
+        assertEquals(2, packet[158].toInt())
+        assertEquals(250, readU16(packet, 159))
+        assertArrayEquals(byteArrayOf(0x00, 0x9A.toByte(), 0xA6.toByte()), packet.copyOfRange(161, 164))
+        assertEquals(1000, readU16(packet, 164))
+        assertArrayEquals(byteArrayOf(0xE8.toByte(), 0x71, 0x0A), packet.copyOfRange(166, 169))
+    }
+
+    @Test
+    fun `segments past the cap are dropped without rescaling the kept ones`() {
+        val segments = List(10) { ProgressSegment(100, 0xFF009AA6.toInt()) }
+        val packet = packRawNotifPacket(
+            1,
+            RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null, segments = segments),
+            GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+        )
+        assertEquals(MAX_PROGRESS_SEGMENTS, packet[158].toInt())
+        assertEquals(800, readU16(packet, 159 + 7 * 5))
+    }
+
+    private fun readU16(buf: ByteArray, offset: Int): Int =
+        (buf[offset].toInt() and 0xFF) or ((buf[offset + 1].toInt() and 0xFF) shl 8)
+
+    private fun readU32(buf: ByteArray, offset: Int): Long =
+        readU16(buf, offset).toLong() or (readU16(buf, offset + 2).toLong() shl 16)
+
     private fun readString(buf: ByteArray, offset: Int): String {
         var end = offset
         while (end < buf.size && buf[end].toInt() != 0) end++

@@ -1,5 +1,6 @@
 #include "pipeline.h"
 
+#include <stdio.h>
 #include <string.h>
 
 // Dev-only drive logger. This file stays host-testable: every drive_log_* call compiles to a
@@ -7,6 +8,7 @@
 #include "drive_log.h"
 #include "heading_fusion.h"
 #include "normalize.h"
+#include "odometer.h"
 #include "packet.h"
 
 // Identity of the maneuver currently being counted down, used only to tell the countdown when to
@@ -21,6 +23,12 @@ static nav_icon_t s_last_icon = NAV_ICON_UNKNOWN;
 static char s_last_street[NAV_STREET_LEN];
 static uint32_t s_maneuver_id;
 static bool s_have_maneuver;
+
+// Wall clock, from the phone. The C3 has no RTC, so time is the last synced local epoch carried
+// forward on the monotonic clock -- which keeps the clock running across a dropped link.
+static bool s_have_time;
+static int64_t s_local_epoch_s_at_sync;
+static uint32_t s_sync_ms;
 
 static uint32_t maneuver_identity(const nav_model_t *model) {
     bool changed = !s_have_maneuver || model->icon_type != s_last_icon ||
@@ -42,6 +50,28 @@ void pipeline_reset(void) {
     s_have_maneuver = false;
     countdown_reset();
     heading_fusion_reset();
+    odometer_reset();
+    s_have_time = false;
+}
+
+static void accept_time(const raw_notif_t *raw, uint32_t now_ms) {
+    // epoch 0 is a zero-filled field, not 1970: never show a fabricated time.
+    if (raw->epoch_s == RAW_U32_UNKNOWN || raw->epoch_s == 0U || raw->tz_offset_min == (int16_t)RAW_I16_UNKNOWN) {
+        return;
+    }
+    s_local_epoch_s_at_sync = (int64_t)raw->epoch_s + (int64_t)raw->tz_offset_min * 60;
+    s_sync_ms = now_ms;
+    s_have_time = true;
+}
+
+static void format_clock(uint32_t now_ms, char *out, size_t out_len) {
+    if (!s_have_time) {
+        out[0] = '\0';
+        return;
+    }
+    int64_t local_s = s_local_epoch_s_at_sync + (int64_t)((now_ms - s_sync_ms) / 1000U);
+    int64_t minute_of_day = ((local_s / 60) % 1440 + 1440) % 1440;
+    snprintf(out, out_len, "%02d:%02d", (int)(minute_of_day / 60), (int)(minute_of_day % 60));
 }
 
 // Builds heading_fusion's input from the raw packet fields it needs directly -- gps course
@@ -95,6 +125,9 @@ void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_v
     build_heading_input(raw, now_ms, &heading_input);
     heading_fusion_accept(&heading_input);
 
+    odometer_accept(raw->gnss_fix_valid, input.speed_valid, input.speed_kmh, now_ms);
+    accept_time(raw, now_ms);
+
     out->icon_type = model.icon_type;
     out->speed_kmh_x10 = model.speed_kmh_x10;
     out->battery_percent = model.battery_percent;
@@ -103,6 +136,9 @@ void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_v
     out->street_name[sizeof(out->street_name) - 1] = '\0';
     strncpy(out->eta, model.eta, sizeof(out->eta) - 1);
     out->eta[sizeof(out->eta) - 1] = '\0';
+    memcpy(out->traffic, model.traffic, sizeof(out->traffic));
+    out->traffic_count = model.traffic_count;
+    out->trip_progress_permille = model.trip_progress_permille != NAV_U16_UNKNOWN ? model.trip_progress_permille : 0U;
 
     if (model.icon_type == NAV_ICON_ARRIVED) {
         out->state = VIEW_ARRIVED;
@@ -130,6 +166,9 @@ void view_state_tick(uint32_t now_ms, terminal_view_state_t *out) {
     out->heading_deg = heading.valid ? (uint16_t)(((uint32_t)(heading.heading_deg + 0.5f)) % 360U) : NAV_U16_UNKNOWN;
     out->heading_confidence = heading.confidence;
     out->heading_frozen = heading.frozen;
+
+    format_clock(now_ms, out->clock, sizeof(out->clock));
+    out->odometer_meters = odometer_meters();
 
     if (out->state != VIEW_ACTIVE && out->state != VIEW_STALE) {
         return;
