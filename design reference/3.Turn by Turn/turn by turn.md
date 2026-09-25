@@ -96,16 +96,9 @@ placeholders (no final art/theme pass):
 
 ### What does not exist yet (render)
 
-- **Morphing arrow** (Rich tier) — `RichTheme` currently renders identically to `BasicTheme`; the
-  morph transition suite is a later pass once base content is proven on both tiers.
 - **Real arrow/compass art** — current glyphs/shapes are LVGL-drawn placeholders, not final icon
   assets.
 
 ### Backend gaps flagged
 
-1. **Rerouting** — no `nav_icon_t` value and no maps-app adapter surfaces it yet.
-2. **Compass smoothing** — `heading_deg` is raw passthrough; smoothing is a post-UI-sprint item.
-3. **Roundabout exit profiles** — `derive_maneuver` maps all roundabouts to the single
-   `NAV_ICON_ROUNDABOUT`; per-exit profiles need richer title text (not currently captured).
-4. **Distance rollup granularity** — the "nearest 10 m until within 20 m" rich behaviour is not in
-   `countdown.c` (it always reports 1 m resolution); needs a config knob. 
+1. arrival screen missing, to be developed 25.09

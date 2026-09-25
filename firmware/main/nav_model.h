@@ -25,6 +25,7 @@ typedef enum {
 
 #define NAV_STREET_LEN 64
 #define NAV_ETA_LEN 32
+#define NAV_CLOCK_LEN 8  // "HH:MM" wall clock, room for a 24h string plus terminator
 
 // Normalized navigation model produced by the normalizer (source-agnostic). Missing fields use
 // explicit sentinels; a missing field must never become a fabricated zero.

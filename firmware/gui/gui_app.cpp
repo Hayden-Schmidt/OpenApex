@@ -24,6 +24,8 @@ Screen *screen_for_state(view_state_t state) {
 
 } // namespace
 
+const GuiTheme &gui_theme(void) { return s_theme; }
+
 void gui_app_init(void) {
     s_active = screen_for_state(VIEW_IDLE);
     s_theme.apply_state_change(nullptr, s_active);

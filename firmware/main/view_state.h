@@ -27,4 +27,11 @@ typedef struct {
     char street_name[NAV_STREET_LEN];
     char eta[NAV_ETA_LEN];
     uint32_t sequence;
+
+    // --- Idle-screen fields (design reference/2. Idle Screen). Meaningful in every state, but
+    // only VIEW_IDLE renders them today. All three are BACKEND GAPS: nothing populates them yet,
+    // so they stay at their zero/unknown values outside firmware/sim_lvgl's fixture.
+    bool phone_connected;          // GAP: ble_link.c logs connect/disconnect but does not publish it
+    char clock[NAV_CLOCK_LEN];     // "HH:MM"; empty = unknown. GAP: no RTC on the C3, no phone time sync
+    uint32_t odometer_meters;      // GAP: no odometer data model or NVS persistence yet
 } terminal_view_state_t;

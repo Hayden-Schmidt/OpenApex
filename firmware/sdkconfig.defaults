@@ -2,6 +2,12 @@ CONFIG_IDF_TARGET="esp32c3"
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_FREERTOS_HZ=1000
 CONFIG_LVGL_ENABLE=y
+# Fonts the 240px screens actually use: 20 for the odometer bubble, 44 for the idle clock
+# (design reference/2. Idle Screen). Each built-in face costs flash, so enable a size only when a
+# page needs it. The 466px RICH tier wants larger still — that needs an lv_font_conv-generated
+# face, not another built-in, since LVGL's bundled Montserrat stops at 48.
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_44=y
 # Audio, microphone, and codec features are intentionally absent from Phase 1.
 
 # BLE: NimBLE host, peripheral role (terminal advertises and hosts the nav GATT service; the

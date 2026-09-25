@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 extern "C" {
 #include "lvgl.h"
@@ -17,6 +18,7 @@ extern "C" {
 }
 
 #include "gui_app.hpp"
+#include "shot.hpp"
 
 #include <SDL2/SDL.h>
 
@@ -25,6 +27,30 @@ namespace {
 // Scripted fixture: cycles through the view states, and through a spread of nav_icon_t maneuvers
 // while ACTIVE, so the render pipeline (including NavRenderer's maneuver-change tween) is visibly
 // exercised without needing live BLE/countdown input.
+// Idle-page fixture (--page idle): pins VIEW_IDLE and flips the phone link every 5s so the
+// connect/disconnect transition described in "design reference/2. Idle Screen/2. idle screen.md"
+// replays continuously for review. The clock ticks in real time from the host so the digits are
+// visibly live rather than a frozen string.
+terminal_view_state_t make_idle_fixture_frame(uint32_t elapsed_ms) {
+    terminal_view_state_t frame;
+    std::memset(&frame, 0, sizeof(frame));
+    frame.sequence = elapsed_ms;
+    frame.state = VIEW_IDLE;
+    frame.icon_type = NAV_ICON_UNKNOWN;
+    frame.speed_kmh_x10 = 0xFFFF;
+    frame.heading_deg = 0xFFFF;
+    frame.battery_percent = 87;
+    frame.odometer_meters = 3500000u; // 3,500 km, the value in the Figma reference
+    frame.phone_connected = ((elapsed_ms / 5000u) % 2u) == 1u;
+
+    const std::time_t now = std::time(nullptr);
+    const std::tm *lt = std::localtime(&now);
+    if (lt != nullptr) {
+        std::snprintf(frame.clock, sizeof(frame.clock), "%02d:%02d", lt->tm_hour, lt->tm_min);
+    }
+    return frame;
+}
+
 terminal_view_state_t make_fixture_frame(uint32_t elapsed_ms) {
     terminal_view_state_t frame;
     std::memset(&frame, 0, sizeof(frame));
@@ -75,6 +101,19 @@ terminal_view_state_t make_fixture_frame(uint32_t elapsed_ms) {
 
 } // namespace
 
+namespace {
+
+void print_usage(const char *exe) {
+    std::fprintf(stderr,
+                 "usage: %s [width [height]] [--page <name>] [--shot <ms> <file.png>]\n"
+                 "  width/height   panel resolution override (default: board_profile.h)\n"
+                 "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
+                 "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
+                 exe);
+}
+
+} // namespace
+
 int main(int argc, char *argv[]) {
     // Optional runtime override of the panel resolution, e.g. `program.exe 466` for the RICH/S3
     // tier's 466x466 without needing a separate PlatformIO env/rebuild. Defaults to this env's
@@ -83,12 +122,51 @@ int main(int argc, char *argv[]) {
     // here, so it works unmodified at whatever size the window is created at.
     int32_t disp_w = BOARD_DISP_WIDTH;
     int32_t disp_h = BOARD_DISP_HEIGHT;
-    if (argc >= 2) {
-        disp_w = disp_h = std::atoi(argv[1]);
+    // --shot turns the sim into a one-frame renderer for design review: run the normal loop until
+    // the fixture reaches `shot_at_ms`, dump the screen, exit. The output path is always
+    // overwritten, never suffixed, so repeated runs don't accumulate PNGs in the tree.
+    uint32_t shot_at_ms = 0;
+    const char *shot_path = nullptr;
+    bool idle_page = false;
+    int positional = 0;
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--page") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(argv[0]);
+                return 1;
+            }
+            ++i;
+            if (std::strcmp(argv[i], "idle") == 0) {
+                idle_page = true;
+            } else if (std::strcmp(argv[i], "all") != 0) {
+                std::fprintf(stderr, "sim_lvgl: unknown page '%s'\n", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
+        } else if (std::strcmp(argv[i], "--shot") == 0) {
+            if (i + 2 >= argc) {
+                print_usage(argv[0]);
+                return 1;
+            }
+            shot_at_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
+            shot_path = argv[i + 2];
+            i += 2;
+        } else if (argv[i][0] == '-') {
+            print_usage(argv[0]);
+            return 1;
+        } else if (positional == 0) {
+            disp_w = disp_h = std::atoi(argv[i]);
+            ++positional;
+        } else if (positional == 1) {
+            disp_h = std::atoi(argv[i]);
+            ++positional;
+        } else {
+            print_usage(argv[0]);
+            return 1;
+        }
     }
-    if (argc >= 3) {
-        disp_h = std::atoi(argv[2]);
-    }
+
     if (disp_w <= 0 || disp_h <= 0) {
         std::fprintf(stderr, "sim_lvgl: invalid resolution argument\n");
         return 1;
@@ -143,10 +221,20 @@ int main(int argc, char *argv[]) {
     const uint32_t start_ms = SDL_GetTicks();
     for (;;) {
         uint32_t elapsed = SDL_GetTicks() - start_ms;
-        terminal_view_state_t frame = make_fixture_frame(elapsed);
+        terminal_view_state_t frame =
+            idle_page ? make_idle_fixture_frame(elapsed) : make_fixture_frame(elapsed);
         gui_app_update(&frame);
 
         uint32_t idle_ms = lv_timer_handler();
+
+        if (shot_path != nullptr && elapsed >= shot_at_ms) {
+            // Force a synchronous redraw before snapshotting: lv_timer_handler() above may have
+            // returned with the invalidated areas still pending, which would capture a stale frame.
+            lv_refr_now(nullptr);
+            const bool ok = shot_write_active_screen(shot_path);
+            return ok ? 0 : 1;
+        }
+
         SDL_Delay(idle_ms < 5 ? 5 : idle_ms);
     }
 

@@ -117,6 +117,13 @@ def emit_profile_header(profile_name, profile, icons):
     lines.append("    ICON_COUNT,")
     lines.append("} icon_id_t;")
     lines.append("")
+    lines.append("// Everything below is `static const` definitions, so a translation unit that")
+    lines.append("// includes this header gets its own private copy of the whole A8 payload. Define")
+    lines.append("// ICON_DATA_IMPL in exactly ONE .cpp (firmware/gui/icons.cpp) to instantiate it;")
+    lines.append("// every other file includes firmware/gui/icons.hpp, which gives it the icon_id_t")
+    lines.append("// enum above plus icon_image(), and no duplicated pixels.")
+    lines.append("#ifdef ICON_DATA_IMPL")
+    lines.append("")
     lines.append("// name lookup, index-matched with icon_id_t -- for logging/debug only.")
     lines.append("static const char *const ICON_NAMES[ICON_COUNT] = {")
     for name in icons:
@@ -143,16 +150,20 @@ def emit_profile_header(profile_name, profile, icons):
         lines.append("};")
         lines.append("")
 
+    # Listed in icon_id_t order rather than with [ICON_X] = designators: array designated
+    # initializers are a C-only feature that GCC rejects in C++, and firmware/gui is C++.
     lines.append("static const lv_image_dsc_t ICON_DESC[ICON_COUNT] = {")
     for name, entry in icons.items():
         size_px = max(1, round(entry["size_240"] * scale))
         varname = f"icon_{name}_map"
         lines.append(
-            f"    [ICON_{name.upper()}] = {{ .header = {{ .magic = LV_IMAGE_HEADER_MAGIC, "
-            f".cf = LV_COLOR_FORMAT_A8, .w = {size_px}, .h = {size_px}, .stride = {size_px} }}, "
-            f".data_size = sizeof({varname}), .data = {varname} }},"
+            f"    {{ .header = {{ .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_A8, "
+            f".w = {size_px}, .h = {size_px}, .stride = {size_px} }}, "
+            f".data_size = sizeof({varname}), .data = {varname} }},  // ICON_{name.upper()}"
         )
     lines.append("};")
+    lines.append("")
+    lines.append("#endif // ICON_DATA_IMPL")
     lines.append("")
     lines.append(f"// Total icon payload for this profile: {total_bytes} bytes ({total_bytes / 1024:.1f} KiB).")
     lines.append("")

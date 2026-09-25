@@ -19,4 +19,12 @@ void gui_app_update(const terminal_view_state_t *state);
 
 #ifdef __cplusplus
 }
+
+class GuiTheme;
+
+// The active theme for this build (BasicTheme or RichTheme, selected by BOARD_GFX_TIER). Screens
+// call this for palette()/transition behaviour instead of hardcoding colours -- see §16.6: the
+// theme owns the *how*, the screen owns the *what*. Valid before gui_app_init(); the theme is a
+// stateless namespace-scope object.
+const GuiTheme &gui_theme(void);
 #endif

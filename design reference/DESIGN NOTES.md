@@ -53,7 +53,7 @@ Current compile-time config surface lives in `firmware/main/board_profile.h`:
 There is **no runtime config store yet** (no NVS schema, no phone→device config packet). Flagged
 for post-UI-sprint backend work.
 
-### Icon assets: SVG → device rasterization ✅ (pipeline only, no page consumes it yet)
+### Icon assets: SVG → device rasterization ✅
 
 Status/marker icons (battery, bluetooth, location pins, warning, etc. — **not** the turn-by-turn
 maneuver arrows, which stay procedural, see `firmware/gui/nav_renderer.cpp`) are authored as SVG in
@@ -66,8 +66,21 @@ needs a status icon:
 2. `python -m pip install -r tools/requirements-icons.txt` (first time only), then
    `python tools/build_icon_raster.py` — writes `firmware/gui/generated/icons_<profile>.h` for
    every board profile in `firmware/main/board_profile.h`, correctly scaled per screen.
-3. Reference `&ICON_DESC[ICON_<NAME>]` from the generated header as an `lv_image_dsc_t*` in the
-   page's GUI code.
+3. Include `firmware/gui/icons.hpp` and call `icon_image(ICON_<NAME>)` for the `lv_image_dsc_t*`.
+   Do **not** include the generated header directly: its payload is `static const`, so every
+   translation unit that includes it gets a private copy. `icons.cpp` is the one file that defines
+   `ICON_DATA_IMPL` and instantiates the pixels.
+
+The rasters are **A8 alpha masks**, not colour bitmaps — set the colour at draw time with
+`lv_obj_set_style_image_recolor()` + `..._recolor_opa(LV_OPA_COVER)`, taking the colour from
+`gui_theme().palette()` rather than a literal.
+
+Prefer a raster over reconstructing an icon from LVGL primitives. The battery indicator on the idle
+screen was originally specced as one outline plus a drawn level bar to save memory; measured, the
+full `battery_android_0..6` + `full` set is 4.6 kB of flash at 240px (0.1% of a 4 MB part) while
+the drawn bar needed four hand-measured interior coordinates that go stale the moment the icon is
+re-exported. At 240px the icon's interior is ~10px wide, so a "continuous" bar has no more visible
+steps than the eight rasters. Flash is cheap here; hand-measured geometry is not.
 
 ---
 
@@ -79,7 +92,7 @@ details one "page" and the elements on that page.
 | Page | File | Current status |
 |------|------|----------------|
 | 1. Startup / boot screen | `1. Startup Screen/bootscreen.md` | ⬜ (splash is a Layer-2 screen, not built) |
-| 2. Idle screen | `2. Idle Screen/2. idle screen.md` | ⬜ (`VIEW_IDLE` state exists, not rendered) |
+| 2. Idle screen | `2. Idle Screen/2. idle screen.md` | ✅ (rendered + connect animation; data is fixture-only) |
 | 3. Turn-by-turn | `3.Turn by Turn/turn by turn.md` | 🔶 (model + pipeline done, render stub) |
 | 4. Odometer page | `4. Odometer page/odometer page.md` | ⬜ (no odometer data in model yet) |
 
@@ -88,21 +101,28 @@ Update this doc and each page doc as you go to reflect current status and outsta
 
 ### GUI implementation reality check
 
-The entire GUI layer is currently a **stub** (`firmware/gui/gui_app.cpp`):
+The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` hierarchy from `docs/OpenApex_SPEC.md` §16.6
+**is built**. `firmware/gui/` now holds:
 
-```cpp
-// TODO (#3): replace with DialScreen once Screen/GuiTheme/BasicTheme exist (§16.6 Layer 1).
-lv_obj_t *s_screen = nullptr;
-```
+- `screen.hpp` — base class; each page owns its own top-level `lv_obj` so LVGL's screen-transition
+  API can move between page instances.
+- `theme.hpp` + `basic_theme.cpp` / `rich_theme.cpp` — palette and transition style, selected at
+  compile time by `BOARD_GFX_TIER`. The theme owns the *how*; the page owns the *what*. Reach it
+  from a page via `gui_theme()` in `gui_app.hpp`.
+- `gui_app.cpp` — routes `view_state_t` to a page and forwards every frame to it.
+- `idle_screen.cpp`, `dial_screen.cpp` — the two pages that exist.
+- `icons.hpp` / `icons.cpp` — accessors for the generated raster set.
 
-- `gui_app_init()` creates a single black `lv_obj` and loads it.
-- `gui_app_update()` is a no-op (`(void)state;`).
+**Writing a page:** build the whole widget tree in the constructor and only mutate it in
+`update()` — `update()` runs every frame and must not allocate. Size everything off
+`lv_display_get_horizontal_resolution(lv_display_get_default())`, never `BOARD_DISP_WIDTH`, so one
+binary renders correctly at any panel size; express geometry as reference-design pixels against the
+240px Figma frame and scale at runtime (see `IdleScreen::px()`). Take colours from
+`gui_theme().palette()`, never a literal.
 
-The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` / `DialScreen` class hierarchy described in
-`docs/OpenApex_SPEC.md` §16.6 has **not yet been written** — `firmware/gui/` contains only
-`gui_app.cpp`, `gui_app.hpp`, `CMakeLists.txt`, and `idf_component.yml`. The C/C++ seam
-(`gui_app_init` / `gui_app_update`) is in place and correct; the screen content behind it is the
-next work item.
+**Reviewing a page:** `firmware/sim_lvgl` runs the real `firmware/gui/` sources against a scripted
+fixture. `program.exe --page idle` replays one page's states; `--shot <ms> <file.png>` dumps a frame
+for diffing against the Figma SVG. See `docs/DEVELOPMENT_SETUP.md`.
 
 The data side *is* complete and host-tested:
 
@@ -123,9 +143,20 @@ and should be collated into a new doc in `docs/` once the UI sprint finishes. Cu
 backend gaps:
 
 1. **Rerouting** maneuver (no `nav_icon_t` value, not surfaced by any maps app adapter yet).
-2. **Odometer** data model + NVS persistence (no field in `terminal_view_state_t`).
-3. **Runtime config store** (theme colour, unit, 24h/12h, element visibility) — no schema.
+2. **Odometer** data model + NVS persistence. `terminal_view_state_t.odometer_meters` exists and the
+   idle screen renders it, but nothing writes it.
+3. **Runtime config store** (theme colour, unit, 24h/12h, element visibility) — no schema. The idle
+   screen hardcodes km as a result.
 4. **Compass smoothing** for phone-GNSS-derived heading (data exists, smoothing does not).
-5. **Time/RTC** for the odometer page (S3 has PCF85063 RTC in `board_profile.h`; C3 has none).
+5. **Time/RTC**. `terminal_view_state_t.clock` exists and the idle screen renders it (falling back
+   to `--:--`), but no source populates it. S3 has a PCF85063 RTC in `board_profile.h`; the C3 has
+   none and needs phone-side time sync.
+6. **BLE link state**. `terminal_view_state_t.phone_connected` drives the idle screen's whole
+   connect animation, but `firmware/main/ble_link.c` only logs connect/disconnect — it must publish
+   into `shared_view`.
+
+Also outstanding, GUI-side rather than backend: the RICH/466px tier's clock renders undersized.
+LVGL's bundled Montserrat stops at 48px and that layout wants ~85px, so it needs a face generated
+with `lv_font_conv`.
 
 Stage commits as you go.

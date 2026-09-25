@@ -211,8 +211,11 @@
  */
 #define LV_USE_VECTOR_GRAPHIC 0
 
-/** Render a widget and its children into an image buffer with lv_snapshot_take(). */
-#define LV_USE_SNAPSHOT 0
+/** Render a widget and its children into an image buffer with lv_snapshot_take().
+ *  Simulator-only: enabled so `program.exe --shot` can dump the rendered screen to PNG for
+ *  design review (src/shot.cpp). The on-device lv_conf (firmware/sdkconfig.defaults) leaves this
+ *  off -- nothing in firmware/gui/ may depend on it. */
+#define LV_USE_SNAPSHOT 1
 
 /** Backend that gives the SW renderer vector graphics support. */
 #define LV_USE_THORVG 0
@@ -1019,7 +1022,7 @@
 #define LV_FONT_MONTSERRAT_18 0
 
 /** Montserrat 20 */
-#define LV_FONT_MONTSERRAT_20 0
+#define LV_FONT_MONTSERRAT_20 1
 
 /** Montserrat 22 */
 #define LV_FONT_MONTSERRAT_22 0
@@ -1055,13 +1058,13 @@
 #define LV_FONT_MONTSERRAT_42 0
 
 /** Montserrat 44 */
-#define LV_FONT_MONTSERRAT_44 0
+#define LV_FONT_MONTSERRAT_44 1
 
 /** Montserrat 46 */
 #define LV_FONT_MONTSERRAT_46 0
 
 /** Montserrat 48 */
-#define LV_FONT_MONTSERRAT_48 0
+#define LV_FONT_MONTSERRAT_48 1
 
 /** Montserrat 28 (compressed) */
 #define LV_FONT_MONTSERRAT_28_COMPRESSED 0

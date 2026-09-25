@@ -43,11 +43,11 @@
     },
     "bluetooth_connected": {
       "svg": "design reference/nav_icons_svg/bluetooth_connected_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
-      "size_240": 20
+      "size_240": 24
     },
     "bluetooth_disabled": {
       "svg": "design reference/nav_icons_svg/bluetooth_disabled_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
-      "size_240": 20
+      "size_240": 24
     },
     "check_circle": {
       "svg": "design reference/nav_icons_svg/check_circle.svg",

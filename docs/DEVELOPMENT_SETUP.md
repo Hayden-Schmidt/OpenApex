@@ -134,6 +134,44 @@ The native target prints a deterministic countdown trace; the browser target sup
 feedback. PlatformIO's CLI may be exposed only inside the VS Code PlatformIO terminal, even when
 `pio` is not available in an ordinary PowerShell session.
 
+### LVGL SDL simulator (`firmware/sim_lvgl`)
+
+Runs the real `firmware/gui/` C++ screens against a scripted `terminal_view_state_t` fixture, so a
+page can be developed and reviewed without hardware:
+
+```powershell
+pio run -d firmware/sim_lvgl -e sim_lvgl          # BASIC tier, 240x240
+pio run -d firmware/sim_lvgl -e sim_lvgl_s3       # RICH tier, 466x466
+firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe          # live window
+firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe 466      # resolution override, same binary
+```
+
+`--page <name>` selects the fixture: `all` (default) cycles every `view_state_t`, `idle` pins
+`VIEW_IDLE` and flips the phone link every 5s to replay the idle screen's connect transition.
+
+Add `--shot <ms> <file.png>` to render until the fixture reaches `<ms>` and dump that frame to PNG
+instead of opening an interactive session — the way to capture a page for design review or to diff
+it against its `design reference/` Figma SVG:
+
+```powershell
+program.exe --shot 4500 out.png
+```
+
+The output path is **always overwritten**, never suffixed, so repeated runs don't accumulate images.
+Write shots to a scratch directory, not into the repo. This path needs `LV_USE_SNAPSHOT 1`, which is
+set in `firmware/sim_lvgl/include/lv_conf.h` only — the on-device build leaves it off, so nothing in
+`firmware/gui/` may depend on it.
+
+**Both sim environments share one set of `firmware/gui` object files.** `build_src_filter` reaches
+outside the project dir (`+<../../gui/*.cpp>`), so PlatformIO emits those objects to
+`.pio/build/gui/` — beside the per-env dirs, not inside them — while compiling them with different
+`-DBOARD_PROFILE_*`. Left alone, whichever env built last wins and the other silently links a binary
+built for the wrong panel: wrong icon raster sizes and the wrong `GuiTheme`, with a successful build
+and a window that just renders the artwork at the wrong scale. `guard_shared_objs.py` (a `pre:`
+script in both envs) stamps that directory with its board profile and discards it on a mismatch, so
+switching envs forces a rebuild. If you see `guard_shared_objs: ... discarding them`, that is it
+working. Don't add a third env without the same guard.
+
 ## Verified working (2026-09-21)
 
 - `pio run -e native` (root project): builds and runs the native simulator via g++/MinGW.
