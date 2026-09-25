@@ -51,7 +51,9 @@ void display_driver_init(void) {
         .mode = GPIO_MODE_OUTPUT,
     };
     ESP_ERROR_CHECK(gpio_config(&bl_cfg));
-    gpio_set_level(BOARD_DISP_PIN_BL, 1);
+    // Stays off until display_driver_backlight_on(). The panel's GRAM is uninitialized SRAM at
+    // power-on, so anything lit before the first flush is noise.
+    gpio_set_level(BOARD_DISP_PIN_BL, 0);
 
     const spi_bus_config_t bus_cfg = {
         .sclk_io_num = BOARD_DISP_PIN_SCLK,
@@ -102,5 +104,7 @@ void display_driver_init(void) {
     lv_display_set_flush_cb(disp, flush_cb);
     lv_display_set_default(disp);
 
-    ESP_LOGI(TAG, "GC9A01 %dx%d initialized", BOARD_DISP_WIDTH, BOARD_DISP_HEIGHT);
+    ESP_LOGI(TAG, "GC9A01 %dx%d initialized (backlight off)", BOARD_DISP_WIDTH, BOARD_DISP_HEIGHT);
 }
+
+void display_driver_backlight_on(void) { gpio_set_level(BOARD_DISP_PIN_BL, 1); }

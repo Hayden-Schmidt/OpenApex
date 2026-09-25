@@ -152,14 +152,23 @@ def emit_profile_header(profile_name, profile, icons):
 
     # Listed in icon_id_t order rather than with [ICON_X] = designators: array designated
     # initializers are a C-only feature that GCC rejects in C++, and firmware/gui is C++.
+    #
+    # Every member is named, including the reserved ones, because the ESP-IDF build compiles
+    # firmware/gui with -Werror=missing-field-initializers (the PlatformIO sim does not, so an
+    # omission here builds clean in the simulator and only breaks the device build).
+    #
+    # Member designators must appear in declaration order in C++, and lv_image_header_t declares
+    # its bitfields in reverse under LV_BIG_ENDIAN_SYSTEM -- so the order below is little-endian
+    # only. Both the C3 and the S3 are little-endian; a big-endian target would need this flipped.
     lines.append("static const lv_image_dsc_t ICON_DESC[ICON_COUNT] = {")
     for name, entry in icons.items():
         size_px = max(1, round(entry["size_240"] * scale))
         varname = f"icon_{name}_map"
         lines.append(
             f"    {{ .header = {{ .magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_A8, "
-            f".w = {size_px}, .h = {size_px}, .stride = {size_px} }}, "
-            f".data_size = sizeof({varname}), .data = {varname} }},  // ICON_{name.upper()}"
+            f".flags = 0, .w = {size_px}, .h = {size_px}, .stride = {size_px}, .reserved_2 = 0 }}, "
+            f".data_size = sizeof({varname}), .data = {varname}, "
+            f".reserved = NULL, .reserved_2 = NULL }},  // ICON_{name.upper()}"
         )
     lines.append("};")
     lines.append("")

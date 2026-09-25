@@ -101,6 +101,15 @@ static void gui_task(void *argument) {
     lv_tick_set_cb(platform_now_ms);
     display_driver_init();
     gui_app_init();
+
+    // Paint the boot screen fully, *then* light the panel. lv_refr_now blocks until every pending
+    // partial-flush area has been transferred (flush_cb is DMA-async), so the first thing the rider
+    // sees is the complete logo rather than the panel's uninitialized GRAM. gui_app_init() has
+    // already loaded SplashScreen, so no frame data is needed to draw it -- which is why this can
+    // happen before the first snapshot below.
+    lv_refr_now(NULL);
+    display_driver_backlight_on();
+
     for (;;) {
         terminal_view_state_t frame;
         view_state_snapshot(&frame);
@@ -124,6 +133,16 @@ void app_main(void) {
     drive_log_init();
     drive_log_boot("PROTOTYPE_C3_GC9A01");
 
+    // Started before ble_link_init, not after. gui_task depends on nothing but LVGL and the panel,
+    // while ble_link_init brings up NVS and the whole NimBLE host -- hundreds of milliseconds during
+    // which the screen would otherwise sit dark. The boot screen's 2s minimum hold (gui_app.cpp) is
+    // measured from here, so that startup work now happens *behind* the logo instead of before it.
+    // 4096 was enough while the distance label only ever rendered "" (distance was always unknown
+    // pre-fix, see pipeline.c), so LVGL's font/glyph rendering path was never exercised on real
+    // hardware and its stack use went unnoticed until the first live packet with a known distance
+    // caused a stack protection fault here.
+    xTaskCreate(gui_task, "gui_task", 8192, NULL, 5, NULL);
+
     // ble_link_init spawns NimBLE's own host task (single-producer into raw_packet_queue); there
     // is no separate ble_handler_task to create. It also brings up NVS (for BLE bonding), which
     // heading_store_load() below depends on -- load the cached heading/mount-offset only after this,
@@ -132,9 +151,4 @@ void app_main(void) {
     ble_link_init(raw_packet_queue);
     heading_store_load();
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);
-    // 4096 was enough while the distance label only ever rendered "" (distance was always unknown
-    // pre-fix, see pipeline.c), so LVGL's font/glyph rendering path was never exercised on real
-    // hardware and its stack use went unnoticed until the first live packet with a known distance
-    // caused a stack protection fault here.
-    xTaskCreate(gui_task, "gui_task", 8192, NULL, 5, NULL);
 }

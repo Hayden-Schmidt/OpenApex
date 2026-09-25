@@ -43,7 +43,7 @@ Current compile-time config surface lives in `firmware/main/board_profile.h`:
 | Flag | C3 `PROTOTYPE_C3_GC9A01` | S3 `S3_AMOLED_175` |
 |------|--------------------------|--------------------|
 | `BOARD_GFX_TIER` | `BASIC` | `RICH` |
-| `BOARD_HAS_SPLASH` | 0 | 1 |
+| `BOARD_HAS_SPLASH` | 1 | 1 |
 | `BOARD_HAS_MAP_RENDER` | 0 | 0 (flips when §5.4 polyline stream lands) |
 | `BOARD_HAS_TOUCH` | 0 | 1 |
 | `BOARD_HAS_GNSS` | 0 | 0 (GPS variant not modeled yet) |
@@ -91,7 +91,7 @@ details one "page" and the elements on that page.
 
 | Page | File | Current status |
 |------|------|----------------|
-| 1. Startup / boot screen | `1. Startup Screen/bootscreen.md` | ⬜ (splash is a Layer-2 screen, not built) |
+| 1. Startup / boot screen | `1. Startup Screen/bootscreen.md` | ✅ (rendered; logo asset is a placeholder) |
 | 2. Idle screen | `2. Idle Screen/2. idle screen.md` | ✅ (rendered + connect animation; data is fixture-only) |
 | 3. Turn-by-turn | `3.Turn by Turn/turn by turn.md` | 🔶 (model + pipeline done, render stub) |
 | 4. Odometer page | `4. Odometer page/odometer page.md` | ⬜ (no odometer data in model yet) |
@@ -110,7 +110,7 @@ The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` hierarchy from `docs/Open
   compile time by `BOARD_GFX_TIER`. The theme owns the *how*; the page owns the *what*. Reach it
   from a page via `gui_theme()` in `gui_app.hpp`.
 - `gui_app.cpp` — routes `view_state_t` to a page and forwards every frame to it.
-- `idle_screen.cpp`, `dial_screen.cpp` — the two pages that exist.
+- `splash_screen.cpp`, `idle_screen.cpp`, `dial_screen.cpp` — the pages that exist.
 - `icons.hpp` / `icons.cpp` — accessors for the generated raster set.
 
 **Writing a page:** build the whole widget tree in the constructor and only mutate it in
@@ -119,6 +119,13 @@ The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` hierarchy from `docs/Open
 binary renders correctly at any panel size; express geometry as reference-design pixels against the
 240px Figma frame and scale at runtime (see `IdleScreen::px()`). Take colours from
 `gui_theme().palette()`, never a literal.
+
+**Boot order matters as much as the boot page.** Two defects found while building the splash, now
+fixed and worth not reintroducing: `display_driver_init()` must leave the backlight OFF (the panel's
+GRAM is uninitialised at power-on, so lighting it before the first flush shows noise) — `gui_task`
+raises it via `display_driver_backlight_on()` after `lv_refr_now()`. And `gui_task` is created
+*first* in `app_main()`, before `ble_link_init()`, so NVS/NimBLE startup happens behind the logo
+instead of in front of a dark screen.
 
 **Reviewing a page:** `firmware/sim_lvgl` runs the real `firmware/gui/` sources against a scripted
 fixture. `program.exe --page idle` replays one page's states; `--shot <ms> <file.png>` dumps a frame
@@ -155,7 +162,9 @@ backend gaps:
    connect animation, but `firmware/main/ble_link.c` only logs connect/disconnect — it must publish
    into `shared_view`.
 
-Also outstanding, GUI-side rather than backend: the RICH/466px tier's clock renders undersized.
+Also outstanding, GUI-side rather than backend: the boot screen's logo is still the
+`cat-svgrepo-com.svg` placeholder (swap is a `design/icons/icons_manifest.json` edit plus a
+generator re-run — see the page doc), and the RICH/466px tier's clock renders undersized.
 LVGL's bundled Montserrat stops at 48px and that layout wants ~85px, so it needs a face generated
 with `lv_font_conv`.
 

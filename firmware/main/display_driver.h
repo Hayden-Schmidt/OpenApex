@@ -9,8 +9,15 @@ extern "C" {
 // may be referenced from firmware/gui, which only ever touches the LVGL display API generically
 // (lv_display_get_default()).
 //
-// Must be called once, after lv_init() and before gui_app_init().
+// Must be called once, after lv_init() and before gui_app_init(). Leaves the backlight OFF -- see
+// display_driver_backlight_on().
 void display_driver_init(void);
+
+// Turns the backlight on. Deliberately separate from display_driver_init(): the GC9A01 powers up
+// with uninitialized GRAM, so lighting the panel before the first frame has been flushed shows the
+// rider a burst of noise ahead of the boot logo. Call this once, immediately after the first
+// lv_timer_handler() has drawn a frame.
+void display_driver_backlight_on(void);
 
 #ifdef __cplusplus
 }

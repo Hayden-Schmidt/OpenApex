@@ -17,7 +17,10 @@ firmware/managed_components/
 .pio/
 firmware/.pio/
 sdkconfig.prototype_c3
-CMakeLists.txt
+# Anchored: an unanchored "CMakeLists.txt" matches at EVERY level, which silently swallowed
+# firmware/gui/CMakeLists.txt (the gui component's source list -- without it a fresh clone cannot
+# build the firmware at all). Only the PlatformIO-generated root one should be ignored.
+/CMakeLists.txt
 simulator/native/CMakeLists.txt
 
 # Host test output

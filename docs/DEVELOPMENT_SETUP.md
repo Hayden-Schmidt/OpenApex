@@ -149,6 +149,10 @@ firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe 466      # resolution override
 `--page <name>` selects the fixture: `all` (default) cycles every `view_state_t`, `idle` pins
 `VIEW_IDLE` and flips the phone link every 5s to replay the idle screen's connect transition.
 
+Every run opens on the boot screen for 2s before the fixture is honoured (`BOARD_HAS_SPLASH`,
+`gui_app.cpp`) — restart the window to replay it, and add 2000ms to any `--shot` time meant to land
+on a page rather than the splash.
+
 Add `--shot <ms> <file.png>` to render until the fixture reaches `<ms>` and dump that frame to PNG
 instead of opening an interactive session — the way to capture a page for design review or to diff
 it against its `design reference/` Figma SVG:

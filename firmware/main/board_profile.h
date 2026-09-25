@@ -33,9 +33,12 @@
 #define BOARD_HAS_GNSS 0           // no onboard GNSS in Phase 1
 #define BOARD_HAS_IMU 0
 
-// GUI: leanest target -- flat/instant dial only, no splash, no map-following.
+// GUI: leanest target -- flat/instant dial, no map-following. The splash is NOT a richness feature
+// and is on here too: the panel shows uninitialized GRAM until the MCU writes to it, so the boot
+// logo is the only thing standing between power-on and a visible glitch (see
+// "design reference/1. Startup Screen/bootscreen.md").
 #define BOARD_GFX_TIER BOARD_GFX_TIER_BASIC
-#define BOARD_HAS_SPLASH 0
+#define BOARD_HAS_SPLASH 1
 #define BOARD_HAS_MAP_RENDER 0
 
 // Display: GC9A01 over SPI.
