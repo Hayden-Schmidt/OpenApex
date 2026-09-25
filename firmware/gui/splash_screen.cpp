@@ -13,7 +13,7 @@ namespace {
 // The SVG fills the logo #D0D000, which is a Figma placeholder that contradicts the "default theme
 // colour is not yellow" rule in DESIGN NOTES.md. The raster is an A8 mask, so the colour comes from
 // the theme instead and the boot screen tracks the brand colour for free.
-constexpr uint32_t kFadeInMs = 400;
+constexpr uint32_t kFadeMs = 400;
 
 } // namespace
 
@@ -33,15 +33,33 @@ SplashScreen::SplashScreen() {
     // Same on both tiers -- the RICH tier's richer logo animation is deferred until there is a real
     // logo to animate.
     lv_obj_set_style_opa(logo_, LV_OPA_TRANSP, 0);
-    lv_anim_t fade;
-    lv_anim_init(&fade);
-    lv_anim_set_var(&fade, logo_);
-    lv_anim_set_values(&fade, LV_OPA_TRANSP, LV_OPA_COVER);
-    lv_anim_set_duration(&fade, kFadeInMs);
-    lv_anim_set_exec_cb(&fade, [](void *var, int32_t v) {
+    fade(LV_OPA_COVER, nullptr);
+}
+
+void SplashScreen::fade(lv_opa_t to, lv_anim_completed_cb_t completed) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, logo_);
+    lv_anim_set_values(&a, lv_obj_get_style_opa(logo_, LV_PART_MAIN), to);
+    lv_anim_set_duration(&a, kFadeMs);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_exec_cb(&a, [](void *var, int32_t v) {
         lv_obj_set_style_opa(static_cast<lv_obj_t *>(var), static_cast<lv_opa_t>(v), 0);
     });
-    lv_anim_start(&fade);
+    lv_anim_set_user_data(&a, this);
+    lv_anim_set_completed_cb(&a, completed);
+    lv_anim_start(&a);
+}
+
+// "Screen Transitions.md": the splash leaves by fading out on the same curve it faded in on -- no
+// scaling or sliding.
+void SplashScreen::leave(LeaveDone done, void *ctx) {
+    done_ = done;
+    done_ctx_ = ctx;
+    fade(LV_OPA_TRANSP, [](lv_anim_t *a) {
+        auto *self = static_cast<SplashScreen *>(lv_anim_get_user_data(a));
+        self->done_(self->done_ctx_);
+    });
 }
 
 // Nothing on this page is state-driven: it shows the same thing regardless of link, navigation or

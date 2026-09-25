@@ -187,6 +187,9 @@ Requirements:
 - Mark the estimate stale when BLE, notification, or GNSS freshness expires.
 - Never use a missing speed as zero motion without exposing the stale/unknown state.
 - Do not claim this is dead reckoning or route navigation; it is display interpolation only.
+- Interpolation is optional and **off by default** (`COUNTDOWN_INTERPOLATE_DEFAULT` in
+  `countdown.h`, runtime `countdown_set_interpolation()`). When off, the displayed distance is the
+  latest notification distance, still marked stale on expiry.
 
 The phone remains authoritative for the next maneuver and notification distance. The C3 only makes
 the visible countdown smoother between authoritative updates.
@@ -257,7 +260,8 @@ Target listing: AliExpress item `1005006194839720`.
 
 - ESP32-C3, single-core RISC-V target. Seller descriptions calling it dual-core are incorrect.
 - 1.28-inch round 240x240 GC9A01 IPS LCD.
-- Touch and non-touch product variants.
+- Touch and non-touch product variants. The delivered board is the touch variant (CST816 at I2C
+  0x15, confirmed working; `firmware/main/touch_driver.c`).
 - No onboard GNSS or IMU assumed.
 - Phone GNSS passthrough is therefore the only Phase 1 telemetry source.
 
@@ -527,7 +531,8 @@ remain smartphone-side features.
 
 ## 13. Open Decisions
 
-1. Confirm the exact C3 board revision and delivered touch/non-touch pinout.
+1. ~~Confirm the exact C3 board revision and delivered touch/non-touch pinout.~~ **RESOLVED**
+   (2026-09-26): touch variant; CST816 at 0x15 on SDA GPIO4 / SCL GPIO5 responds, `BOARD_HAS_TOUCH 1`.
 2. Confirm Android notification formats and localization behavior for Google Maps, Apple Maps, and
    Waze test fixtures.
 3. Confirm the iOS ANCS subscription and notification-attribute flow on the intended iPhone.
@@ -1052,3 +1057,37 @@ the route is currently animated (`tick()` slides `base_dist`, rotates the camera
 per frame), and a baked mask cannot do that without baking frames or giving up the tween.
 
 Accepted as-is: a sub-pixel defect on the oblique joins of roundabouts only.
+
+## 19. 2026-09-26 on-device session: transitions, touch, text normalisation
+
+**Screen transitions** ("design reference/Screen Transitions.md") are implemented. Boot always
+passes splash -> idle -> nav, even when navigation is already running, with idle's 2 s hold floor.
+Nav entry is staged: the arrow lands fully, then the text slides up from the bottom, then the ring
+zooms in. The dial root is not scrollable (a scrollbar showed while the arrow was off-screen). The
+idle odometer bubble enters ease-out-expo and leaves ease-in-expo, 470 ms each way.
+
+**Boot flash.** The backlight GPIO is driven low first thing in `app_main` and the panel stays
+display-off until the first frame is ready, so stale panel RAM no longer flashes before the logo.
+If it ever reappears, a hardware pull-down on GPIO3 is the remaining fix.
+
+**Touch.** A 2 s press-and-hold anywhere on the nav page swaps the outer ring between compass and
+trip progress: the current ring plays its entry in reverse, then the other enters; the ETA label
+slides off/on from the bottom with the trip arc. Root children are non-clickable so the hold reaches
+the root. This is a test control, not final UX.
+
+**Nav gating.** Only packets carrying navigation content (title, distance, progress or icon) enter
+the countdown; telemetry-only packets (time, battery, GNSS) keep the terminal on idle.
+
+**Text normalisation.** Street extraction no longer eats the first letter after " on " ("alliser
+Lane"). Street suffixes and compass words are abbreviated as whole words (Street->St, Lane->Ln,
+North->N, ...), never the first word. ETA drops "arrive"/"arrival at" and is prefixed "ETA".
+
+**Trip arc.** Outer radius 116 (was 117), stroke 7 (was 5), gap widened to 116..424 deg.
+
+**BLE stall.** `RelayBleClient.writeInFlight` was left set when the link dropped mid-write, so every
+later write was skipped. It is now cleared on disconnect and on service discovery.
+
+**Revisit later: stationary U-turn flicker.** When stopped, Maps alternates "Make a U-turn" and
+"Head west" notifications, so the arrow repeatedly animates a U-turn and back. A 3-packet hold was
+rejected (packets arrive about 1 Hz, so every turn would lag). Candidate fix: debounce maneuver
+changes only below walking speed.

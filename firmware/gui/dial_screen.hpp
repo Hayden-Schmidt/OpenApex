@@ -13,6 +13,7 @@ class DialScreen : public Screen {
 public:
     DialScreen();
     void update(const terminal_view_state_t &state) override;
+    void enter() override;
 
     // Swaps the outer element. Safe to call at any time; takes effect on the next frame.
     void set_outer(gui_dial_outer_t outer);
@@ -31,6 +32,19 @@ private:
     int32_t status_box_size_; // runtime display resolution, not BOARD_DISP_WIDTH -- see .cpp
     nav_icon_t last_icon_ = static_cast<nav_icon_t>(-1); // forces add_maneuver on first update()
     uint16_t last_heading_deg_ = 0xFFFFu;
+
+    // Page entry state (see enter()).
+    bool arrow_entry_pending_ = false;  // next drawable maneuver runs on via enter_maneuver()
+    int32_t ring_in_ = 1000;            // 0..1000, oversized .. at rest
+    float ring_scale() const;
+    static void set_ring_in(void *var, int32_t value);
+    // Test control: a 2 s press-and-hold swaps the compass ring for the Maps trip arc and back.
+    static void on_long_press(lv_event_t *e);
+    static void set_swap_in(void *var, int32_t value);  // ring zoom + ETA slide, for the swap
+    bool outer_swapping_ = false;       // outgoing ring is zooming out; ignore further holds
+    static void set_text_in(void *var, int32_t value);
+    static void set_page_opa(void *var, int32_t value);
+    void tween(lv_anim_exec_xcb_t exec, uint32_t delay_ms, uint32_t ms, lv_anim_path_cb_t path);
 
     // Sized for the ARRIVED badge's ring, which is the longer of the two glyphs: one point every
     // kStatusRingStepDeg from 0 to 360 inclusive. The UNKNOWN glyph needs only 4.

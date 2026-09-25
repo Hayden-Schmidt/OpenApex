@@ -156,9 +156,11 @@ namespace {
 
 void print_usage(const char *exe) {
     std::fprintf(stderr,
-                 "usage: %s [width [height]] [--page <name>] [--shot <ms> <file.png>]\n"
+                 "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
+                 " [--shot <ms> <file.png>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
+                 "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
                  exe);
 }
@@ -181,6 +183,7 @@ int main(int argc, char *argv[]) {
     bool idle_page = false;
     bool odometer_page = false;
     bool trip_page = false;
+    bool fade_nav_entry = false;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -198,6 +201,19 @@ int main(int argc, char *argv[]) {
                 trip_page = true;
             } else if (std::strcmp(argv[i], "all") != 0) {
                 std::fprintf(stderr, "sim_lvgl: unknown page '%s'\n", argv[i]);
+                print_usage(argv[0]);
+                return 1;
+            }
+        } else if (std::strcmp(argv[i], "--nav-entry") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(argv[0]);
+                return 1;
+            }
+            ++i;
+            if (std::strcmp(argv[i], "fade") == 0) {
+                fade_nav_entry = true;
+            } else if (std::strcmp(argv[i], "elements") != 0) {
+                std::fprintf(stderr, "sim_lvgl: unknown nav entry '%s'\n", argv[i]);
                 print_usage(argv[0]);
                 return 1;
             }
@@ -271,6 +287,7 @@ int main(int argc, char *argv[]) {
     // the page-override seam, not by feeding a different state.
     if (odometer_page) gui_app_set_page_override(GUI_PAGE_ODOMETER);
     if (trip_page) gui_app_set_dial_outer(GUI_DIAL_OUTER_TRIP_ARC);
+    if (fade_nav_entry) gui_app_set_nav_entry(GUI_NAV_ENTRY_FADE);
 
     std::printf("sim_lvgl: window open at %dx%d\n", disp_w, disp_h);
 

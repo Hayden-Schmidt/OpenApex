@@ -119,7 +119,17 @@ void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_v
     input.speed_kmh = (model.speed_kmh_x10 != NAV_U16_UNKNOWN) ? (float)model.speed_kmh_x10 / 10.0f : 0.0f;
     input.speed_valid = model.speed_kmh_x10 != NAV_U16_UNKNOWN;
     input.maneuver_sequence = maneuver_identity(&model);
-    countdown_accept(&input);
+    // The phone keeps sending telemetry-only packets (no title, distance, progress or glyph) while
+    // Maps is not routing. Those must not seed a countdown baseline -- one would route every later
+    // packet to VIEW_ACTIVE and pull the nav page up with no route -- and a route that ended must
+    // not leave its anchor behind for the next one.
+    const bool has_nav = raw->title_str[0] != '\0' || distance_valid || raw->progress >= 0 ||
+                         raw->icon_rotation_deg != RAW_I16_UNKNOWN;
+    if (has_nav) {
+        countdown_accept(&input);
+    } else {
+        countdown_reset();
+    }
 
     heading_input_t heading_input;
     build_heading_input(raw, now_ms, &heading_input);

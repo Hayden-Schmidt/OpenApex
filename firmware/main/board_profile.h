@@ -29,7 +29,7 @@
 // touch INT=0. Reset is typically left unconnected (software reset); backlight is GPIO3.
 // STILL VERIFY on the delivered board before flashing — cheap AliExpress variants drift.
 
-#define BOARD_HAS_TOUCH 0          // set 1 for the CST816 touch variant once confirmed
+#define BOARD_HAS_TOUCH 1          // CST816 touch variant, confirmed on the delivered board
 #define BOARD_HAS_GNSS 0           // no onboard GNSS in Phase 1
 #define BOARD_HAS_IMU 0
 

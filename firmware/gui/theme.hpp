@@ -19,6 +19,7 @@ public:
     // tier or a future runtime config can move it.
     virtual lv_color_t arrived_surface() const = 0;
 
-    // Switches the active screen from `prev` (nullptr on first load) to `next`.
+    // Switches the active screen from `prev` (nullptr on first load) to `next` and starts its
+    // entry. `prev` has already played its leave() by the time this runs.
     virtual void apply_state_change(Screen *prev, Screen *next) = 0;
 };

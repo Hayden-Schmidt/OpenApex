@@ -21,9 +21,9 @@ void gui_app_update(const terminal_view_state_t *state);
 // (design reference/4. Odometer page) is not a view_state_t -- no packet or countdown result can
 // ever produce it, it is chosen. GUI_PAGE_AUTO hands routing back to view_state_t.
 //
-// BACKEND GAP: nothing on the device calls this yet. The C3 profile has no buttons modelled and
-// BOARD_HAS_TOUCH is 0, so there is no input source to drive page switching; firmware/sim_lvgl's
-// --page flag is the only caller today. This is the seam that input lands on when it exists.
+// BACKEND GAP: nothing on the device calls this yet. Touch is live on the C3 (touch_driver.c), but
+// its only gesture so far is the nav page's hold-to-swap ring; firmware/sim_lvgl's --page flag is
+// the only caller today. This is the seam that page-switching input lands on.
 typedef enum {
     GUI_PAGE_AUTO = 0,
     GUI_PAGE_ODOMETER,
@@ -44,6 +44,19 @@ typedef enum {
 } gui_dial_outer_t;
 
 void gui_app_set_dial_outer(gui_dial_outer_t outer);
+
+// How the turn-by-turn page comes on screen ("design reference/Screen Transitions.md"): each
+// element animating in on its own (arrow, text, ring), or the whole page fading in. Both exist so
+// they can be compared on the panel; the loser goes once one is picked.
+//
+// BACKEND GAP: as above -- only firmware/sim_lvgl's --nav-entry flag sets this today.
+typedef enum {
+    GUI_NAV_ENTRY_ELEMENTS = 0,
+    GUI_NAV_ENTRY_FADE,
+} gui_nav_entry_t;
+
+void gui_app_set_nav_entry(gui_nav_entry_t entry);
+gui_nav_entry_t gui_app_nav_entry(void);
 
 #ifdef __cplusplus
 }

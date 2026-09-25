@@ -45,7 +45,7 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
     esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
 }
 
-void display_driver_init(void) {
+void display_driver_hold_dark(void) {
     const gpio_config_t bl_cfg = {
         .pin_bit_mask = 1ULL << BOARD_DISP_PIN_BL,
         .mode = GPIO_MODE_OUTPUT,
@@ -54,6 +54,10 @@ void display_driver_init(void) {
     // Stays off until display_driver_backlight_on(). The panel's GRAM is uninitialized SRAM at
     // power-on, so anything lit before the first flush is noise.
     gpio_set_level(BOARD_DISP_PIN_BL, 0);
+}
+
+void display_driver_init(void) {
+    display_driver_hold_dark();
 
     const spi_bus_config_t bus_cfg = {
         .sclk_io_num = BOARD_DISP_PIN_SCLK,
@@ -93,7 +97,10 @@ void display_driver_init(void) {
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    // Output stays off too, not just the backlight: after a soft reset (flash, watchdog) the panel
+    // kept power and its GRAM still holds the last session's frame, which would show the moment
+    // the backlight came on. display_driver_backlight_on() turns both on once the logo is flushed.
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, false));
 
     const size_t buf_px = (size_t)BOARD_DISP_WIDTH * kBufLines;
     void *buf1 = heap_caps_malloc(buf_px * sizeof(uint16_t), MALLOC_CAP_DMA);
@@ -107,4 +114,7 @@ void display_driver_init(void) {
     ESP_LOGI(TAG, "GC9A01 %dx%d initialized (backlight off)", BOARD_DISP_WIDTH, BOARD_DISP_HEIGHT);
 }
 
-void display_driver_backlight_on(void) { gpio_set_level(BOARD_DISP_PIN_BL, 1); }
+void display_driver_backlight_on(void) {
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    gpio_set_level(BOARD_DISP_PIN_BL, 1);
+}

@@ -1,8 +1,10 @@
 #include "normalize.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 // Lowercase copy of a bounded C string, ASCII only.
 static void to_lower(const char *src, char *dst, size_t len) {
@@ -212,18 +214,109 @@ static bool is_roundabout(nav_icon_t icon) {
            icon == NAV_ICON_ROUNDABOUT_STRAIGHT;
 }
 
+// Street-type words shortened for the round panel, which has room for about a dozen characters of
+// street name. Abbreviations follow the common road-sign forms.
+static const struct {
+    const char *word;
+    const char *abbrev;
+} kStreetAbbrevs[] = {
+    {"street", "St"},     {"road", "Rd"},       {"avenue", "Ave"},    {"lane", "Ln"},
+    {"drive", "Dr"},      {"court", "Ct"},      {"place", "Pl"},      {"boulevard", "Blvd"},
+    {"highway", "Hwy"},   {"parade", "Pde"},    {"crescent", "Cres"}, {"terrace", "Tce"},
+    {"circuit", "Cct"},   {"close", "Cl"},      {"grove", "Gr"},      {"square", "Sq"},
+    {"esplanade", "Esp"}, {"parkway", "Pkwy"},  {"freeway", "Fwy"},   {"motorway", "Mwy"},
+    {"expressway", "Expy"}, {"circle", "Cir"},  {"mount", "Mt"},      {"north", "N"},
+    {"south", "S"},       {"east", "E"},        {"west", "W"},
+};
+
+// Maps words its arrival time ("Arrive 12:45", "Arrive at 12:45", "12:45 arrival"); the dial has
+// room for "ETA 12:45" and no more. The arrive word (and an "at" after it) is dropped and "ETA "
+// put in front of what is left. Text without an arrive word is left alone.
+static void shorten_eta(char *eta, size_t len) {
+    char rest[NAV_ETA_LEN];
+    size_t o = 0;
+    bool found = false;
+    bool drop_at = false;
+    const char *p = eta;
+    while (*p != '\0') {
+        while (*p == ' ') p++;
+        const char *end = p;
+        while (*end != '\0' && *end != ' ') end++;
+        const size_t n = (size_t)(end - p);
+        if (n == 0) break;
+        if (n >= 5 && strncasecmp(p, "arriv", 5) == 0) {
+            found = true;
+            drop_at = true;
+        } else if (!(drop_at && n == 2 && strncasecmp(p, "at", 2) == 0)) {
+            drop_at = false;
+            if (o > 0 && o < sizeof(rest) - 1) rest[o++] = ' ';
+            for (size_t k = 0; k < n && o < sizeof(rest) - 1; k++) rest[o++] = p[k];
+        } else {
+            drop_at = false;
+        }
+        p = end;
+    }
+    rest[o] = '\0';
+    if (found) snprintf(eta, len, "ETA %s", rest);
+}
+
+// Rewrites whole street-type words in `name` (in place) to their abbreviations: "Palliser Lane"
+// -> "Palliser Ln". The first word is never touched, so a name that IS the word (e.g.
+// "Esplanade" or "North Road") keeps its identity: "North Rd", not "N Rd".
+static void abbreviate_street(char *name) {
+    char out[NAV_STREET_LEN];
+    size_t o = 0;
+    const char *p = name;
+    bool first = true;
+    while (*p != '\0' && o < sizeof(out) - 1) {
+        if (*p == ' ') {
+            out[o++] = *p++;
+            continue;
+        }
+        const char *end = p;
+        while (*end != '\0' && *end != ' ') end++;
+        const size_t len = (size_t)(end - p);
+        const char *abbrev = NULL;
+        if (!first) {
+            for (size_t i = 0; i < sizeof(kStreetAbbrevs) / sizeof(kStreetAbbrevs[0]); i++) {
+                const char *w = kStreetAbbrevs[i].word;
+                if (strlen(w) != len) continue;
+                size_t k = 0;
+                while (k < len && tolower((unsigned char)p[k]) == w[k]) k++;
+                if (k == len) {
+                    abbrev = kStreetAbbrevs[i].abbrev;
+                    break;
+                }
+            }
+        }
+        const char *src = abbrev != NULL ? abbrev : p;
+        const size_t n = abbrev != NULL ? strlen(abbrev) : len;
+        for (size_t k = 0; k < n && o < sizeof(out) - 1; k++) out[o++] = src[k];
+        p = end;
+        first = false;
+    }
+    out[o] = '\0';
+    memcpy(name, out, o + 1);
+}
+
 // Extracts the street name from "...onto/on <street>" phrasing. Returns 0 on no match.
 // Roundabout/arrive/reroute text has no separable street — empty is correct, not fabricated.
 static size_t extract_street(const char *text, char *out, size_t out_len) {
     char lower[RAW_TITLE_STR_LEN];
     to_lower(text, lower, sizeof(lower));
 
+    // The skip is the length of whichever separator matched: " on " is one shorter than "onto ",
+    // and skipping five for it ate the street's first letter ("Palliser Lane" -> "alliser Lane").
     const char *sep = strstr(lower, "onto ");
-    if (sep == NULL) sep = strstr(lower, " on ");
+    size_t skip = strlen("onto ");
+    if (sep == NULL) {
+        sep = strstr(lower, " on ");
+        skip = strlen(" on ");
+    }
     if (sep == NULL) return 0;
 
     // Find the start of the street in the ORIGINAL (case-preserved) text at the same offset.
-    const char *street = text + (sep - lower) + strlen("onto ");
+    const char *street = text + (sep - lower) + skip;
     size_t n = 0;
     while (n < out_len - 1 && street[n] != '\0' && street[n] != '\r' && street[n] != '\n') {
         out[n] = street[n];
@@ -380,6 +473,8 @@ void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     if (extract_street(raw->title_str, out->street_name, sizeof(out->street_name)) == 0) {
         out->street_name[0] = '\0';
     }
+    abbreviate_street(out->street_name);
     strncpy(out->eta, raw->eta_str, sizeof(out->eta) - 1);
     out->eta[sizeof(out->eta) - 1] = '\0';
+    shorten_eta(out->eta, sizeof(out->eta));
 }

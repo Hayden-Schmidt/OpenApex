@@ -8,15 +8,24 @@
 // living as a special case inside DialScreen because it shares nothing with the dial: no compass,
 // no maneuver, no distance, and a background that covers the whole panel.
 //
-// NOTE the reference calls this a "pop up". It is built here as a full screen, which is what the
-// SVG draws (the green circle fills the entire 240 frame). If it is meant to animate IN over the
-// dial rather than replace it, that is a transition -- GuiTheme::apply_state_change is the hook,
-// and it is still an instant lv_screen_load on both tiers. Flagged in the page doc.
+// The reference calls this a "pop up": it is a full screen (the green circle fills the whole 240
+// frame) that animates in OVER the dial. The green closes in from the panel edge as a shrinking
+// circular hole, revealing the pin last (enter()).
 class ArrivedScreen : public Screen {
 public:
     ArrivedScreen();
     void update(const terminal_view_state_t &state) override;
+    void enter() override;
+    void leave(LeaveDone done, void *ctx) override;
+    bool entered() const override { return overlay_ == nullptr; }
+    bool enters_over() const override { return true; }
 
 private:
+    static void overlay_draw_cb(lv_event_t *e);
+    void end_reveal();
+
     lv_obj_t *pin_ = nullptr;
+    lv_obj_t *overlay_ = nullptr;  // on lv_layer_top() while the reveal runs
+    int32_t cover_radius_ = 0;     // px, centre to the panel's corners
+    int32_t hole_radius_ = 0;      // px, the part of the previous page still showing
 };

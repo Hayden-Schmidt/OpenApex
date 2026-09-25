@@ -8,13 +8,17 @@
         {
             "name": "PlatformIO",
             "includePath": [
-                "C:/Daifuku_RAG_Dev/Active/OpenApex/simulator/native",
+                "C:/Dev/projects/active/OpenApex/simulator/native",
+                "C:/PlatformIO/lib/lvgl",
+                "C:/PlatformIO/lib/lvgl/src",
                 ""
             ],
             "browse": {
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
-                    "C:/Daifuku_RAG_Dev/Active/OpenApex/simulator/native",
+                    "C:/Dev/projects/active/OpenApex/simulator/native",
+                    "C:/PlatformIO/lib/lvgl",
+                    "C:/PlatformIO/lib/lvgl/src",
                     ""
                 ]
             },
@@ -23,7 +27,7 @@
                 ""
             ],
             "cppStandard": "c++17",
-            "compilerPath": "C:/Users/Hayden.Schmidt/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gcc.exe",
+            "compilerPath": "C:/Users/Hayden Schmidt/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gcc.exe",
             "compilerArgs": [
                 ""
             ]

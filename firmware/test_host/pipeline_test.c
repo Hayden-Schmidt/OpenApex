@@ -22,6 +22,7 @@ static void build_packet(uint8_t *p, const char *title, const char *dist, uint16
     p[15] = p[16] = p[17] = p[18] = 0xFF; // progress_max unknown
     if (dist != NULL) strncpy((char *)&p[19], dist, RAW_DIST_STR_LEN - 1);
     if (title != NULL) strncpy((char *)&p[67], title, RAW_TITLE_STR_LEN - 1);
+    p[143] = 0xFF; p[144] = 0x7F; // icon_rotation_deg unknown, as the phone sends with no glyph
     // v3 heading-fusion inputs: unknown in every fixture here, since these tests exercise
     // countdown/distance behavior, not heading_fusion.
     p[145] = p[146] = 0xFF; // bearing_accuracy_deg_x10
@@ -30,6 +31,7 @@ static void build_packet(uint8_t *p, const char *title, const char *dist, uint16
 }
 
 int main(void) {
+    countdown_set_interpolation(true);
     countdown_reset();
 
     terminal_view_state_t view;
@@ -91,6 +93,8 @@ int main(void) {
     view_state_apply_packet(&raw, 50000, &view);
     view_state_apply_packet(&raw, 52000, &view);
     assert(view.odometer_meters == 20);
+    // Telemetry-only packets (Maps not routing) stay idle, even straight after a route ended.
+    assert(view.state == VIEW_IDLE);
 
     puts("pipeline tests passed");
     return 0;

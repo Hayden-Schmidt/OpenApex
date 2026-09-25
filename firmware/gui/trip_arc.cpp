@@ -7,17 +7,18 @@
 namespace {
 
 // Geometry from "design reference/3.Turn by Turn/OpenApex Hardware Design Ref.svg", in its 240px
-// reference frame: the ring is r=114.5 with a 5px stroke, centred on the screen.
+// reference frame: the ring was r=114.5 with a 5px stroke (outer edge 117). Tuned on the device
+// since: outer edge pulled in 1px and the stroke 40% thicker, so it reads at a glance.
 constexpr float kRefHalf = 120.0f;
-constexpr float kRadiusRef = 114.5f;
-constexpr float kStrokeRef = 5.0f;
+constexpr float kOuterRef = 116.0f;
+constexpr float kStrokeRef = 7.0f;
 
-// Where the ring stops either side of the bottom. The design cuts the gap with a black circle of
-// r=44 centred at (120, 246); these are the two angles at which that circle crosses the ring, so
-// stopping the arc here is geometrically identical to the mask -- with tidier ends.
+// Where the ring stops either side of the bottom, leaving the gap the ETA sits in. The design's
+// mask (a black r=44 circle at (120, 246)) crossed the ring at 110.4/429.6 deg; the gap is widened
+// past that so the thicker ring's rounded caps stay clear of the ETA text.
 // Angles are LVGL's convention: degrees, 0 = +x (3 o'clock), increasing clockwise because y is down.
-constexpr float kArcStartDeg = 110.366f; // lower left
-constexpr float kArcEndDeg = 429.634f;   // lower right, once round
+constexpr float kArcStartDeg = 116.0f; // lower left
+constexpr float kArcEndDeg = 424.0f;   // lower right, once round
 constexpr float kArcSweepDeg = kArcEndDeg - kArcStartDeg;
 
 // Traffic colours. #009AA6 is the only one the design ref pins down (it draws the whole ring
@@ -45,8 +46,8 @@ void TripArc::set_state(const terminal_view_state_t &state) {
     progress_permille_ = state.trip_progress_permille > 1000 ? 1000 : state.trip_progress_permille;
 }
 
-void TripArc::draw(lv_layer_t *layer, const lv_area_t &coords) const {
-    const float scale = static_cast<float>(display_diameter_px_) / (kRefHalf * 2.0f);
+void TripArc::draw(lv_layer_t *layer, const lv_area_t &coords, float zoom) const {
+    const float scale = static_cast<float>(display_diameter_px_) / (kRefHalf * 2.0f) * zoom;
     const float half = static_cast<float>(display_diameter_px_) / 2.0f;
     const int32_t cx = coords.x1 + static_cast<int32_t>(std::lround(half));
     const int32_t cy = coords.y1 + static_cast<int32_t>(std::lround(half));
@@ -55,10 +56,8 @@ void TripArc::draw(lv_layer_t *layer, const lv_area_t &coords) const {
     lv_draw_arc_dsc_init(&dsc);
     dsc.center.x = cx;
     dsc.center.y = cy;
-    // lv_draw_arc's `radius` is the OUTER edge and the stroke grows inward from it, so half the
-    // width is added to put the stroke's centre-line on the design's r=114.5 rather than its
-    // outside edge (measured: without this the ring sits ~2.5px small).
-    dsc.radius = static_cast<int32_t>(std::lround((kRadiusRef + kStrokeRef / 2.0f) * scale));
+    // lv_draw_arc's `radius` is the OUTER edge and the stroke grows inward from it.
+    dsc.radius = static_cast<int32_t>(std::lround(kOuterRef * scale));
     dsc.width = std::max<int32_t>(1, static_cast<int32_t>(std::lround(kStrokeRef * scale)));
     dsc.opa = LV_OPA_COVER;
     // Rounded ends, so the two ends either side of the ETA and every colour change read as a bar

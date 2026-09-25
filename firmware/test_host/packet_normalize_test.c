@@ -324,6 +324,55 @@ static void test_street_name_does_not_flip_direction(void) {
     assert(strcmp(m.street_name, "Wright St") == 0);
 }
 
+static void test_eta_shortened(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+    const struct {
+        const char *in;
+        const char *out;
+    } cases[] = {
+        {"Arrive 12:45", "ETA 12:45"},
+        {"Arrive at 12:45 pm", "ETA 12:45 pm"},
+        {"12:45 arrival", "ETA 12:45"},
+        {"12 min", "12 min"},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        build_packet(p, "Turn left onto Wright St", cases[i].in, NULL, -1, -1, RAW_U16_UNKNOWN,
+                     RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+        packet_decode(p, sizeof(p), &raw);
+        normalize_packet(&raw, &m);
+        assert(strcmp(m.eta, cases[i].out) == 0);
+    }
+}
+
+static void test_street_name_extraction_and_abbreviation(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    nav_model_t m;
+    const struct {
+        const char *title;
+        const char *street;
+    } cases[] = {
+        // " on " is a shorter separator than "onto "; the street's first letter must survive.
+        {"Continue on Palliser Lane", "Palliser Ln"},
+        {"Turn left onto Smith Street", "Smith St"},
+        {"Turn right onto Great Western Highway", "Great Western Hwy"},
+        {"Turn left onto St Kilda Road North", "St Kilda Rd N"},
+        // The first word is the name, never abbreviated; only whole words match.
+        {"Turn right onto North Road", "North Rd"},
+        {"Turn left onto Esplanade", "Esplanade"},
+        {"Turn left onto Lanesborough Avenue", "Lanesborough Ave"},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        build_packet(p, cases[i].title, NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN,
+                     RAW_U8_UNKNOWN, false);
+        packet_decode(p, sizeof(p), &raw);
+        normalize_packet(&raw, &m);
+        assert(strcmp(m.street_name, cases[i].street) == 0);
+    }
+}
+
 /**
  * The invariant that makes tolerance matching safe.
  *
@@ -485,6 +534,8 @@ int main(void) {
     test_lane_guidance_is_a_ramp_not_a_turn();
     test_kilometre_distance_parses();
     test_street_name_does_not_flip_direction();
+    test_street_name_extraction_and_abbreviation();
+    test_eta_shortened();
     test_glyph_tables_are_separable();
     test_glyph_angle_tolerance();
     test_traffic_color_classes();

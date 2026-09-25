@@ -28,6 +28,11 @@ public:
     // (used for the very first maneuver, mirroring demo.js's init()).
     void add_maneuver(nav_render_icon_t icon, bool animate);
 
+    // Page entry ("design reference/Screen Transitions.md"): replaces the route with a runway of
+    // straights leading into `icon`, puts the camera where `icon` alone would have it, and runs the
+    // arrow up the runway from off the bottom of the page onto the maneuver over `duration_ms`.
+    void enter_maneuver(nav_render_icon_t icon, uint32_t duration_ms);
+
     // Advances the tween against a monotonic millisecond clock. Returns true while a maneuver
     // transition is in flight -- callers should keep invalidating/redrawing every frame in that
     // case, and can skip redraw work entirely once it returns false (matches demo.js's "only
@@ -40,7 +45,8 @@ public:
 
     // Draws the current frame into `layer`, within the pixel square at `coords` (expected square,
     // side length == display_diameter_px passed to the constructor).
-    void draw(lv_layer_t *layer, const lv_area_t &coords) const;
+    // `ring_scale` is CompassRing::draw's `scale`, for the page entry's ring zoom.
+    void draw(lv_layer_t *layer, const lv_area_t &coords, float ring_scale = 1.0f) const;
 
     // Same, minus the compass ring: for pages that put something else in that slot (see TripArc).
     void draw_route_only(lv_layer_t *layer, const lv_area_t &coords) const;
@@ -83,6 +89,9 @@ private:
     // tail of the previous maneuver plus the whole new one, so 2x that with margin covers every
     // case without a heap allocation ever happening here.
     static constexpr int kRouteCapacity = NAV_ICON_MAX_SEGMENTS * 2 + 4;
+    // Straights laid in front of the first maneuver by enter_maneuver(): two is 520 route units,
+    // enough that the arrow starts clear of the panel's bottom edge.
+    static constexpr int kEntryRunwayStraights = 2;
     Seg route_[kRouteCapacity];
     int route_count_ = 0;
 

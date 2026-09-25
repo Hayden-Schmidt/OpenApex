@@ -12,6 +12,8 @@ lv_color_t BasicTheme::palette() const {
 lv_color_t BasicTheme::arrived_surface() const { return lv_color_hex(0x1E8D3E); }
 
 void BasicTheme::apply_state_change(Screen *prev, Screen *next) {
-    (void)prev;
-    lv_screen_load(next->root());
+    // A page that reveals itself over the previous one (ArrivedScreen) loads its own root when
+    // the reveal lands; every other page is loaded here and plays its own entry.
+    if (prev == nullptr || !next->enters_over()) lv_screen_load(next->root());
+    next->enter();
 }

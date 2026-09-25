@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <initializer_list>
 
+#include "ease.hpp"
 #include "gui_app.hpp"
 #include "gui_font.hpp"
 #include "theme.hpp"
@@ -36,6 +37,20 @@ constexpr float kFontPerGlyphH = 1.0f / 0.70f;
 // VIEW_STALE renders last-known-good greyed rather than hidden -- a held distance reads far better
 // on the road than an empty dial, but it must not look live.
 constexpr uint32_t kStaleGrey = 0x808080;
+
+// Page entry ("design reference/Screen Transitions.md"): the arrow runs on from below, then the
+// text slides up along the bottom, then the outer ring closes in from beyond the edge. Steps are
+// sequential: each element lands fully before the next moves.
+constexpr uint32_t kArrowInMs = 900;
+constexpr uint32_t kTextInDelayMs = kArrowInMs;
+constexpr uint32_t kTextInMs = 600;
+constexpr uint32_t kRingInDelayMs = kTextInDelayMs + kTextInMs;
+constexpr uint32_t kRingInMs = 700;
+// The ring starts this much larger than its resting size -- far enough that every tick is outside
+// the round panel, so it reads as arriving from off-screen rather than as popping in and growing.
+constexpr float kRingEntryScale = 1.6f;
+// The alternative whole-page entry (GUI_NAV_ENTRY_FADE).
+constexpr uint32_t kPageFadeMs = 400;
 
 lv_point_precise_t pt(float x, float y) {
     return {static_cast<lv_value_precise_t>(x), static_cast<lv_value_precise_t>(y)};
@@ -105,6 +120,9 @@ DialScreen::DialScreen()
       status_box_size_((lv_display_get_horizontal_resolution(lv_display_get_default()) * 55) / 100) {
     lv_obj_set_style_bg_color(root_, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
+    // The entry slides text below the panel edge; a scrollable root would flash a scrollbar for it.
+    lv_obj_set_scrollable(root_, false);
+    lv_obj_add_event_cb(root_, on_long_press, LV_EVENT_LONG_PRESSED, this);
 
     // NavRenderer strokes straight into this object's LV_EVENT_DRAW_MAIN layer. An lv_canvas was
     // tried here instead, on the theory that compositing the arrow's overlapping strokes onto one
@@ -169,6 +187,12 @@ DialScreen::DialScreen()
                  px(kStreetCy) - lv_obj_get_height(street_label_) / 2);
     lv_obj_align(eta_label_, LV_ALIGN_TOP_MID, 0,
                  px(kEtaCy) - lv_obj_get_height(eta_label_) / 2);
+
+    // Presses belong to the page: a clickable child (the full-screen canvas above all) would take
+    // them, and the root's long-press handler would never fire.
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root_); i++) {
+        lv_obj_remove_flag(lv_obj_get_child(root_, static_cast<int32_t>(i)), LV_OBJ_FLAG_CLICKABLE);
+    }
 }
 
 void DialScreen::draw_event_cb(lv_event_t *e) {
@@ -179,12 +203,74 @@ void DialScreen::draw_event_cb(lv_event_t *e) {
     lv_obj_get_coords(obj, &coords);
     // The compass ring is drawn by NavRenderer (it owns the shared CompassRing); the trip arc
     // replaces it, so in that mode the ring must not also be drawn.
+    const float ring_scale = self->ring_scale();
     if (self->outer_ == GUI_DIAL_OUTER_TRIP_ARC) {
-        self->trip_arc_.draw(layer, coords);
+        self->trip_arc_.draw(layer, coords, ring_scale);
         self->renderer_.draw_route_only(layer, coords);
     } else {
-        self->renderer_.draw(layer, coords);
+        self->renderer_.draw(layer, coords, ring_scale);
     }
+}
+
+float DialScreen::ring_scale() const {
+    return kRingEntryScale + (1.0f - kRingEntryScale) * static_cast<float>(ring_in_) / 1000.0f;
+}
+
+void DialScreen::set_ring_in(void *var, int32_t value) {
+    auto *self = static_cast<DialScreen *>(var);
+    self->ring_in_ = value;
+    lv_obj_invalidate(self->canvas_obj_);
+}
+
+// Slides by style translation rather than position, so the labels' aligned resting places are
+// untouched and a finished entry leaves no offset behind. The travel is a fixed panel height, not
+// measured from each label: lv_obj_get_y() already includes the translation set last frame, so a
+// measured offset fed back on itself and threw the labels about.
+void DialScreen::set_text_in(void *var, int32_t value) {
+    auto *self = static_cast<DialScreen *>(var);
+    const int32_t travel = lv_display_get_vertical_resolution(lv_display_get_default());
+    for (lv_obj_t *label : {self->distance_label_, self->street_label_, self->eta_label_}) {
+        lv_obj_set_style_translate_y(label, travel * (1000 - value) / 1000, 0);
+    }
+}
+
+void DialScreen::set_page_opa(void *var, int32_t value) {
+    lv_obj_set_style_opa(static_cast<DialScreen *>(var)->root_, static_cast<lv_opa_t>(value), 0);
+}
+
+void DialScreen::tween(lv_anim_exec_xcb_t exec, uint32_t delay_ms, uint32_t ms,
+                       lv_anim_path_cb_t path) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, this);
+    lv_anim_set_exec_cb(&a, exec);
+    lv_anim_set_values(&a, 0, exec == set_page_opa ? LV_OPA_COVER : 1000);
+    lv_anim_set_delay(&a, delay_ms);
+    lv_anim_set_duration(&a, ms);
+    lv_anim_set_path_cb(&a, path);
+    // Apply the start value now, not after the delay, or the element shows at rest until its turn.
+    lv_anim_set_early_apply(&a, true);
+    lv_anim_start(&a);
+}
+
+void DialScreen::enter() {
+    lv_anim_delete(this, nullptr);
+    outer_swapping_ = false;  // the delete above may have dropped a swap mid-way
+    // Forces the first maneuver to be (re)added, so a second ride does not start mid-route.
+    last_icon_ = static_cast<nav_icon_t>(-1);
+    if (gui_app_nav_entry() == GUI_NAV_ENTRY_FADE) {
+        arrow_entry_pending_ = false;
+        ring_in_ = 1000;
+        set_text_in(this, 1000);
+        tween(set_page_opa, 0, kPageFadeMs, lv_anim_path_ease_in_out);
+        return;
+    }
+    set_page_opa(this, LV_OPA_COVER);
+    // Staged: the arrow lands first, then the text, then the ring. Text and ring hold their
+    // off-screen pose until the first maneuver the page can draw starts the arrow (see update()).
+    arrow_entry_pending_ = true;
+    ring_in_ = 0;
+    set_text_in(this, 0);
 }
 
 void DialScreen::set_outer(gui_dial_outer_t outer) {
@@ -194,6 +280,41 @@ void DialScreen::set_outer(gui_dial_outer_t outer) {
     // and the compass variant has no gap to put it in.
     lv_obj_set_hidden(eta_label_, outer_ != GUI_DIAL_OUTER_TRIP_ARC);
     lv_obj_invalidate(canvas_obj_);
+}
+
+// The hold time is the input device's long-press time (touch_driver.c). The outgoing element
+// plays the entry zoom in reverse (out past the edge, ease-in so it mirrors the ease-out arrival),
+// then the new one arrives with the entry zoom itself.
+void DialScreen::on_long_press(lv_event_t *e) {
+    auto *self = static_cast<DialScreen *>(lv_event_get_user_data(e));
+    if (self->outer_swapping_) return;
+    self->outer_swapping_ = true;
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, self);
+    lv_anim_set_exec_cb(&a, set_swap_in);
+    lv_anim_set_values(&a, self->ring_in_, 0);
+    lv_anim_set_duration(&a, kRingInMs);
+    lv_anim_set_path_cb(&a, anim_path<ease_in_expo>);
+    lv_anim_set_completed_cb(&a, [](lv_anim_t *done) {
+        auto *s = static_cast<DialScreen *>(done->var);
+        s->set_outer(s->outer_ == GUI_DIAL_OUTER_COMPASS ? GUI_DIAL_OUTER_TRIP_ARC
+                                                         : GUI_DIAL_OUTER_COMPASS);
+        s->outer_swapping_ = false;
+        s->tween(set_swap_in, 0, kRingInMs, anim_path<ease_out_expo>);
+    });
+    lv_anim_start(&a);
+}
+
+// The ETA only exists with the trip arc, so it rides the arc's zoom: it slides down off the bottom
+// as the arc zooms out, and back up as it zooms in. With the compass it is hidden and left alone.
+void DialScreen::set_swap_in(void *var, int32_t value) {
+    set_ring_in(var, value);
+    auto *self = static_cast<DialScreen *>(var);
+    if (self->outer_ != GUI_DIAL_OUTER_TRIP_ARC) return;
+    const int32_t travel = lv_display_get_vertical_resolution(lv_display_get_default());
+    lv_obj_set_style_translate_y(self->eta_label_, travel * (1000 - value) / 1000, 0);
 }
 
 void DialScreen::draw_status_glyph(nav_icon_t icon) {
@@ -263,7 +384,15 @@ void DialScreen::update(const terminal_view_state_t &state) {
         if (has_render_icon) {
             lv_obj_set_hidden(status_shaft_, true);
             lv_obj_set_hidden(status_head_, true);
-            renderer_.add_maneuver(render_icon, /*animate=*/last_icon_ != static_cast<nav_icon_t>(-1));
+            if (arrow_entry_pending_) {
+                renderer_.enter_maneuver(render_icon, kArrowInMs);
+                arrow_entry_pending_ = false;
+                tween(set_text_in, kTextInDelayMs, kTextInMs, lv_anim_path_ease_in_out);
+                tween(set_ring_in, kRingInDelayMs, kRingInMs, anim_path<ease_out_expo>);
+            } else {
+                renderer_.add_maneuver(render_icon,
+                                       /*animate=*/last_icon_ != static_cast<nav_icon_t>(-1));
+            }
         } else {
             draw_status_glyph(state.icon_type);
             lv_obj_set_hidden(status_shaft_, false);

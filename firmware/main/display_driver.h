@@ -11,6 +11,10 @@ extern "C" {
 //
 // Must be called once, after lv_init() and before gui_app_init(). Leaves the backlight OFF -- see
 // display_driver_backlight_on().
+// Drives the backlight off. Called first thing in app_main, well before display_driver_init(), so
+// the panel stays dark through the rest of boot instead of lighting a stale GRAM frame.
+void display_driver_hold_dark(void);
+
 void display_driver_init(void);
 
 // Turns the backlight on. Deliberately separate from display_driver_init(): the GC9A01 powers up

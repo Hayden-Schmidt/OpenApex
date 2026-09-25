@@ -25,5 +25,12 @@ void countdown_reset(void);
 void countdown_accept(const countdown_input_t *input);
 countdown_output_t countdown_estimate(uint32_t now_ms);
 
+/**
+ * Whether the distance counts down between packets from GNSS speed (dead reckoning), or holds
+ * the last distance Maps reported. Off by default (COUNTDOWN_INTERPOLATE_DEFAULT); build with
+ * -DCOUNTDOWN_INTERPOLATE_DEFAULT=1 to turn it on. Survives countdown_reset().
+ */
+void countdown_set_interpolation(bool enabled);
+
 /** True once a real distance has been anchored, i.e. there is something to count down from. */
 bool countdown_has_baseline(void);

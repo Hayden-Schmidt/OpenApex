@@ -27,7 +27,9 @@ public:
     bool north_known() const { return north_known_; }
 
     // `coords` is the drawing area of the object being drawn into, as from lv_obj_get_coords().
-    void draw(lv_layer_t *layer, const lv_area_t &coords) const;
+    // `scale` grows the ring about the page centre; > 1 pushes it past the panel edge, which is
+    // how the nav page's entry zooms it in from outside.
+    void draw(lv_layer_t *layer, const lv_area_t &coords, float scale = 1.0f) const;
 
 private:
     const int32_t display_diameter_px_;

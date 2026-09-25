@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "ease.hpp"
+
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -31,10 +33,6 @@ lv_color_t route_color() { return lv_color_white(); }
 
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 float lerpf(float a, float b, float t) { return a + (b - a) * t; }
-
-float ease_in_out_cubic(float t) {
-    return t < 0.5f ? 4.0f * t * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f;
-}
 
 // JS's normAngle(): normalize radians to (-PI, PI], used to take the short way round a rotation.
 float norm_angle(float a) {
@@ -550,6 +548,32 @@ void NavRenderer::add_maneuver(nav_render_icon_t icon, bool animate) {
     has_route_ = true;
 }
 
+void NavRenderer::enter_maneuver(nav_render_icon_t icon, uint32_t duration_ms) {
+    route_count_ = 0;
+    const nav_icon_data_t &straight = NAV_ICON_DATA[NAV_RENDER_STRAIGHT];
+    for (int i = 0; i < kEntryRunwayStraights; ++i) {
+        append_segments(straight.main_segments, static_cast<int>(straight.main_segment_count),
+                        compute_transform(straight.main_segments[0]));
+    }
+    const float runway_end = total_dist();
+
+    const nav_icon_data_t &data = NAV_ICON_DATA[icon];
+    const Transform t = compute_transform(data.main_segments[0]);
+    append_segments(data.main_segments, static_cast<int>(data.main_segment_count), t);
+
+    Pose target = compute_pose(data, t);
+    target.base_dist = runway_end;
+    target.head_dist = total_dist();
+
+    // Same camera, zero-length arrow parked at the far end of the runway, well below the panel;
+    // the tween then runs it up the straights and onto the page.
+    cur_ = target;
+    cur_.base_dist = 0.0f;
+    cur_.head_dist = 0.0f;
+    retarget(target, duration_ms);
+    has_route_ = true;
+}
+
 bool NavRenderer::tick(uint32_t now_ms) {
     if (!running_) return false;
     if (tween_start_ms_ == 0) tween_start_ms_ = now_ms;
@@ -632,8 +656,8 @@ void NavRenderer::draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam,
                route_color(), /*path_end_at_start=*/s.turn < 0.0f, out_end);
 }
 
-void NavRenderer::draw(lv_layer_t *layer, const lv_area_t &coords) const {
-    compass_.draw(layer, coords);
+void NavRenderer::draw(lv_layer_t *layer, const lv_area_t &coords, float ring_scale) const {
+    compass_.draw(layer, coords, ring_scale);
     draw_route_only(layer, coords);
 }
 

@@ -29,7 +29,8 @@ public:
     // still reads as "the trip", not as a rendering failure.
     bool has_data() const { return count_ > 0; }
 
-    void draw(lv_layer_t *layer, const lv_area_t &coords) const;
+    // `zoom` grows the ring about the page centre, as CompassRing::draw's `scale`.
+    void draw(lv_layer_t *layer, const lv_area_t &coords, float zoom = 1.0f) const;
 
 private:
     const int32_t display_diameter_px_;

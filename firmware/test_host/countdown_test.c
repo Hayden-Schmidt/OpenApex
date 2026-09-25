@@ -4,6 +4,7 @@
 #include "../main/countdown.h"
 
 int main(void) {
+    countdown_set_interpolation(true);
     countdown_reset();
     countdown_input_t input = {
         .distance_meters = 100,
@@ -107,6 +108,18 @@ int main(void) {
     }
     output = countdown_estimate(500);
     assert(output.distance_meters == 500);
+
+    // Interpolation off: the last reported distance holds at speed, and liveness still ages out.
+    countdown_set_interpolation(false);
+    countdown_reset();
+    cruise.speed_kmh = 50.0f;
+    cruise.timestamp_ms = 0;
+    cruise.maneuver_sequence = 1;
+    countdown_accept(&cruise);
+    output = countdown_estimate(5000);
+    assert(output.distance_meters == 500);
+    assert(!output.stale);
+    assert(countdown_estimate(11000).stale);
 
     puts("countdown tests passed");
     return 0;

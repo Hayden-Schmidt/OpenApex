@@ -73,11 +73,14 @@ void CompassRing::set_north(float heading_rad, bool known) {
     north_known_ = known;
 }
 
-void CompassRing::draw(lv_layer_t *layer, const lv_area_t &coords) const {
-    const float half = static_cast<float>(display_diameter_px_) / 2.0f;
-    const float cx = static_cast<float>(coords.x1) + half;
-    const float cy = static_cast<float>(coords.y1) + half;
-    const float px_unit = static_cast<float>(display_diameter_px_) / kDesignDiameter;
+void CompassRing::draw(lv_layer_t *layer, const lv_area_t &coords, float scale) const {
+    const float centre = static_cast<float>(display_diameter_px_) / 2.0f;
+    const float cx = static_cast<float>(coords.x1) + centre;
+    const float cy = static_cast<float>(coords.y1) + centre;
+    // Everything below is sized off `half` and `px_unit`, so scaling them grows the whole ring
+    // about the page centre.
+    const float half = centre * scale;
+    const float px_unit = static_cast<float>(display_diameter_px_) / kDesignDiameter * scale;
 
     for (int i = 0; i < kTickCount; ++i) {
         const float angle = (static_cast<float>(i) / kTickCount) * 2.0f * kPi - kPi / 2.0f;

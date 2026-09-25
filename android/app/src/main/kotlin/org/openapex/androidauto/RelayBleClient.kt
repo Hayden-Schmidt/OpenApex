@@ -187,6 +187,9 @@ class RelayBleClient(private val context: Context) {
             } else {
                 characteristic = null
                 connectedAddress = null
+                // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
+                // set would stall pumpQueue() on every later connection: packets queue, none send.
+                synchronized(pendingFragments) { writeInFlight = false }
                 RelayStateHolder.noteBleDisconnected(status)
             }
         }
@@ -195,6 +198,7 @@ class RelayBleClient(private val context: Context) {
             characteristic = g.getService(SERVICE_UUID)?.getCharacteristic(CHAR_UUID)
             Log.i(TAG, "services discovered: status=$status characteristicFound=${characteristic != null}")
             if (characteristic != null) {
+                synchronized(pendingFragments) { writeInFlight = false }
                 RelayStateHolder.noteBleConnected()
             }
         }

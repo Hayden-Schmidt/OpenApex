@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "ease.hpp"
 #include "gui_app.hpp"
 #include "gui_font.hpp"
 #include "icons.hpp"
@@ -34,6 +35,13 @@ constexpr float kClockCy = 100.7f;
 constexpr float kRiseTravel = 52.0f;
 
 constexpr uint32_t kTweenMs = 1000;
+
+// Page entry ("design reference/Screen Transitions.md"): the bubble rises onto the page from below
+// the bottom edge, then the link glyph slides out from behind it. Leaving plays it all in reverse.
+// The bubble arrives fast and settles (exponential ease-out) and leaves as the exact reverse
+// (ease-in: slow to start, then away).
+constexpr uint32_t kBubbleInMs = 470;
+constexpr uint32_t kLinkInMs = 400;
 
 // Text sizes measured off the SVG's glyph bounds: the clock's digits are 30.5px tall (~44px
 // Montserrat) and the odometer's are 13.3px (~20px).
@@ -141,32 +149,120 @@ IdleScreen::IdleScreen() {
     lv_label_set_text(odometer_label_, "0 km");
     lv_obj_center(odometer_label_);
 
-    // --- Phone link status.
+    // --- Phone link status. Sent to the back so the bubble covers it: that stacking is the mask the
+    // entry needs for the glyph to emerge from *under* the bubble rather than over it.
     link_icon_ = lv_image_create(root_);
     lv_image_set_src(link_icon_, icon_image(ICON_BLUETOOTH_DISABLED));
     lv_obj_set_style_image_recolor(link_icon_, accent, 0);
     lv_obj_set_style_image_recolor_opa(link_icon_, LV_OPA_COVER, 0);
+    lv_obj_move_background(link_icon_);
 
     lv_obj_update_layout(root_);
-    apply_layout(0);
+    apply_layout();
 }
 
-void IdleScreen::anim_exec_cb(void *var, int32_t value) {
-    static_cast<IdleScreen *>(var)->apply_layout(value);
+void IdleScreen::set_progress(void *var, int32_t value) {
+    auto *self = static_cast<IdleScreen *>(var);
+    self->progress_ = value;
+    self->apply_layout();
 }
 
-void IdleScreen::apply_layout(int32_t progress) {
-    progress_ = progress;
-    const float t = static_cast<float>(progress) / 1000.0f;
+void IdleScreen::set_bubble_in(void *var, int32_t value) {
+    auto *self = static_cast<IdleScreen *>(var);
+    self->bubble_in_ = value;
+    self->apply_layout();
+}
+
+void IdleScreen::set_link_in(void *var, int32_t value) {
+    auto *self = static_cast<IdleScreen *>(var);
+    self->link_in_ = value;
+    self->apply_layout();
+}
+
+IdleScreen *IdleScreen::from_anim(lv_anim_t *a) { return static_cast<IdleScreen *>(a->var); }
+
+// Duration scales with the distance left to cover, so a reversal from part-way takes part of the
+// time rather than crawling the last few pixels over the full duration.
+void IdleScreen::tween(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t full_ms,
+                       lv_anim_completed_cb_t completed, lv_anim_path_cb_t path) {
+    const int32_t span = to > from ? to - from : from - to;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, this);
+    lv_anim_set_exec_cb(&a, exec);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_duration(&a, full_ms * static_cast<uint32_t>(span) / 1000u);
+    lv_anim_set_path_cb(&a, path);  // default: the spec's "S curve"
+    lv_anim_set_completed_cb(&a, completed);
+    lv_anim_start(&a);
+}
+
+void IdleScreen::start_link_tween() {
+    lv_anim_delete(this, set_progress);
+    tween(set_progress, progress_, connected_ ? 1000 : 0, kTweenMs, nullptr);
+}
+
+void IdleScreen::enter() {
+    lv_anim_delete(this, nullptr);
+    leaving_ = false;
+    landed_ = false;
+    bubble_in_ = 0;
+    link_in_ = 0;
+    progress_ = 0;
+    apply_layout();
+    tween(set_bubble_in, 0, 1000, kBubbleInMs, [](lv_anim_t *a) {
+        IdleScreen *self = from_anim(a);
+        self->tween(set_link_in, 0, 1000, kLinkInMs, [](lv_anim_t *a2) {
+            IdleScreen *self2 = from_anim(a2);
+            // The connected layout only plays once bubble and glyph have fully landed -- even when
+            // the phone connected while they were still on their way in.
+            self2->landed_ = true;
+            if (self2->connected_) self2->start_link_tween();
+        });
+    }, anim_path<ease_out_expo>);
+}
+
+bool IdleScreen::entered() const {
+    return landed_ && lv_anim_get(const_cast<IdleScreen *>(this), set_progress) == nullptr &&
+           progress_ == (connected_ ? 1000 : 0);
+}
+
+// Reverse of enter(): the connected text first, then the glyph back under the bubble, then the
+// bubble off the bottom.
+void IdleScreen::leave(LeaveDone done, void *ctx) {
+    lv_anim_delete(this, nullptr);
+    leaving_ = true;
+    done_ = done;
+    done_ctx_ = ctx;
+    tween(set_progress, progress_, 0, kTweenMs, [](lv_anim_t *a) {
+        IdleScreen *self = from_anim(a);
+        self->tween(set_link_in, self->link_in_, 0, kLinkInMs, [](lv_anim_t *a2) {
+            IdleScreen *self2 = from_anim(a2);
+            self2->tween(set_bubble_in, self2->bubble_in_, 0, kBubbleInMs, [](lv_anim_t *a3) {
+                IdleScreen *self3 = from_anim(a3);
+                self3->done_(self3->done_ctx_);
+            }, anim_path<ease_in_expo>);
+        });
+    });
+}
+
+void IdleScreen::apply_layout() {
+    const float t = static_cast<float>(progress_) / 1000.0f;
 
     const int32_t bubble_h = px(kBubbleH);
-    const int32_t bubble_cy = px(lerp(kBubbleCyDisconnected, kBubbleCyConnected, t));
-    const int32_t bubble_top = bubble_cy - bubble_h / 2;
+    const int32_t rest_cy = px(lerp(kBubbleCyDisconnected, kBubbleCyConnected, t));
+    const int32_t rest_top = rest_cy - bubble_h / 2;
+    // Entry offset: at bubble_in_ == 0 the bubble's top edge sits on the bottom of the panel.
+    const int32_t entry_dy = static_cast<int32_t>(
+        std::lround((width_ - rest_top) * (1.0f - static_cast<float>(bubble_in_) / 1000.0f)));
+    const int32_t bubble_cy = rest_cy + entry_dy;
+    const int32_t bubble_top = rest_top + entry_dy;
     lv_obj_set_pos(bubble_, (width_ - px(kBubbleW)) / 2, bubble_top);
 
     // The clip window's bottom edge *is* the bubble's top edge, so the group is revealed exactly as
-    // it clears the bubble.
-    lv_obj_set_height(reveal_, bubble_top > 0 ? bubble_top : 0);
+    // it clears the bubble. It tracks the *resting* edge, not the entry-offset one: while the bubble
+    // is still rising in from below, following it down would uncover the hidden group.
+    lv_obj_set_height(reveal_, rest_top > 0 ? rest_top : 0);
 
     const int32_t rise = px(lerp(kRiseTravel, 0.0f, t));
 
@@ -176,24 +272,22 @@ void IdleScreen::apply_layout(int32_t progress) {
 
     place_centred(clock_label_, width_, px(kClockCy) - lv_obj_get_height(clock_label_) / 2 + rise);
 
-    const int32_t link_cy = px(lerp(kLinkCyDisconnected, kLinkCyConnected, t));
+    // The glyph starts tucked behind the bubble's centre and slides out to its resting place.
+    const int32_t rest_link_cy = px(lerp(kLinkCyDisconnected, kLinkCyConnected, t)) + entry_dy;
+    const float link_t = static_cast<float>(link_in_) / 1000.0f;
+    const int32_t link_cy = static_cast<int32_t>(std::lround(
+        lerp(static_cast<float>(bubble_cy), static_cast<float>(rest_link_cy), link_t)));
     place_centred(link_icon_, width_, link_cy - lv_obj_get_height(link_icon_) / 2);
 }
 
 void IdleScreen::update(const terminal_view_state_t &state) {
+    // The glyph always shows the live link state, whatever the page animation is doing; only the
+    // layout change it triggers waits for the entry to land (and never plays while leaving).
     if (state.phone_connected != connected_) {
         connected_ = state.phone_connected;
         lv_image_set_src(link_icon_, icon_image(connected_ ? ICON_BLUETOOTH_CONNECTED
                                                            : ICON_BLUETOOTH_DISABLED));
-
-        lv_anim_t a;
-        lv_anim_init(&a);
-        lv_anim_set_var(&a, this);
-        lv_anim_set_exec_cb(&a, anim_exec_cb);
-        lv_anim_set_values(&a, progress_, connected_ ? 1000 : 0);
-        lv_anim_set_duration(&a, kTweenMs);
-        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);  // the spec's "S curve"
-        lv_anim_start(&a);
+        if (landed_ && !leaving_) start_link_tween();
     }
 
     if (state.odometer_meters != last_odometer_meters_) {

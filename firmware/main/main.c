@@ -2,6 +2,7 @@
 #include "countdown.h"
 #include "drive_log.h"
 #include "display_driver.h"
+#include "touch_driver.h"
 #include "gui_app.hpp"
 #include "heading_store.h"
 #include "odometer_store.h"
@@ -104,6 +105,7 @@ static void gui_task(void *argument) {
     lv_init();
     lv_tick_set_cb(platform_now_ms);
     display_driver_init();
+    touch_driver_init();
     gui_app_init();
 
     // Paint the boot screen fully, *then* light the panel. lv_refr_now blocks until every pending
@@ -124,6 +126,7 @@ static void gui_task(void *argument) {
 }
 
 void app_main(void) {
+    display_driver_hold_dark();
     ESP_LOGI(TAG, "OpenApex terminal boot: PROTOTYPE_C3_GC9A01");
     pipeline_reset();
     memset(&shared_view, 0, sizeof(shared_view));

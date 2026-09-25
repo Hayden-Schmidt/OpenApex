@@ -11,6 +11,13 @@ static uint32_t anchor_timestamp_ms;      // ...and the timestamp it was set at
 static float filtered_speed_kmh;
 static bool has_baseline;
 
+#ifndef COUNTDOWN_INTERPOLATE_DEFAULT
+#define COUNTDOWN_INTERPOLATE_DEFAULT 0
+#endif
+static bool interpolate = COUNTDOWN_INTERPOLATE_DEFAULT;
+
+void countdown_set_interpolation(bool enabled) { interpolate = enabled; }
+
 void countdown_reset(void) {
     current = (countdown_input_t){0};
     anchor_distance_meters = 0;
@@ -79,6 +86,9 @@ countdown_output_t countdown_estimate(uint32_t now_ms) {
     uint32_t elapsed_since_packet_ms = now_ms - current.timestamp_ms;
     bool stale = elapsed_since_packet_ms > MAX_HOLD_MS;
 
+    if (!interpolate) {
+        return (countdown_output_t){anchor_distance_meters, stale};
+    }
     uint32_t elapsed_ms = now_ms - anchor_timestamp_ms;
     uint32_t bounded_elapsed = stale ? MAX_HOLD_MS : elapsed_ms;
     float travelled = (filtered_speed_kmh / 3.6f) * ((float)bounded_elapsed / 1000.0f);

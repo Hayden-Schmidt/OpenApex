@@ -158,16 +158,35 @@ bool shot_write_active_screen(const char *path) {
         std::fprintf(stderr, "shot: lv_snapshot_take_to_draw_buf failed\n");
         return false;
     }
+    // The top layer is drawn over every screen (page transitions such as the arrived reveal live
+    // there), so it is snapshotted too and composited over the screen by its own alpha.
+    std::vector<uint8_t> top_storage(storage.size());
+    lv_draw_buf_t top_buf;
+    const bool have_top =
+        lv_draw_buf_init(&top_buf, static_cast<uint32_t>(w), static_cast<uint32_t>(h),
+                         LV_COLOR_FORMAT_ARGB8888, stride, top_storage.data(),
+                         static_cast<uint32_t>(top_storage.size())) == LV_RESULT_OK &&
+        lv_snapshot_take_to_draw_buf(lv_layer_top(), LV_COLOR_FORMAT_ARGB8888, &top_buf) ==
+            LV_RESULT_OK;
+
     std::vector<uint8_t> rgb(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
     for (int32_t y = 0; y < h; ++y) {
         const uint8_t *src = buf->data + static_cast<size_t>(y) * buf->header.stride;
+        const uint8_t *top =
+            have_top ? top_buf.data + static_cast<size_t>(y) * top_buf.header.stride : nullptr;
         uint8_t *dst = rgb.data() + static_cast<size_t>(y) * static_cast<size_t>(w) * 3;
         for (int32_t x = 0; x < w; ++x) {
             // ARGB8888 is stored B,G,R,A in memory. Alpha is dropped: the panel is opaque, and a
             // screenshot with a transparent background reviews badly against a dark design ref.
-            dst[x * 3 + 0] = src[x * 4 + 2];
-            dst[x * 3 + 1] = src[x * 4 + 1];
-            dst[x * 3 + 2] = src[x * 4 + 0];
+            for (int c = 0; c < 3; ++c) {
+                const int v = src[x * 4 + 2 - c];
+                if (top == nullptr) {
+                    dst[x * 3 + c] = static_cast<uint8_t>(v);
+                    continue;
+                }
+                const int a = top[x * 4 + 3];
+                dst[x * 3 + c] = static_cast<uint8_t>((top[x * 4 + 2 - c] * a + v * (255 - a)) / 255);
+            }
         }
     }
     // No lv_draw_buf_destroy() here -- `storage` owns the pixels, not LVGL.
