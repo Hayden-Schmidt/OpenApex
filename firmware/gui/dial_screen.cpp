@@ -204,12 +204,15 @@ void DialScreen::draw_event_cb(lv_event_t *e) {
     // The compass ring is drawn by NavRenderer (it owns the shared CompassRing); the trip arc
     // replaces it, so in that mode the ring must not also be drawn.
     const float ring_scale = self->ring_scale();
+    // The exit drops the arrow by shifting only the route's frame; the ring stays put.
+    lv_area_t route = coords;
+    lv_area_move(&route, 0, lv_area_get_height(&coords) * self->arrow_out_ / 1000);
     if (self->outer_ == GUI_DIAL_OUTER_TRIP_ARC) {
         self->trip_arc_.draw(layer, coords, ring_scale);
-        self->renderer_.draw_route_only(layer, coords);
     } else {
-        self->renderer_.draw(layer, coords, ring_scale);
+        self->renderer_.compass().draw(layer, coords, ring_scale);
     }
+    self->renderer_.draw_route_only(layer, route);
 }
 
 float DialScreen::ring_scale() const {
@@ -234,6 +237,16 @@ void DialScreen::set_text_in(void *var, int32_t value) {
     }
 }
 
+void DialScreen::set_arrow_out(void *var, int32_t value) {
+    auto *self = static_cast<DialScreen *>(var);
+    self->arrow_out_ = value;
+    const int32_t travel = lv_display_get_vertical_resolution(lv_display_get_default());
+    for (lv_obj_t *line : {self->status_shaft_, self->status_head_}) {
+        lv_obj_set_style_translate_y(line, travel * value / 1000, 0);
+    }
+    lv_obj_invalidate(self->canvas_obj_);
+}
+
 void DialScreen::set_page_opa(void *var, int32_t value) {
     lv_obj_set_style_opa(static_cast<DialScreen *>(var)->root_, static_cast<lv_opa_t>(value), 0);
 }
@@ -253,9 +266,59 @@ void DialScreen::tween(lv_anim_exec_xcb_t exec, uint32_t delay_ms, uint32_t ms,
     lv_anim_start(&a);
 }
 
+void DialScreen::run(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t ms,
+                     lv_anim_path_cb_t path, lv_anim_completed_cb_t completed) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, this);
+    lv_anim_set_exec_cb(&a, exec);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_duration(&a, ms);
+    lv_anim_set_path_cb(&a, path);
+    lv_anim_set_completed_cb(&a, completed);
+    lv_anim_start(&a);
+}
+
+// The entry played backwards: the ring zooms back out past the edge, then the text slides down,
+// then the arrow drops off the bottom last. Each starts from wherever it is, so a leave during the
+// entry or a ring swap does not jump.
+void DialScreen::leave(LeaveDone done, void *ctx) {
+    lv_anim_delete(this, nullptr);
+    outer_swapping_ = false;
+    arrow_entry_pending_ = false;  // a maneuver arriving mid-exit must not restart the entry
+    leaving_ = true;               // freezes the page content; see update()
+    done_ = done;
+    done_ctx_ = ctx;
+    if (gui_app_nav_entry() == GUI_NAV_ENTRY_FADE) {
+        run(set_page_opa, lv_obj_get_style_opa(root_, LV_PART_MAIN), LV_OPA_TRANSP, kPageFadeMs,
+            lv_anim_path_ease_in_out, [](lv_anim_t *a) {
+                auto *s = static_cast<DialScreen *>(a->var);
+                s->done_(s->done_ctx_);
+            });
+        return;
+    }
+    run(set_swap_in, ring_in_, 0, kRingInMs, anim_path<ease_in_expo>, [](lv_anim_t *a) {
+        auto *s = static_cast<DialScreen *>(a->var);
+        // Recovered from the labels' offset (set_text_in), in case the entry had not finished.
+        const int32_t travel = lv_display_get_vertical_resolution(lv_display_get_default());
+        const int32_t text_in =
+            1000 - lv_obj_get_style_translate_y(s->street_label_, LV_PART_MAIN) * 1000 / travel;
+        s->run(set_text_in, text_in, 0, kTextInMs, lv_anim_path_ease_in_out, [](lv_anim_t *a2) {
+            auto *s2 = static_cast<DialScreen *>(a2->var);
+            s2->run(set_arrow_out, s2->arrow_out_, 1000, kArrowInMs, anim_path<ease_in_expo>,
+                    [](lv_anim_t *a3) {
+                        auto *s3 = static_cast<DialScreen *>(a3->var);
+                        s3->done_(s3->done_ctx_);
+                    });
+        });
+    });
+}
+
 void DialScreen::enter() {
     lv_anim_delete(this, nullptr);
     outer_swapping_ = false;  // the delete above may have dropped a swap mid-way
+    leaving_ = false;
+    set_arrow_out(this, 0);
     // Forces the first maneuver to be (re)added, so a second ride does not start mid-route.
     last_icon_ = static_cast<nav_icon_t>(-1);
     if (gui_app_nav_entry() == GUI_NAV_ENTRY_FADE) {
@@ -349,6 +412,13 @@ void DialScreen::draw_status_glyph(nav_icon_t icon) {
 }
 
 void DialScreen::update(const terminal_view_state_t &state) {
+    // Leaving means navigation has ended, so the incoming state is idle or unknown: applying it would
+    // blank the text and draw the UNKNOWN glyph over the arrow mid-exit. Hold the last frame instead,
+    // only letting a running maneuver tween finish.
+    if (leaving_) {
+        if (renderer_.tick(lv_tick_get())) lv_obj_invalidate(canvas_obj_);
+        return;
+    }
     // distance_meters is meaningful in VIEW_ACTIVE and VIEW_STALE (view_state.h) -- blank it
     // otherwise. VIEW_STALE is last-known-good, not garbage: it renders greyed rather than hidden,
     // because a held distance reads far better on the road than an empty dial.

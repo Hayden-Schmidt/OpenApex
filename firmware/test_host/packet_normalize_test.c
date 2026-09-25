@@ -332,9 +332,9 @@ static void test_eta_shortened(void) {
         const char *in;
         const char *out;
     } cases[] = {
-        {"Arrive 12:45", "ETA 12:45"},
-        {"Arrive at 12:45 pm", "ETA 12:45 pm"},
-        {"12:45 arrival", "ETA 12:45"},
+        {"Arrive 12:45", "12:45"},
+        {"Arrive at 12:45 pm", "12:45 pm"},
+        {"12:45 arrival", "12:45"},
         {"12 min", "12 min"},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {

@@ -227,23 +227,24 @@ bool IdleScreen::entered() const {
            progress_ == (connected_ ? 1000 : 0);
 }
 
-// Reverse of enter(): the connected text first, then the glyph back under the bubble, then the
-// bubble off the bottom.
+// Reverse of enter(), but the connected text and the glyph collapse together as one move, then the
+// bubble goes off the bottom once both have landed.
 void IdleScreen::leave(LeaveDone done, void *ctx) {
     lv_anim_delete(this, nullptr);
     leaving_ = true;
     done_ = done;
     done_ctx_ = ctx;
-    tween(set_progress, progress_, 0, kTweenMs, [](lv_anim_t *a) {
+    collapse_left_ = 2;
+    const lv_anim_completed_cb_t collapsed = [](lv_anim_t *a) {
         IdleScreen *self = from_anim(a);
-        self->tween(set_link_in, self->link_in_, 0, kLinkInMs, [](lv_anim_t *a2) {
+        if (--self->collapse_left_ > 0) return;
+        self->tween(set_bubble_in, self->bubble_in_, 0, kBubbleInMs, [](lv_anim_t *a2) {
             IdleScreen *self2 = from_anim(a2);
-            self2->tween(set_bubble_in, self2->bubble_in_, 0, kBubbleInMs, [](lv_anim_t *a3) {
-                IdleScreen *self3 = from_anim(a3);
-                self3->done_(self3->done_ctx_);
-            }, anim_path<ease_in_expo>);
-        });
-    });
+            self2->done_(self2->done_ctx_);
+        }, anim_path<ease_in_expo>);
+    };
+    tween(set_progress, progress_, 0, kTweenMs, collapsed);
+    tween(set_link_in, link_in_, 0, kTweenMs, collapsed);  // same length, so they land together
 }
 
 void IdleScreen::apply_layout() {

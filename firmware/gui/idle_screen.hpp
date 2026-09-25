@@ -56,6 +56,7 @@ private:
     bool leaving_ = false;
     LeaveDone done_ = nullptr;
     void *done_ctx_ = nullptr;
+    int collapse_left_ = 0;  // leave(): text and glyph collapses still running
     bool connected_ = false;
     uint8_t last_battery_percent_ = 0xFE;  // != 0xFF so the first update always paints
     uint32_t last_odometer_meters_ = UINT32_MAX;

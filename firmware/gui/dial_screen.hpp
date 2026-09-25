@@ -14,6 +14,7 @@ public:
     DialScreen();
     void update(const terminal_view_state_t &state) override;
     void enter() override;
+    void leave(LeaveDone done, void *ctx) override;
 
     // Swaps the outer element. Safe to call at any time; takes effect on the next frame.
     void set_outer(gui_dial_outer_t outer);
@@ -43,6 +44,14 @@ private:
     static void set_swap_in(void *var, int32_t value);  // ring zoom + ETA slide, for the swap
     bool outer_swapping_ = false;       // outgoing ring is zooming out; ignore further holds
     static void set_text_in(void *var, int32_t value);
+    // Page exit (see leave()): the arrow drops off the bottom, then the text, then the ring.
+    int32_t arrow_out_ = 0;             // 0..1000, at rest .. below the panel
+    static void set_arrow_out(void *var, int32_t value);
+    void run(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t ms, lv_anim_path_cb_t path,
+             lv_anim_completed_cb_t completed);
+    bool leaving_ = false;              // leave() running: update() holds the last frame
+    LeaveDone done_ = nullptr;
+    void *done_ctx_ = nullptr;
     static void set_page_opa(void *var, int32_t value);
     void tween(lv_anim_exec_xcb_t exec, uint32_t delay_ms, uint32_t ms, lv_anim_path_cb_t path);
 

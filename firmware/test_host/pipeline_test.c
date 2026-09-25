@@ -87,6 +87,25 @@ int main(void) {
     view_state_tick(2000 + 4 * 3600 * 1000U, &view); // wraps midnight
     assert(strcmp(view.clock, "00:15") == 0);
 
+    // ETA: time left against the phone clock (20:15 local here), or the arrival time.
+    strncpy((char *)&p[35], "Arrive 20:52", 31);
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 2000, &view);
+    assert(strcmp(view.eta, "37 min") == 0);
+    strncpy((char *)&p[35], "Arrive 0:40", 31); // crosses midnight forward
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 2000, &view);
+    assert(strcmp(view.eta, "4 h 25 min") == 0);
+    view_state_tick(2000 + 4 * 3600 * 1000U, &view); // 00:15 -> 25 min
+    assert(strcmp(view.eta, "25 min") == 0);
+    view_state_tick(2000 + 5 * 3600 * 1000U, &view); // 01:15: overdue reads 0, not ~23 h
+    assert(strcmp(view.eta, "0 min") == 0);
+    pipeline_set_eta_format(PIPELINE_ETA_ARRIVAL);
+    view_state_tick(2000, &view);
+    assert(strcmp(view.eta, "ETA 00:40") == 0);
+    pipeline_set_eta_format(PIPELINE_ETA_TIME_LEFT);
+    memset(&p[35], 0, 32);
+
     // 6. Odometer reaches the view: 36 km/h for 2 s = 20 m.
     build_packet(p, NULL, NULL, 360);
     assert(packet_decode(p, sizeof(p), &raw));

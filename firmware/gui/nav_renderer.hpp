@@ -51,6 +51,9 @@ public:
     // Same, minus the compass ring: for pages that put something else in that slot (see TripArc).
     void draw_route_only(lv_layer_t *layer, const lv_area_t &coords) const;
 
+    // The ring alone, for pages that move the route independently of it (the dial's exit).
+    const CompassRing &compass() const { return compass_; }
+
 private:
     struct Pose {
         float base_dist = 0.0f;

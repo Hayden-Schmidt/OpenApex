@@ -1080,7 +1080,10 @@ the countdown; telemetry-only packets (time, battery, GNSS) keep the terminal on
 
 **Text normalisation.** Street extraction no longer eats the first letter after " on " ("alliser
 Lane"). Street suffixes and compass words are abbreviated as whole words (Street->St, Lane->Ln,
-North->N, ...), never the first word. ETA drops "arrive"/"arrival at" and is prefixed "ETA".
+North->N, ...), never the first word. ETA drops "arrive"/"arrival at". The label is configurable
+(`pipeline_set_eta_format()`, default `PIPELINE_ETA_FORMAT_DEFAULT`): arrival time ("ETA 03:06"), or time
+left only ("15 min", the default). Maps sends only the arrival clock, and trip
+progress is a fraction with no duration, so time left is arrival minus the phone's synced clock.
 
 **Trip arc.** Outer radius 116 (was 117), stroke 7 (was 5), gap widened to 116..424 deg.
 

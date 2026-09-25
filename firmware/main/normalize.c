@@ -257,7 +257,7 @@ static void shorten_eta(char *eta, size_t len) {
         p = end;
     }
     rest[o] = '\0';
-    if (found) snprintf(eta, len, "ETA %s", rest);
+    if (found) snprintf(eta, len, "%s", rest);
 }
 
 // Rewrites whole street-type words in `name` (in place) to their abbreviations: "Palliser Lane"
