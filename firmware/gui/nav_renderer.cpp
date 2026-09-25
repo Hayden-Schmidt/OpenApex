@@ -19,21 +19,10 @@ constexpr float kRevealSpeed = 0.9f;        // route units / ms
 constexpr uint32_t kMinRevealMs = 1000;
 constexpr uint32_t kMaxRevealMs = 1200;
 
-constexpr int kCompassTickCount = 36;
-constexpr int kCompassMajorEvery = 3;
-constexpr float kCompassMinorLength = 0.06f;
-constexpr float kCompassMajorLength = 0.10f;
-constexpr float kCompassMinorWidth = 3.0f;
-constexpr float kCompassMajorWidth = 6.0f;
-constexpr float kCompassNorthLength = 0.10f;
-constexpr float kCompassNorthWidth = 0.045f;
-
 // HEAD_DEPTH (Demo/demo.js): how far back from the arrowhead's tip its glyph is already at full
 // width -- the rendered line is trimmed short by this much so it tucks under the glyph.
 const float kHeadDepth = NAV_ARROWHEAD_HEAD_BASE_DEPTH * kArrowheadScale;
 
-lv_color_t compass_color() { return lv_color_hex(0x585f68); }
-lv_color_t north_color() { return lv_color_hex(0xff3b30); }
 lv_color_t route_color() { return lv_color_white(); }
 
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -315,7 +304,8 @@ float deg_of(float rad) { return rad * 180.0f / kPi; }
 
 } // namespace
 
-NavRenderer::NavRenderer(int32_t display_diameter_px) : display_diameter_px_(display_diameter_px) {
+NavRenderer::NavRenderer(int32_t display_diameter_px)
+    : compass_(display_diameter_px), display_diameter_px_(display_diameter_px) {
     build_arrowhead_mask();
 }
 
@@ -581,8 +571,7 @@ bool NavRenderer::tick(uint32_t now_ms) {
 }
 
 void NavRenderer::set_north_heading(float heading_rad, bool known) {
-    north_heading_rad_ = heading_rad;
-    north_known_ = known;
+    compass_.set_north(heading_rad, known);
 }
 
 nav_pt_t NavRenderer::world_to_screen(const nav_pt_t &p, const Pose &cam, float basis_c,
@@ -639,47 +628,10 @@ void NavRenderer::draw_segment(lv_layer_t *layer, const Seg &s, const Pose &cam,
                route_color(), /*path_end_at_start=*/s.turn < 0.0f, out_end);
 }
 
-void NavRenderer::draw_compass_ring(lv_layer_t *layer, const lv_area_t &coords) const {
-    const float half = static_cast<float>(display_diameter_px_) / 2.0f;
-    const float cx = static_cast<float>(coords.x1) + half;
-    const float cy = static_cast<float>(coords.y1) + half;
-    const float px_unit = px_per_unit();
-
-    for (int i = 0; i < kCompassTickCount; ++i) {
-        const float angle =
-            (static_cast<float>(i) / kCompassTickCount) * 2.0f * kPi - kPi / 2.0f;
-        const bool is_major = (i % kCompassMajorEvery) == 0;
-        const float len = (is_major ? kCompassMajorLength : kCompassMinorLength) * half;
-        const float w = std::max(1.0f, (is_major ? kCompassMajorWidth : kCompassMinorWidth) *
-                                            px_unit);
-        const float c = std::cos(angle), s = std::sin(angle);
-        stroke_line(layer, cx + c * half, cy + s * half, cx + c * (half - len),
-                    cy + s * (half - len), w, compass_color());
-    }
-
-    if (!north_known_) return;
-    // The route is drawn heading-up: the bike's forward direction is pinned to the top of the
-    // screen, so the world -- north included -- rotates the OPPOSITE way to the heading. Hence the
-    // negation. Without it the marker sweeps at exactly the right rate in exactly the wrong
-    // direction, which is what "the compass spins backwards" on the 2026-09-23 ride was.
-    // (-kPi/2 then converts "clockwise from up" to the atan2 convention, 0 = +x.)
-    const float screen_angle = -north_heading_rad_ - kPi / 2.0f;
-    const float nc = std::cos(screen_angle), ns = std::sin(screen_angle);
-    const float tip_r = half * (1.0f - kCompassNorthLength);
-    const nav_pt_t tip = {cx + nc * tip_r, cy + ns * tip_r};
-    const float base_half_w = kCompassNorthWidth * half;
-    const float perp_x = -ns, perp_y = nc;
-    const nav_pt_t base_a = {cx + nc * half + perp_x * base_half_w,
-                              cy + ns * half + perp_y * base_half_w};
-    const nav_pt_t base_b = {cx + nc * half - perp_x * base_half_w,
-                              cy + ns * half - perp_y * base_half_w};
-    fill_triangle(layer, base_a, base_b, tip, north_color());
-}
-
 void NavRenderer::draw(lv_layer_t *layer, const lv_area_t &coords) const {
     if (!has_route_) return;
 
-    draw_compass_ring(layer, coords);
+    compass_.draw(layer, coords);
 
     const float basis_c = std::cos(cur_.rot), basis_s = std::sin(cur_.rot);
     const auto to_screen = [&](const nav_pt_t &p) {

@@ -57,25 +57,79 @@ the folder.
 
 ---
 
-## Current code status: ⬜ not started (no data model)
+## Current code status: ✅ rendered (data is fixture-only)
 
-**Nothing exists yet.** The odometer page is fully unbuilt, and its data has no home:
+`firmware/gui/odometer_screen.{hpp,cpp}`. Verified against `Odometer page ref.svg` at 240x240 --
+every element lands within ~1px, the rounding floor at that resolution.
 
-- `terminal_view_state_t` (`firmware/main/view_state.h`) has **no odometer field** — lifetime
-  distance is not tracked anywhere in the model.
-- No NVS persistence for a device odometer (`firmware/main/ble_link.c` uses NVS for BLE bonding
-  only; there is no odometer store).
-- No account/app-side aggregation on Android (`android/.../RelayService.kt` and the relay packet
-  `RawNotifPacket.kt` carry no odometer data).
-- `heading_deg` (needed for elements a/b) **is** already in `terminal_view_state_t`, but the
-  compass rendering itself is unbuilt (see page 3).
+Review it with:
 
-**Backend gaps flagged (all post-UI-sprint):**
-1. **Odometer data model** — a lifetime-distance field + increment logic (driven by
-   `speed_kmh_x10`/GNSS) on the device.
-2. **NVS persistence** — store the device odometer across reboots.
-3. **Account aggregation** — phone app collation of odometer readings across devices.
-4. **Per-phone vs total-device semantics** — unresolved; needs the design decision above.
-5. **Time/RTC source** — C3 has no RTC; S3 has PCF85063 (`board_profile.h`). Phone time sync needed
-   for the clock.
-6. **Compass smoothing** — shared with page 3's compass element.
+```powershell
+firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe --page odometer
+```
+
+which sweeps the heading a full turn every 20s (so the compass ring and the degree/cardinal readout
+are both visibly live) and climbs the odometer about a tenth of a km per second.
+
+**Compass element (b): genuinely reused, not reimplemented.** The ring lived inside `NavRenderer`
+as a private `draw_compass_ring()`, so it was not reusable as written. It is now
+`firmware/gui/compass_ring.{hpp,cpp}` and `NavRenderer` delegates to it -- one implementation, one
+set of constants, and a heading that cannot drift between the two pages. Verified non-regressing by
+diffing a rendered dial frame before and after the extraction: 0 differing pixels. (The first
+attempt was 19 pixels off along the north marker's anti-aliased edge, because the original
+`to_lv()` truncated where the extracted copy rounded. The truncation is now deliberately preserved,
+with a comment saying why.)
+
+**Departure from the requirements above: FOUR digits, not five.** The SVG draws three full-size
+boxes plus a smaller tenths box beside "km"; the prose says five. The SVG is the Figma reference and
+wins, the same call made for page 2's km-vs-miles. Changing it is `kDigitCount` plus the `kBoxX`
+table.
+
+**Implementation notes:**
+
+- Geometry is authored as reference-design pixels against the SVG's 240px frame and scaled at
+  runtime, so the page renders at any panel size.
+- The compass ring draws into an `LV_EVENT_DRAW_MAIN` layer rather than owning widgets -- 36 ticks
+  would otherwise be 36 `lv_obj_t` for something never hit-tested or individually styled. Same
+  approach `DialScreen` uses.
+- `montserrat_at_most()` moved out of `idle_screen.cpp` into the shared `gui_font.{hpp,cpp}` and now
+  enumerates every Montserrat size. Its previous hand-written subset silently rounded this page's
+  38px digits down to 28.
+- "km" takes an explicit 18px rather than being derived like the other labels: it is the only run
+  with no capitals, so its 13.09px in the SVG is a lowercase *ascender*, a larger fraction of the em
+  than a cap height. Deriving it rounded down to 14px and rendered the unit visibly undersized.
+- Montserrat 18/28/38 were enabled in both `firmware/sim_lvgl/include/lv_conf.h` and
+  `firmware/sdkconfig.defaults`. **Those two lists must stay mirrored** or the simulator renders a
+  page at a different size than the device does.
+
+**Routing:** the odometer is a page the rider *picks*, not a `view_state_t` -- no packet or
+countdown result can produce it. Rather than adding a bogus value to the protocol enum, it is
+reached through `gui_app_set_page_override(GUI_PAGE_ODOMETER)` (`gui_app.hpp`). An active maneuver
+always takes the screen back and clears the selection: being shown the odometer instead of the turn
+you are about to miss is a safety problem, not a UX one.
+
+**Backend gaps flagged:**
+
+1. **Page switching has no input source.** `gui_app_set_page_override()` exists and works, but
+   nothing on the device calls it -- the C3 profile models no buttons and `BOARD_HAS_TOUCH` is 0.
+   `firmware/sim_lvgl`'s `--page` flag is the only caller today. This blocks the page from being
+   reachable on hardware at all.
+2. **Odometer data model** -- `terminal_view_state_t.odometer_meters` exists (added for page 2) and
+   this page renders it, but nothing writes it. Capacity is part of this decision: four boxes hold
+   999.9km, which is not a lifetime figure.
+3. **NVS persistence** for the device odometer.
+4. **Account aggregation** -- phone-app collation across devices.
+5. **Per-phone vs total-device semantics** -- still unresolved; see the open design decision above.
+   The UI is built and does not depend on which way it goes.
+6. **Time/RTC source** -- `clock` renders `--:--` until phone time sync exists. C3 has no RTC.
+7. **Compass smoothing** -- shared with page 3's compass element; `heading_deg` is fused
+   (`heading_fusion.c`) but nothing populates it into the view state.
+
+**Not built (deferred, per the requirements):**
+
+- **Rich tier's last-digit fill** -- the tenths box's background slowly filling with the theme
+  colour as it approaches rollover. Needs the odometer data model first; filling from a fixture
+  would be animating a number nothing produces.
+- **Rich tier's morphing clock digits.** Both tiers render a static clock today.
+- **12h vs 24h toggle** -- needs the runtime config store. The clock renders whatever string the
+  view state carries.

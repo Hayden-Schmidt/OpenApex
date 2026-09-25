@@ -51,6 +51,30 @@ terminal_view_state_t make_idle_fixture_frame(uint32_t elapsed_ms) {
     return frame;
 }
 
+// Odometer-page fixture (--page odometer): pins VIEW_IDLE (the odometer is a rider-selected page,
+// not a nav state -- see gui_app_set_page_override) and sweeps the heading a full turn every 20s so
+// the shared compass ring and the degree/cardinal readout are both visibly live. The odometer count
+// climbs about a tenth of a km per second so the digits actually tick over during a review.
+terminal_view_state_t make_odometer_fixture_frame(uint32_t elapsed_ms) {
+    terminal_view_state_t frame;
+    std::memset(&frame, 0, sizeof(frame));
+    frame.sequence = elapsed_ms;
+    frame.state = VIEW_IDLE;
+    frame.icon_type = NAV_ICON_UNKNOWN;
+    frame.speed_kmh_x10 = 0xFFFF;
+    frame.battery_percent = 87;
+    frame.phone_connected = true;
+    frame.heading_deg = static_cast<uint16_t>((elapsed_ms / 55u) % 360u);
+    frame.odometer_meters = 99000u + elapsed_ms * 100u;
+
+    const std::time_t now = std::time(nullptr);
+    const std::tm *lt = std::localtime(&now);
+    if (lt != nullptr) {
+        std::snprintf(frame.clock, sizeof(frame.clock), "%02d:%02d", lt->tm_hour, lt->tm_min);
+    }
+    return frame;
+}
+
 terminal_view_state_t make_fixture_frame(uint32_t elapsed_ms) {
     terminal_view_state_t frame;
     std::memset(&frame, 0, sizeof(frame));
@@ -128,6 +152,7 @@ int main(int argc, char *argv[]) {
     uint32_t shot_at_ms = 0;
     const char *shot_path = nullptr;
     bool idle_page = false;
+    bool odometer_page = false;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -139,6 +164,8 @@ int main(int argc, char *argv[]) {
             ++i;
             if (std::strcmp(argv[i], "idle") == 0) {
                 idle_page = true;
+            } else if (std::strcmp(argv[i], "odometer") == 0) {
+                odometer_page = true;
             } else if (std::strcmp(argv[i], "all") != 0) {
                 std::fprintf(stderr, "sim_lvgl: unknown page '%s'\n", argv[i]);
                 print_usage(argv[0]);
@@ -210,6 +237,9 @@ int main(int argc, char *argv[]) {
     }
 
     gui_app_init();
+    // The odometer is a rider-selected page rather than a view_state_t, so it is reached through
+    // the page-override seam, not by feeding a different state.
+    if (odometer_page) gui_app_set_page_override(GUI_PAGE_ODOMETER);
 
     std::printf("sim_lvgl: window open at %dx%d\n", disp_w, disp_h);
 
@@ -221,8 +251,9 @@ int main(int argc, char *argv[]) {
     const uint32_t start_ms = SDL_GetTicks();
     for (;;) {
         uint32_t elapsed = SDL_GetTicks() - start_ms;
-        terminal_view_state_t frame =
-            idle_page ? make_idle_fixture_frame(elapsed) : make_fixture_frame(elapsed);
+        terminal_view_state_t frame = odometer_page ? make_odometer_fixture_frame(elapsed)
+                                      : idle_page    ? make_idle_fixture_frame(elapsed)
+                                                     : make_fixture_frame(elapsed);
         gui_app_update(&frame);
 
         uint32_t idle_ms = lv_timer_handler();

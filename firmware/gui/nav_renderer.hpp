@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "compass_ring.hpp"
 #include "lvgl.h"
 #include "nav_icons_data.h"
 
@@ -139,8 +140,9 @@ private:
     void retarget(const Pose &target, uint32_t duration_ms);
 
     // -- compass ------------------------------------------------------------------------------
-    float north_heading_rad_ = 0.0f;
-    bool north_known_ = false;
+    // Shared with the odometer page; see compass_ring.hpp. Declared before display_diameter_px_ so
+    // it is constructed first -- member init order follows declaration order, not the ctor list.
+    CompassRing compass_;
 
     // -- camera / geometry helpers ----------------------------------------------------------
     const int32_t display_diameter_px_;
@@ -149,5 +151,4 @@ private:
     nav_pt_t world_to_screen(const nav_pt_t &p, const Pose &cam, float basis_c, float basis_s,
                               const lv_area_t &coords) const;
 
-    void draw_compass_ring(lv_layer_t *layer, const lv_area_t &coords) const;
 };

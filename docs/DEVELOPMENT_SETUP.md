@@ -146,8 +146,11 @@ firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe          # live window
 firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe 466      # resolution override, same binary
 ```
 
-`--page <name>` selects the fixture: `all` (default) cycles every `view_state_t`, `idle` pins
-`VIEW_IDLE` and flips the phone link every 5s to replay the idle screen's connect transition.
+`--page <name>` selects the fixture: `all` (default) cycles every `view_state_t`; `idle` pins
+`VIEW_IDLE` and flips the phone link every 5s to replay the idle screen's connect transition;
+`odometer` sweeps the heading a full turn every 20s and climbs the odometer, and is the only way to
+reach that page at all — it is rider-selected rather than a `view_state_t`, and the device has no
+input source wired to `gui_app_set_page_override()` yet.
 
 Every run opens on the boot screen for 2s before the fixture is honoured (`BOARD_HAS_SPLASH`,
 `gui_app.cpp`) — restart the window to replay it, and add 2000ms to any `--shot` time meant to land
@@ -165,6 +168,16 @@ The output path is **always overwritten**, never suffixed, so repeated runs don'
 Write shots to a scratch directory, not into the repo. This path needs `LV_USE_SNAPSHOT 1`, which is
 set in `firmware/sim_lvgl/include/lv_conf.h` only — the on-device build leaves it off, so nothing in
 `firmware/gui/` may depend on it.
+
+**Font sizes must be enabled in both `firmware/sim_lvgl/include/lv_conf.h` and
+`firmware/sdkconfig.defaults`.** `firmware/gui/gui_font.cpp` picks the nearest *enabled* Montserrat
+at or below the requested size, so a size turned on in only one of the two silently renders a page
+at a different size in the simulator than on the device. Every built-in face costs flash, which is
+why they are enabled per-page rather than wholesale.
+
+**`int32_t` is `int` under MinGW and `long` on riscv32.** A `std::max(1, some_int32)` compiles clean
+in the simulator and fails the device build with "no matching function". The simulator is not a
+substitute for running `pio run -d firmware -e prototype_c3` before committing GUI changes.
 
 **Both sim environments share one set of `firmware/gui` object files.** `build_src_filter` reaches
 outside the project dir (`+<../../gui/*.cpp>`), so PlatformIO emits those objects to

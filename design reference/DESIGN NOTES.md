@@ -94,7 +94,7 @@ details one "page" and the elements on that page.
 | 1. Startup / boot screen | `1. Startup Screen/bootscreen.md` | ✅ (rendered; logo asset is a placeholder) |
 | 2. Idle screen | `2. Idle Screen/2. idle screen.md` | ✅ (rendered + connect animation; data is fixture-only) |
 | 3. Turn-by-turn | `3.Turn by Turn/turn by turn.md` | 🔶 (model + pipeline done, render stub) |
-| 4. Odometer page | `4. Odometer page/odometer page.md` | ⬜ (no odometer data in model yet) |
+| 4. Odometer page | `4. Odometer page/odometer page.md` | ✅ (rendered; data fixture-only, no input to reach it) |
 
 Update this doc and each page doc as you go to reflect current status and outstanding items
 (backend and phone app).
@@ -110,7 +110,11 @@ The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` hierarchy from `docs/Open
   compile time by `BOARD_GFX_TIER`. The theme owns the *how*; the page owns the *what*. Reach it
   from a page via `gui_theme()` in `gui_app.hpp`.
 - `gui_app.cpp` — routes `view_state_t` to a page and forwards every frame to it.
-- `splash_screen.cpp`, `idle_screen.cpp`, `dial_screen.cpp` — the pages that exist.
+- `splash_screen.cpp`, `idle_screen.cpp`, `odometer_screen.cpp`, `dial_screen.cpp` — the pages
+  that exist.
+- `compass_ring.{hpp,cpp}` — the compass ring shared by the turn-by-turn and odometer pages.
+- `gui_font.{hpp,cpp}` — `montserrat_at_most()`, the one place a page turns a glyph height
+  measured off a Figma SVG into a built-in font.
 - `icons.hpp` / `icons.cpp` — accessors for the generated raster set.
 
 **Writing a page:** build the whole widget tree in the constructor and only mutate it in
@@ -119,6 +123,17 @@ The `Screen` / `GuiTheme` / `BasicTheme` / `RichTheme` hierarchy from `docs/Open
 binary renders correctly at any panel size; express geometry as reference-design pixels against the
 240px Figma frame and scale at runtime (see `IdleScreen::px()`). Take colours from
 `gui_theme().palette()`, never a literal.
+
+**Shared elements live in their own file, not in whichever page built them first.** The compass ring
+was a private method inside `NavRenderer` until the odometer page needed the *same* element; the font
+picker was a static helper inside `idle_screen.cpp` with a hand-written list of sizes that silently
+rounded 38px type down to 28. When a second page needs something, extract it rather than copying —
+and when the extraction touches working render code, prove it non-regressing with a `--shot`
+before/after diff (the compass extraction was 19 pixels off on its first attempt).
+
+**Fonts are enabled in two places that must stay mirrored:**
+`firmware/sim_lvgl/include/lv_conf.h` and `firmware/sdkconfig.defaults`. Enable a size in only one
+and the simulator renders a page at a different size than the device does, silently.
 
 **Boot order matters as much as the boot page.** Two defects found while building the splash, now
 fixed and worth not reintroducing: `display_driver_init()` must leave the backlight OFF (the panel's
@@ -150,11 +165,18 @@ and should be collated into a new doc in `docs/` once the UI sprint finishes. Cu
 backend gaps:
 
 1. **Rerouting** maneuver (no `nav_icon_t` value, not surfaced by any maps app adapter yet).
-2. **Odometer** data model + NVS persistence. `terminal_view_state_t.odometer_meters` exists and the
-   idle screen renders it, but nothing writes it.
+1b. **Page switching has no input source.** `gui_app_set_page_override()` is the seam rider-selected
+   pages route through, but nothing on the device calls it: the C3 models no buttons and
+   `BOARD_HAS_TOUCH` is 0. The odometer page is therefore unreachable on hardware today — only
+   `firmware/sim_lvgl --page` gets to it.
+2. **Odometer** data model + NVS persistence. `terminal_view_state_t.odometer_meters` exists and both
+   the idle and odometer screens render it, but nothing writes it. Capacity is part of this
+   decision: the odometer page's four boxes hold 999.9km, which is not a lifetime figure. Per-device
+   vs per-phone semantics are still an open design question (see that page's doc).
 3. **Runtime config store** (theme colour, unit, 24h/12h, element visibility) — no schema. The idle
    screen hardcodes km as a result.
-4. **Compass smoothing** for phone-GNSS-derived heading (data exists, smoothing does not).
+4. **Compass smoothing** for phone-GNSS-derived heading (data exists, smoothing does not). Now
+   affects two pages: `CompassRing` is shared by the turn-by-turn dial and the odometer page.
 5. **Time/RTC**. `terminal_view_state_t.clock` exists and the idle screen renders it (falling back
    to `--:--`), but no source populates it. S3 has a PCF85063 RTC in `board_profile.h`; the C3 has
    none and needs phone-side time sync.

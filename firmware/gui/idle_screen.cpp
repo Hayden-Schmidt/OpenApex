@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "gui_app.hpp"
+#include "gui_font.hpp"
 #include "icons.hpp"
 #include "theme.hpp"
 
@@ -63,36 +64,6 @@ icon_id_t battery_icon_for(uint8_t percent) {
 }
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
-
-// Nearest enabled built-in Montserrat at or below `px`. LVGL's bundled faces stop at 48, so the
-// RICH/466px tier (which wants a ~85px clock) currently tops out visibly small.
-// TODO(rich-tier): generate a proper large face with lv_font_conv for the S3 panel.
-const lv_font_t *montserrat_at_most(int32_t px) {
-    const lv_font_t *best = LV_FONT_DEFAULT;
-    int32_t best_px = 0;
-#define IDLE_TRY_FONT(n)                                          \
-    if (LV_FONT_MONTSERRAT_##n && (n) <= px && (n) > best_px) { \
-        best = &lv_font_montserrat_##n;                           \
-        best_px = (n);                                            \
-    }
-#if LV_FONT_MONTSERRAT_14
-    IDLE_TRY_FONT(14)
-#endif
-#if LV_FONT_MONTSERRAT_20
-    IDLE_TRY_FONT(20)
-#endif
-#if LV_FONT_MONTSERRAT_28
-    IDLE_TRY_FONT(28)
-#endif
-#if LV_FONT_MONTSERRAT_44
-    IDLE_TRY_FONT(44)
-#endif
-#if LV_FONT_MONTSERRAT_48
-    IDLE_TRY_FONT(48)
-#endif
-#undef IDLE_TRY_FONT
-    return best;
-}
 
 // "3,500 km", matching the Figma reference. Grouping is done by hand: printf's %'u is a
 // glibc/locale extension that newlib on the C3 does not provide.
