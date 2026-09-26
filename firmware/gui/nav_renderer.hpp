@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "board_profile.h"
 #include "compass_ring.hpp"
 #include "lvgl.h"
 #include "nav_icons_data.h"
@@ -133,9 +134,12 @@ private:
     // coverage mask and drawn each frame as a single recoloured, rotated lv_draw_image. One shape,
     // one anti-aliasing pass, no interior edges -- seams become structurally impossible.
     //
-    // Sized for the largest panel this renderer is built for; the glyph's on-screen extent is
-    // ~0.186 * display diameter (see build_arrowhead_mask), so 64 covers diameters up to ~344.
-    static constexpr int kHeadMaskMaxSide = 64;
+    // Sized off the board profile's panel; the glyph's on-screen extent is ~0.22 * display
+    // diameter at kArrowheadScale 0.3 (see build_arrowhead_mask), so width/4 plus a few px covers it with headroom for
+    // kArrowheadScale tweaks. Floor of 64 keeps the C3 at its old size. A fixed 64 clipped the
+    // head to a sliver on the 466px S3 panel.
+    static constexpr int kHeadMaskMaxSide =
+        BOARD_DISP_WIDTH / 4 + 8 > 64 ? BOARD_DISP_WIDTH / 4 + 8 : 64;
     uint8_t head_mask_[kHeadMaskMaxSide * kHeadMaskMaxSide];
     lv_image_dsc_t head_img_{};
     // Where the glyph's tip sits inside the mask -- both the image's placement anchor and the

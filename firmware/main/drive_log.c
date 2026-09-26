@@ -14,6 +14,10 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+// The strncpy()s below deliberately clip strings into fixed-width, pre-zeroed log fields -- the
+// truncation -O2 warns about is the point, and the zeroed tail keeps every field terminated.
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+
 static const char *TAG = "drive_log";
 
 #define LOG_QUEUE_LEN 8

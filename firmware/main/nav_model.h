@@ -21,6 +21,9 @@ typedef enum {
     NAV_ICON_U_TURN,
     NAV_ICON_ARRIVED,
     NAV_ICON_UNKNOWN,
+    // On the destination's street, counting down to it -- navigation has not ended yet. Appended
+    // after UNKNOWN so the values above stay stable.
+    NAV_ICON_DESTINATION,
 } nav_icon_t;
 
 #define NAV_STREET_LEN 64

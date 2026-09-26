@@ -52,10 +52,10 @@ FIRMWARE_C_OUT = os.path.join(HERE, "..", "..", "firmware", "gui", "nav_icons_da
 # roundabout_left: baked bbox centre (-101.4, -83.9) vs the tuned (-55, -136.6)). Kept in sync by
 # hand since it lives in a JS-only params file; update both if you retune framing there.
 FRAME_CENTER_OVERRIDES = {
-    "straight": [0.0, -130.0],
+    "straight": [0.0, -137.0],
     "turn_right": [70.0, -120.0],
     "turn_left": [-70.0, -120.0],
-    "turn_slight_right": [34.6, -145.5],
+    "turn_slight_right": [34.6, -125.5],
     # Sharp pair: the baked bbox centre is (82.5, -87.5), but a 125-degree bend puts the exit leg
     # low and outboard, so the geometric centre sits below and right of where the eye reads the
     # maneuver. Pulled in and up by the same proportion turn_right is (its baked centre is
@@ -63,12 +63,12 @@ FRAME_CENTER_OVERRIDES = {
     # same way when the display cuts between them.
     "turn_sharp_right": [58.0, -112.0],
     "turn_sharp_left": [-58.0, -112.0],
-    "turn_slight_left": [-34.6, -145.5],
-    "u_turn_right": [70.0, -130.0],
-    "u_turn_left": [-70.0, -130.0],
-    "roundabout_right": [40.0, -145.0],
-    "roundabout_straight": [-0.0, -165.0],
-    "roundabout_left": [-55.0, -136.6],
+    "turn_slight_left": [-34.6, -125.5],
+    "u_turn_right": [55.0, -117.5],
+    "u_turn_left": [-55.0, -117.5],
+    "roundabout_right": [40.0, -135.0],
+    "roundabout_straight": [0.0, -140.0],
+    "roundabout_left": [-55.0, -116],
     "right_merge": [70.0, -130.0],
     "merge_left": [-70.0, -130.0],
 }

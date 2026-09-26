@@ -35,6 +35,18 @@ static pipeline_eta_format_t s_eta_format = PIPELINE_ETA_FORMAT_DEFAULT;
 // keeps counting down between packets.
 static char s_eta_arrival[NAV_ETA_LEN];
 
+// Arrival is the route ending, not the destination pin. Maps shows the pin with a countdown while
+// you are on the destination's street, then drops the notification once you get there (2026-09-26
+// capture: "130 m . Daifuku Oceania" down to 100 m, then telemetry-only packets). The final leg is
+// latched while the pin -- or a trip remainder no longer than the distance to the next maneuver --
+// is up, and the first packet without a route after it is the arrival.
+#define ARRIVED_HOLD_MS 8000U
+// Slack between trip remainder and maneuver distance: the two are rounded separately by Maps.
+#define FINAL_LEG_SLACK_M 20
+static bool s_final_leg;
+static bool s_arrived;
+static uint32_t s_arrived_ms;
+
 void pipeline_set_eta_format(pipeline_eta_format_t format) { s_eta_format = format; }
 
 static uint32_t maneuver_identity(const nav_model_t *model) {
@@ -202,8 +214,26 @@ void view_state_apply_packet(const raw_notif_t *raw, uint32_t now_ms, terminal_v
     out->traffic_count = model.traffic_count;
     out->trip_progress_permille = model.trip_progress_permille != NAV_U16_UNKNOWN ? model.trip_progress_permille : 0U;
 
-    if (model.icon_type == NAV_ICON_ARRIVED) {
+    if (model.icon_type == NAV_ICON_ARRIVED) {  // Maps said so outright: hold it the same way
+        s_final_leg = false;
+        s_arrived = true;
+        s_arrived_ms = now_ms;
+    } else if (has_nav) {
+        s_arrived = false;
+        s_final_leg = model.icon_type == NAV_ICON_DESTINATION ||
+                      (distance_valid && model.remaining_meters >= 0 &&
+                       model.remaining_meters <= distance_meters + FINAL_LEG_SLACK_M);
+    } else if (s_final_leg) {
+        s_final_leg = false;
+        s_arrived = true;
+        s_arrived_ms = now_ms;
+    }
+
+    if (s_arrived) {
         out->state = VIEW_ARRIVED;
+        out->distance_meters = 0;
+    } else if (!has_nav) {
+        out->state = VIEW_IDLE;
         out->distance_meters = 0;
     } else if (!distance_valid && !countdown_has_baseline()) {
         // Never had a distance for this maneuver — nothing to count down from.
@@ -232,6 +262,12 @@ void view_state_tick(uint32_t now_ms, terminal_view_state_t *out) {
     format_clock(now_ms, out->clock, sizeof(out->clock));
     format_eta(now_ms, out->eta, sizeof(out->eta));
     out->odometer_meters = odometer_meters();
+
+    // The arrived page is a moment, not a state: it gives way to idle on its own, packets or not.
+    if (s_arrived && now_ms - s_arrived_ms >= ARRIVED_HOLD_MS) {
+        s_arrived = false;
+        if (out->state == VIEW_ARRIVED) out->state = VIEW_IDLE;
+    }
 
     if (out->state != VIEW_ACTIVE && out->state != VIEW_STALE) {
         return;

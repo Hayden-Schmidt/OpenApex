@@ -10,8 +10,10 @@ CONFIG_LVGL_ENABLE=y
 # the simulator silently renders a page at a different size than the device does.
 # The 466px RICH tier wants larger still — that needs an lv_font_conv-generated face, not another
 # built-in, since LVGL's bundled Montserrat stops at 48.
+CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_18=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_38=y
 CONFIG_LV_FONT_MONTSERRAT_44=y
@@ -30,3 +32,7 @@ CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 # Bond storage must survive reboot: the "bike on -> device boots -> phone reconnects" flow relies
 # on the terminal and phone staying bonded across power cycles, not re-pairing every boot.
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
+# -O2 rather than the -Og debug default: LVGL's software renderer is the frame-rate bottleneck on
+# the single-core C3, and it runs markedly faster optimised.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y

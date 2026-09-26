@@ -11,6 +11,26 @@
 // both are handled here.
 void normalize_packet(const raw_notif_t *raw, nav_model_t *out);
 
+// Maps joins a road's two names with a slash ("Greville Rd/SH 17"); the panel has room for one.
+// Which one wins when both are present -- the local name or the highway/route number.
+typedef enum {
+    NORMALIZE_STREET_PREFER_NAME = 0,  // "Greville Rd"
+    NORMALIZE_STREET_PREFER_ROUTE,     // "SH 17"
+} normalize_street_pref_t;
+
+#ifndef NORMALIZE_STREET_PREF_DEFAULT
+#define NORMALIZE_STREET_PREF_DEFAULT NORMALIZE_STREET_PREFER_NAME
+#endif
+
+// Longest street name shown, in characters, after abbreviation. Longer names lose words (or
+// letters) from the middle and keep their type suffix: "Wellington Harbour Esplanade Rd" ->
+// "Wellington Rd". Sized to the dial's street line at its font.
+#ifndef NORMALIZE_STREET_MAX_LEN
+#define NORMALIZE_STREET_MAX_LEN 18
+#endif
+
+void normalize_set_street_pref(normalize_street_pref_t pref);
+
 // Classifies one Maps progress-bar segment colour into a traffic level. Exposed for the host tests.
 nav_traffic_level_t normalize_traffic_color(uint8_t r, uint8_t g, uint8_t b);
 

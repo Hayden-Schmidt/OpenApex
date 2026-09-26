@@ -147,6 +147,12 @@ void gui_app_update(const terminal_view_state_t *state) {
     } else if (next != s_active && may_leave()) {
         s_pending = next;
         s_leaving = true;
+        // A page that enters over its predecessor (the arrived reveal) covers it as it stands:
+        // playing the old page's exit first would leave nothing on screen to cover.
+        if (next->enters_over()) {
+            on_leave_done(nullptr);
+            return;
+        }
         s_active->leave(on_leave_done, nullptr);
     }
     s_active->update(*state);

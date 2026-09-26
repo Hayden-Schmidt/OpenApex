@@ -69,34 +69,34 @@ static const nav_segment_t nav_icon_turn_left_main[] = {
     {NAV_SEG_LINE, {-60.00f, -190.00f}, 180.0000f, 140.0000f, 0.0000f, -0.0000f, 224.2478f, 364.2478f},
 };
 static const nav_segment_t nav_icon_turn_slight_right_main[] = {
-    {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, 0.0000f, 0.0000f, 130.0000f},
-    {NAV_SEG_ARC, {0.00f, -130.00f}, -90.0000f, 36.6519f, 60.0000f, 35.0000f, 130.0000f, 166.6519f},
-    {NAV_SEG_LINE, {10.85f, -164.41f}, -55.0000f, 145.0000f, 0.0000f, 0.0000f, 166.6519f, 311.6519f},
+    {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 110.0000f, 0.0000f, 0.0000f, 0.0000f, 110.0000f},
+    {NAV_SEG_ARC, {0.00f, -110.00f}, -90.0000f, 36.6519f, 60.0000f, 35.0000f, 110.0000f, 146.6519f},
+    {NAV_SEG_LINE, {10.85f, -144.41f}, -55.0000f, 145.0000f, 0.0000f, 0.0000f, 146.6519f, 291.6519f},
 };
 static const nav_segment_t nav_icon_turn_slight_left_main[] = {
-    {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, -0.0000f, 0.0000f, 130.0000f},
-    {NAV_SEG_ARC, {-0.00f, -130.00f}, -90.0000f, 36.6519f, 60.0000f, -35.0000f, 130.0000f, 166.6519f},
-    {NAV_SEG_LINE, {-10.85f, -164.41f}, -125.0000f, 145.0000f, 0.0000f, -0.0000f, 166.6519f, 311.6519f},
+    {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 110.0000f, 0.0000f, -0.0000f, 0.0000f, 110.0000f},
+    {NAV_SEG_ARC, {-0.00f, -110.00f}, -90.0000f, 36.6519f, 60.0000f, -35.0000f, 110.0000f, 146.6519f},
+    {NAV_SEG_LINE, {-10.85f, -144.41f}, -125.0000f, 145.0000f, 0.0000f, -0.0000f, 146.6519f, 291.6519f},
 };
 static const nav_segment_t nav_icon_turn_sharp_right_main[] = {
     {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, 0.0000f, 0.0000f, 130.0000f},
     {NAV_SEG_ARC, {0.00f, -130.00f}, -90.0000f, 98.1748f, 45.0000f, 125.0000f, 130.0000f, 228.1748f},
-    {NAV_SEG_LINE, {70.81f, -166.86f}, 35.0000f, 115.0000f, 0.0000f, 0.0000f, 228.1748f, 343.1748f},
+    {NAV_SEG_LINE, {70.81f, -166.86f}, 35.0000f, 125.0000f, 0.0000f, 0.0000f, 228.1748f, 353.1748f},
 };
 static const nav_segment_t nav_icon_turn_sharp_left_main[] = {
     {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 130.0000f, 0.0000f, -0.0000f, 0.0000f, 130.0000f},
     {NAV_SEG_ARC, {-0.00f, -130.00f}, -90.0000f, 98.1748f, 45.0000f, -125.0000f, 130.0000f, 228.1748f},
-    {NAV_SEG_LINE, {-70.81f, -166.86f}, 145.0000f, 115.0000f, 0.0000f, -0.0000f, 228.1748f, 343.1748f},
+    {NAV_SEG_LINE, {-70.81f, -166.86f}, 145.0000f, 125.0000f, 0.0000f, -0.0000f, 228.1748f, 353.1748f},
 };
 static const nav_segment_t nav_icon_u_turn_right_main[] = {
-    {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 180.0000f, 0.0000f, 0.0000f, 0.0000f, 180.0000f},
-    {NAV_SEG_ARC, {0.00f, -180.00f}, -90.0000f, 219.9115f, 70.0000f, 180.0000f, 180.0000f, 399.9115f},
-    {NAV_SEG_LINE, {140.00f, -180.00f}, 90.0000f, 140.0000f, 0.0000f, 0.0000f, 399.9115f, 539.9115f},
+    {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 170.0000f, 0.0000f, 0.0000f, 0.0000f, 170.0000f},
+    {NAV_SEG_ARC, {0.00f, -170.00f}, -90.0000f, 172.7876f, 55.0000f, 180.0000f, 170.0000f, 342.7876f},
+    {NAV_SEG_LINE, {110.00f, -170.00f}, 90.0000f, 140.0000f, 0.0000f, 0.0000f, 342.7876f, 482.7876f},
 };
 static const nav_segment_t nav_icon_u_turn_left_main[] = {
-    {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 180.0000f, 0.0000f, -0.0000f, 0.0000f, 180.0000f},
-    {NAV_SEG_ARC, {-0.00f, -180.00f}, -90.0000f, 219.9115f, 70.0000f, -180.0000f, 180.0000f, 399.9115f},
-    {NAV_SEG_LINE, {-140.00f, -180.00f}, 90.0000f, 140.0000f, 0.0000f, -0.0000f, 399.9115f, 539.9115f},
+    {NAV_SEG_LINE, {-0.00f, 0.00f}, -90.0000f, 170.0000f, 0.0000f, -0.0000f, 0.0000f, 170.0000f},
+    {NAV_SEG_ARC, {-0.00f, -170.00f}, -90.0000f, 172.7876f, 55.0000f, -180.0000f, 170.0000f, 342.7876f},
+    {NAV_SEG_LINE, {-110.00f, -170.00f}, 90.0000f, 140.0000f, 0.0000f, -0.0000f, 342.7876f, 482.7876f},
 };
 static const nav_segment_t nav_icon_roundabout_right_main[] = {
     {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 70.0000f, 0.0000f, 0.0000f, 0.0000f, 70.0000f},
@@ -110,14 +110,14 @@ static const nav_segment_t nav_icon_roundabout_straight_main[] = {
     {NAV_SEG_ARC, {0.00f, -50.00f}, -90.0000f, 26.9341f, 20.0000f, -77.1604f, 50.0000f, 76.9341f},
     {NAV_SEG_ARC, {-15.56f, -69.50f}, -167.1604f, 188.5385f, 70.0000f, 154.3208f, 76.9341f, 265.4725f},
     {NAV_SEG_ARC, {-15.56f, -206.00f}, -12.8396f, 26.9341f, 20.0000f, -77.1604f, 265.4725f, 292.4066f},
-    {NAV_SEG_LINE, {0.00f, -225.50f}, -90.0000f, 100.0000f, 0.0000f, 0.0000f, 292.4066f, 392.4066f},
+    {NAV_SEG_LINE, {0.00f, -225.50f}, -90.0000f, 90.0000f, 0.0000f, 0.0000f, 292.4066f, 382.4066f},
 };
 static const nav_segment_t nav_icon_roundabout_left_main[] = {
     {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 80.0000f, 0.0000f, 0.0000f, 0.0000f, 80.0000f},
     {NAV_SEG_ARC, {0.00f, -80.00f}, -90.0000f, 26.9341f, 20.0000f, -77.1604f, 80.0000f, 106.9341f},
     {NAV_SEG_ARC, {-15.56f, -99.50f}, -167.1604f, 78.5827f, 70.0000f, 64.3208f, 106.9341f, 185.5168f},
     {NAV_SEG_ARC, {-68.25f, -152.19f}, -102.8396f, 26.9341f, 20.0000f, -77.1604f, 185.5168f, 212.4508f},
-    {NAV_SEG_LINE, {-87.75f, -167.75f}, -180.0000f, 115.0000f, 0.0000f, 0.0000f, 212.4508f, 327.4508f},
+    {NAV_SEG_LINE, {-87.75f, -167.75f}, -180.0000f, 120.0000f, 0.0000f, 0.0000f, 212.4508f, 332.4508f},
 };
 static const nav_segment_t nav_icon_right_merge_main[] = {
     {NAV_SEG_LINE, {0.00f, 0.00f}, -90.0000f, 260.0000f, 0.0000f, 0.0000f, 0.0000f, 260.0000f},
@@ -132,15 +132,15 @@ static const nav_icon_data_t NAV_ICON_DATA[NAV_RENDER_COUNT] = {
     [NAV_RENDER_STRAIGHT] = { nav_icon_straight_main, 1, NULL, 0, {0.0f, -130.0f} },
     [NAV_RENDER_TURN_RIGHT] = { nav_icon_turn_right_main, 3, NULL, 0, {70.0f, -120.0f} },
     [NAV_RENDER_TURN_LEFT] = { nav_icon_turn_left_main, 3, NULL, 0, {-70.0f, -120.0f} },
-    [NAV_RENDER_TURN_SLIGHT_RIGHT] = { nav_icon_turn_slight_right_main, 3, NULL, 0, {34.6f, -145.5f} },
-    [NAV_RENDER_TURN_SLIGHT_LEFT] = { nav_icon_turn_slight_left_main, 3, NULL, 0, {-34.6f, -145.5f} },
+    [NAV_RENDER_TURN_SLIGHT_RIGHT] = { nav_icon_turn_slight_right_main, 3, NULL, 0, {34.6f, -125.5f} },
+    [NAV_RENDER_TURN_SLIGHT_LEFT] = { nav_icon_turn_slight_left_main, 3, NULL, 0, {-34.6f, -125.5f} },
     [NAV_RENDER_TURN_SHARP_RIGHT] = { nav_icon_turn_sharp_right_main, 3, NULL, 0, {58.0f, -112.0f} },
     [NAV_RENDER_TURN_SHARP_LEFT] = { nav_icon_turn_sharp_left_main, 3, NULL, 0, {-58.0f, -112.0f} },
-    [NAV_RENDER_U_TURN_RIGHT] = { nav_icon_u_turn_right_main, 3, NULL, 0, {70.0f, -130.0f} },
-    [NAV_RENDER_U_TURN_LEFT] = { nav_icon_u_turn_left_main, 3, NULL, 0, {-70.0f, -130.0f} },
-    [NAV_RENDER_ROUNDABOUT_RIGHT] = { nav_icon_roundabout_right_main, 5, NULL, 0, {40.0f, -145.0f} },
-    [NAV_RENDER_ROUNDABOUT_STRAIGHT] = { nav_icon_roundabout_straight_main, 5, NULL, 0, {-0.0f, -165.0f} },
-    [NAV_RENDER_ROUNDABOUT_LEFT] = { nav_icon_roundabout_left_main, 5, NULL, 0, {-55.0f, -136.6f} },
+    [NAV_RENDER_U_TURN_RIGHT] = { nav_icon_u_turn_right_main, 3, NULL, 0, {55.0f, -117.5f} },
+    [NAV_RENDER_U_TURN_LEFT] = { nav_icon_u_turn_left_main, 3, NULL, 0, {-55.0f, -117.5f} },
+    [NAV_RENDER_ROUNDABOUT_RIGHT] = { nav_icon_roundabout_right_main, 5, NULL, 0, {40.0f, -135.0f} },
+    [NAV_RENDER_ROUNDABOUT_STRAIGHT] = { nav_icon_roundabout_straight_main, 5, NULL, 0, {0.0f, -140.0f} },
+    [NAV_RENDER_ROUNDABOUT_LEFT] = { nav_icon_roundabout_left_main, 5, NULL, 0, {-55.0f, -116.0f} },
     [NAV_RENDER_RIGHT_MERGE] = { nav_icon_right_merge_main, 1, nav_icon_right_merge_secondary, 10, {70.0f, -130.0f} },
     [NAV_RENDER_MERGE_LEFT] = { nav_icon_merge_left_main, 1, nav_icon_merge_left_secondary, 10, {-70.0f, -130.0f} },
 };

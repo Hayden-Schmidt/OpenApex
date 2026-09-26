@@ -37,7 +37,7 @@
     "steps": [
       {
         "type": "straight",
-        "length": 130
+        "length": 110
       },
       {
         "type": "curve",
@@ -71,7 +71,7 @@
       },
       {
         "type": "straight",
-        "length": 115
+        "length": 125
       }
     ]
   },
@@ -84,13 +84,13 @@
     "steps": [
       {
         "type": "straight",
-        "length": 180
+        "length": 170
       },
       {
         "type": "curve",
         "dir": "right",
         "angle": 180,
-        "radius": 70
+        "radius": 55
       },
       {
         "type": "straight",
@@ -136,7 +136,7 @@
       },
       {
         "type": "straight",
-        "length": 100
+        "length": 90
       }
     ]
   },
@@ -155,7 +155,7 @@
       },
       {
         "type": "straight",
-        "length": 115
+        "length": 120
       }
     ]
   },

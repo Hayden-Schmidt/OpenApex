@@ -42,7 +42,7 @@ BLE = struct.Struct("<Bi")
 # firmware/main/nav_model.h, in enum order. Protocol values, not platform ordinals.
 ICONS = ["STRAIGHT", "TURN_LEFT", "TURN_RIGHT", "SLIGHT_LEFT", "SLIGHT_RIGHT",
          "SHARP_LEFT", "SHARP_RIGHT", "ROUNDABOUT_LEFT", "ROUNDABOUT_RIGHT",
-         "ROUNDABOUT_STRAIGHT", "U_TURN", "ARRIVED", "UNKNOWN"]
+         "ROUNDABOUT_STRAIGHT", "U_TURN", "ARRIVED", "UNKNOWN", "DESTINATION"]
 # firmware/main/view_state.h
 STATES = ["IDLE", "ACTIVE", "STALE", "ARRIVED"]
 BLE_EVENTS = {1: "CONNECTED", 2: "DISCONNECTED", 3: "DECODE_FAILED", 4: "QUEUE_FULL",

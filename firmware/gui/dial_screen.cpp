@@ -22,9 +22,9 @@ constexpr float kPi = 3.14159265358979323846f;
 // arrow rather than LVGL's 14px default.
 // Measured off "design reference/3.Turn by Turn/OpenApex Hardware Design Ref.svg": the street name
 // sits just under the arrow and the distance under that, so the eye runs arrow -> where -> how far.
-constexpr float kDistanceGlyphH = 14.4f;  // -> 20px
-constexpr float kDistanceCy = 203.0f;
-constexpr float kStreetGlyphH = 10.47f;   // -> 14px
+constexpr float kDistanceGlyphH = 16.8f;  // -> 24px
+constexpr float kDistanceCy = 207.0f;
+constexpr float kStreetGlyphH = 11.2f;    // -> 16px
 constexpr float kStreetCy = 186.85f;
 // Only drawn by the trip-arc variant, which reserves the gap at the bottom of the ring for it.
 constexpr float kEtaGlyphH = 10.47f;      // -> 14px
@@ -68,6 +68,7 @@ lv_point_precise_t point_at(float cx, float cy, float angle_deg, float radius) {
 bool render_icon_for(nav_icon_t icon, nav_render_icon_t *out) {
     switch (icon) {
         case NAV_ICON_STRAIGHT:
+        case NAV_ICON_DESTINATION:  // final approach: straight on to the destination
             *out = NAV_RENDER_STRAIGHT;
             return true;
         case NAV_ICON_TURN_LEFT:

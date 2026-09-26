@@ -115,6 +115,39 @@ int main(void) {
     // Telemetry-only packets (Maps not routing) stay idle, even straight after a route ended.
     assert(view.state == VIEW_IDLE);
 
+    // 7. Arrival, replayed from the 2026-09-26 capture: the destination pin counts down on the nav
+    // page, and only the route ending (telemetry-only packets) brings up the arrived page.
+    pipeline_reset();
+    memset(&view, 0, sizeof(view));
+    build_packet(p, "130Â m Â· Daifuku Oceania", "130", 300);
+    p[143] = 133; p[144] = 0; // destination pin glyph
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 100000, &view);
+    assert(view.state == VIEW_ACTIVE);
+    assert(view.icon_type == NAV_ICON_DESTINATION);
+    assert(view.distance_meters == 130);
+
+    build_packet(p, NULL, NULL, 300);
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 110000, &view);
+    assert(view.state == VIEW_ARRIVED);
+    view_state_apply_packet(&raw, 111000, &view);
+    assert(view.state == VIEW_ARRIVED);
+    view_state_tick(118000, &view); // hold over: idle, with no stale countdown behind it
+    assert(view.state == VIEW_IDLE);
+    view_state_apply_packet(&raw, 119000, &view);
+    assert(view.state == VIEW_IDLE);
+
+    // A route that ends mid-way (cancelled, not arrived) goes straight to idle.
+    build_packet(p, "Turn right onto Main St", "500", 360);
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 120000, &view);
+    assert(view.state == VIEW_ACTIVE);
+    build_packet(p, NULL, NULL, 360);
+    assert(packet_decode(p, sizeof(p), &raw));
+    view_state_apply_packet(&raw, 121000, &view);
+    assert(view.state == VIEW_IDLE);
+
     puts("pipeline tests passed");
     return 0;
 }

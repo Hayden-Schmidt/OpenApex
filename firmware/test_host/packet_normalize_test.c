@@ -236,7 +236,7 @@ static void test_text_outranks_angle(void) {
 
 // The destination is the one maneuver Google Maps never names: the title is the saved-place label
 // ("350 m . Home"), which no keyword can match. Glyph 133 is the destination pin.
-static void test_destination_glyph_is_arrived(void) {
+static void test_destination_glyph_is_final_approach(void) {
     uint8_t p[RAW_NOTIF_PACKET_SIZE];
     raw_notif_t raw;
     nav_model_t m;
@@ -245,7 +245,7 @@ static void test_destination_glyph_is_arrived(void) {
                              RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false, 133);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
-    assert(m.icon_type == NAV_ICON_ARRIVED);
+    assert(m.icon_type == NAV_ICON_DESTINATION);  // arrival is the route ending, not the pin
     assert(m.distance_meters == 350);
 
     // "Arriving" -- the stem the old "arrive" match missed entirely.
@@ -253,7 +253,19 @@ static void test_destination_glyph_is_arrived(void) {
                  RAW_U8_UNKNOWN, false);
     packet_decode(p, sizeof(p), &raw);
     normalize_packet(&raw, &m);
-    assert(m.icon_type == NAV_ICON_ARRIVED);
+    assert(m.icon_type == NAV_ICON_DESTINATION);
+
+    // The side of the road, when Maps names it, is the turn in -- and survives the " on " street cut.
+    build_packet(p, "Your destination is on the left", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                 RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_LEFT);
+    build_packet(p, "Destination will be on the right", NULL, NULL, -1, -1, RAW_U16_UNKNOWN,
+                 RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    packet_decode(p, sizeof(p), &raw);
+    normalize_packet(&raw, &m);
+    assert(m.icon_type == NAV_ICON_TURN_RIGHT);
 }
 
 // Motorway lane guidance is a ramp departure, not a 90-degree turn -- but "Use any lane to turn
@@ -521,7 +533,37 @@ static void test_decode_v4_clock_and_traffic(void) {
     assert(m.traffic_count == 0);
 }
 
+static const char *street_of(const char *title) {
+    static nav_model_t m;
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    raw_notif_t raw;
+    build_packet(p, title, NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, false);
+    assert(packet_decode(p, sizeof(p), &raw));
+    normalize_packet(&raw, &m);
+    return m.street_name;
+}
+
+// Double-named roads keep one name, and long names are cut to fit with their type suffix kept.
+static void test_street_double_name_and_truncation(void) {
+    assert(strcmp(street_of("Turn left onto Greville Road/SH 17"), "Greville Rd") == 0);
+    assert(strcmp(street_of("Turn left onto SH25/Greville Road"), "Greville Rd") == 0);
+    normalize_set_street_pref(NORMALIZE_STREET_PREFER_ROUTE);
+    assert(strcmp(street_of("Turn left onto Greville Road/SH 17"), "SH 17") == 0);
+    normalize_set_street_pref(NORMALIZE_STREET_PREFER_NAME);
+    // Two local names: the first.
+    assert(strcmp(street_of("Turn left onto Queen Street/Victoria Street"), "Queen St") == 0);
+    // "5th Ave" is a name, not a route.
+    assert(strcmp(street_of("Turn left onto 5th Avenue/US 9"), "5th Ave") == 0);
+
+    // Whole words come off before letters, and the suffix stays.
+    assert(strcmp(street_of("Turn right onto Wellington Harbour Esplanade Road"), "Wellington Rd") == 0);
+    assert(strcmp(street_of("Turn right onto Kirkpatrickwellingtonshire Street"), "Kirkpatrickwell St") == 0);
+    assert(strcmp(street_of("Turn right onto Short Street"), "Short St") == 0);
+    assert(strlen(street_of("Turn right onto Te Kopua o Tamaki Makaurau Harbour Route")) <= NORMALIZE_STREET_MAX_LEN);
+}
+
 int main(void) {
+    test_street_double_name_and_truncation();
     test_decode_rejects_malformed();
     test_normalize_turn_right();
     test_normalize_arrived();
@@ -530,7 +572,7 @@ int main(void) {
     test_normalize_roundabout_and_sharp();
     test_normalize_roundabout_direction_from_angle();
     test_text_outranks_angle();
-    test_destination_glyph_is_arrived();
+    test_destination_glyph_is_final_approach();
     test_lane_guidance_is_a_ramp_not_a_turn();
     test_kilometre_distance_parses();
     test_street_name_does_not_flip_direction();

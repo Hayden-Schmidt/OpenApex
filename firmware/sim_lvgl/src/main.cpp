@@ -22,6 +22,10 @@ extern "C" {
 
 #include <SDL2/SDL.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
 
 // Scripted fixture: cycles through the view states, and through a spread of nav_icon_t maneuvers
@@ -161,8 +165,61 @@ void print_usage(const char *exe) {
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
+                 "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
                  exe);
+}
+
+// The two panels the GUI is built for: the C3's 240 round and the S3 AMOLED's 466. A plain run
+// opens both side by side so every change is seen at both sizes; see spawn_companion().
+constexpr int32_t kSmallRes = 240;
+constexpr int32_t kLargeRes = 466;
+constexpr int kPairGap = 24;
+
+// Relaunches this exe at the other resolution with the same fixture flags. The child is handed an
+// explicit width plus --paired, so it never spawns a companion of its own.
+void spawn_companion(int argc, char *argv[], int32_t res) {
+#ifdef _WIN32
+    // Each panel runs its own env's build, not this exe at a different size: the icon set is
+    // baked per board profile (icons.hpp), so a 240 build stretched to 466 shows 240px icons.
+    // The envs build side by side under .pio/build/<env>/, so the sibling is found from our path.
+    char exe[MAX_PATH];
+    const DWORD len = GetModuleFileNameA(nullptr, exe, sizeof(exe));
+    if (len == 0 || len >= sizeof(exe)) return;
+    char *sep = std::strrchr(exe, '\\');
+    if (sep == nullptr) return;
+    *sep = '\0';
+    char *env_sep = std::strrchr(exe, '\\');
+    if (env_sep == nullptr) return;
+    *env_sep = '\0';
+    char sibling[MAX_PATH];
+    std::snprintf(sibling, sizeof(sibling), "%s\\%s\\program.exe", exe,
+                  res == kLargeRes ? "sim_lvgl_s3" : "sim_lvgl");
+    if (GetFileAttributesA(sibling) == INVALID_FILE_ATTRIBUTES) {
+        std::fprintf(stderr, "sim_lvgl: %s not built -- run `pio run -e %s`\n", sibling,
+                     res == kLargeRes ? "sim_lvgl_s3" : "sim_lvgl");
+        return;
+    }
+    std::snprintf(exe, sizeof(exe), "%s", sibling);
+    char cmd[2048];
+    int n = std::snprintf(cmd, sizeof(cmd), "\"%s\" %d --paired", exe, static_cast<int>(res));
+    for (int i = 1; i < argc && n > 0 && n < static_cast<int>(sizeof(cmd)); ++i) {
+        n += std::snprintf(cmd + n, sizeof(cmd) - n, " \"%s\"", argv[i]);
+    }
+    STARTUPINFOA si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessA(nullptr, cmd, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    } else {
+        std::fprintf(stderr, "sim_lvgl: failed to launch %d companion\n", static_cast<int>(res));
+    }
+#else
+    (void)argc;
+    (void)argv;
+    (void)res;
+#endif
 }
 
 } // namespace
@@ -184,6 +241,8 @@ int main(int argc, char *argv[]) {
     bool odometer_page = false;
     bool trip_page = false;
     bool fade_nav_entry = false;
+    bool single = false;
+    bool paired = false;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -225,6 +284,10 @@ int main(int argc, char *argv[]) {
             shot_at_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
             shot_path = argv[i + 2];
             i += 2;
+        } else if (std::strcmp(argv[i], "--single") == 0) {
+            single = true;
+        } else if (std::strcmp(argv[i], "--paired") == 0) {
+            paired = true;
         } else if (argv[i][0] == '-') {
             print_usage(argv[0]);
             return 1;
@@ -249,6 +312,14 @@ int main(int argc, char *argv[]) {
     // is computed in OS-scaled coordinates while the window itself is created at physical-pixel
     // size, so on a scaled display the window can land partly or fully off-screen. Must be set
     // before any SDL window/video call.
+    // Pairing: a plain interactive run (no resolution given, no --shot) opens the other panel size
+    // too. Explicit sizes and screenshot runs stay single so scripted use is unchanged.
+    if (!single && !paired && positional == 0 && shot_path == nullptr) {
+        spawn_companion(argc, argv, disp_w == kLargeRes ? kSmallRes : kLargeRes);
+        paired = true;
+    }
+    paired = paired && (disp_w == kSmallRes || disp_w == kLargeRes);
+
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "system");
 
     lv_init();
@@ -275,8 +346,13 @@ int main(int argc, char *argv[]) {
             int win_w = 0;
             int win_h = 0;
             SDL_GetWindowSize(window, &win_w, &win_h);
-            SDL_SetWindowPosition(window, bounds.x + (bounds.w - win_w) / 2,
-                                   bounds.y + (bounds.h - win_h) / 2);
+            int x = bounds.x + (bounds.w - win_w) / 2;
+            if (paired) {
+                // Small on the left, large on the right, the pair centred as one block.
+                const int left = bounds.x + (bounds.w - (kSmallRes + kPairGap + kLargeRes)) / 2;
+                x = disp_w == kSmallRes ? left : left + kSmallRes + kPairGap;
+            }
+            SDL_SetWindowPosition(window, x, bounds.y + (bounds.h - win_h) / 2);
         } else {
             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
         }

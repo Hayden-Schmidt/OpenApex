@@ -120,8 +120,14 @@ static void gui_task(void *argument) {
         terminal_view_state_t frame;
         view_state_snapshot(&frame);
         gui_app_update(&frame);
-        lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(16));
+        // Sleep exactly until LVGL's next timer is due, not a fixed 16ms: a fixed poll beats against
+        // the 33ms refresh period, so a frame landed on the 2nd or 3rd poll alternately (~32/48ms)
+        // and animations judder. Clamped so the view snapshot is still read at least every 16ms,
+        // and to 1 tick minimum so lower-priority tasks always get the CPU.
+        uint32_t idle_ms = lv_timer_handler();
+        if (idle_ms > 16) idle_ms = 16;
+        TickType_t ticks = pdMS_TO_TICKS(idle_ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
     }
 }
 

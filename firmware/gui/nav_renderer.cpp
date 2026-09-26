@@ -13,13 +13,15 @@ constexpr float kDesignDiameter = 600.0f; // maneuvers.json / nav_icons_data.h a
 
 // --- ported knobs (Demo/params.js) ----------------------------------------------------------
 constexpr float kDisplayScale = 1.1f;
-constexpr float kLineThickness = 22.0f;     // route units, before displayScale
-constexpr float kArrowheadScale = 0.25f;
+constexpr float kLineThickness = 25.0f;     // route units, before displayScale
+constexpr float kArrowheadScale = 0.3f;
 // Route units, screen space. Shifts the whole maneuver up so it clears the street/distance stack
 // at the bottom of the page. -28.545 puts the arrow exactly where "OpenApex Hardware Design Ref.svg"
 // draws it: one route unit is kDisplayScale * (diameter/600) px, i.e. 0.44px at 240, and the design
-// moved the arrow 13px up from the old +1.0 offset.
-constexpr float kVerticalOffset = -28.545f;
+// moved the arrow 13px up from the old +1.0 offset; -40 lifts it a further ~5px above that.
+// Tuning: kVerticalOffset moves the arrow (more negative = higher, ~0.44px per unit at 240),
+// kDisplayScale sizes the whole maneuver, kLineThickness/kArrowheadScale its stroke and head.
+constexpr float kVerticalOffset = -44.0f;
 constexpr float kSeamOverlap = 0.5f;        // px
 constexpr float kRevealSpeed = 0.9f;        // route units / ms
 constexpr uint32_t kMinRevealMs = 1000;

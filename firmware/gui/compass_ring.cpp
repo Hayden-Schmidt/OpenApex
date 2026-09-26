@@ -25,14 +25,20 @@ constexpr float kTickWidth = 3.0f;
 
 // Marker geometry from the design ref: 16 wide at the rim, 16 deep (M128 0H112 L120 16), against a
 // 120px half-frame.
-constexpr float kNorthLength = 16.0f / 120.0f;
-constexpr float kNorthWidth = 8.0f / 120.0f;
-// Rounding on the marker's point, as a fraction of the half-frame (~1.4px at 240).
-constexpr float kNorthTipRadius = 0.012f;
+constexpr float kNorthLength = 16.0f / 120.0f;  // design ref 16
+constexpr float kNorthWidth = 8.0f / 120.0f;    // design ref 8
+// Fillet on the marker's point, as a fraction of the half-frame (2.5px at 240): enough to take the
+// needle-sharp edge off, not so much that the point reads as blunt.
+constexpr float kNorthTipRadius = 2.5f / 120.0f;
+// Triangles in the fillet's fan. Plenty at a few pixels' radius.
+constexpr int kNorthTipSteps = 6;
+// Dark border around the marker, as a fraction of the half-frame (4px at 240).
+constexpr float kNorthOutline = 4.0f / 120.0f;
 
 lv_color_t tick_color() { return lv_color_hex(0x585f68); }
 lv_color_t major_tick_color() { return lv_color_white(); }
 lv_color_t north_color() { return lv_color_hex(0xff3b30); }
+lv_color_t outline_color() { return lv_color_hex(0x1a1a1a); }
 
 // Even widths only, and rounded rather than truncated -- nav_renderer.cpp's rationale: LVGL's arc
 // and line primitives disagree by a pixel otherwise. Kept identical here so the extracted ring is
@@ -61,6 +67,75 @@ void stroke_line(lv_layer_t *layer, float x1, float y1, float x2, float y2, floa
 // compass pixel-for-pixel identical across this extraction (verified by screenshot diff).
 lv_point_precise_t to_lv(float x, float y) {
     return {static_cast<lv_value_precise_t>(x), static_cast<lv_value_precise_t>(y)};
+}
+
+// One filleted marker triangle, base on the circle of radius `base_r` about (cx, cy) and point at
+// `tip_r`, aimed along `angle` (atan2 convention) -- inward, since tip_r < base_r.
+//
+// A filled triangle has no corner radius in LVGL, so the point is cut back to the two tangent
+// points of a circle of radius `r` inscribed against both edges, and the arc between them is filled
+// as a fan of triangles back to the base. The fan joins the edges exactly at the tangent points in
+// sub-pixel coordinates -- a separate integer-snapped circle stamped on the cut end (an earlier
+// approach) sat proud of the edges and read as a nub rather than a rounded tip. The circle's centre
+// is `d` back from the point along the axis, where d = r / sin(half apex angle).
+void draw_marker(lv_layer_t *layer, float cx, float cy, float angle, float tip_r, float base_r,
+                 float base_half_w, float r, lv_color_t color) {
+    const float nc = std::cos(angle), ns = std::sin(angle);
+    const float perp_x = -ns, perp_y = nc;
+    const float ax = cx + nc * base_r + perp_x * base_half_w;
+    const float ay = cy + ns * base_r + perp_y * base_half_w;
+    const float bx = cx + nc * base_r - perp_x * base_half_w;
+    const float by = cy + ns * base_r - perp_y * base_half_w;
+    const float tx = cx + nc * tip_r, ty = cy + ns * tip_r;
+
+    const float alpha = std::atan2(base_half_w, base_r - tip_r);
+    const float sin_a = std::sin(alpha);
+
+    lv_draw_triangle_dsc_t dsc;
+    lv_draw_triangle_dsc_init(&dsc);
+    dsc.color = color;
+    dsc.opa = LV_OPA_COVER;
+
+    if (r <= 0.5f || sin_a <= 0.01f) {
+        dsc.p[0] = to_lv(ax, ay);
+        dsc.p[1] = to_lv(bx, by);
+        dsc.p[2] = to_lv(tx, ty);
+        lv_draw_triangle(layer, &dsc);
+        return;
+    }
+
+    // +nc: the base sits outward of the point, so moving back from the point is +nc.
+    const float d = r / sin_a;
+    const float ccx = tx + nc * d, ccy = ty + ns * d;
+    // Tangent points sit at +-(90deg - alpha) either side of the inward axis, seen from the
+    // centre; the arc between them runs through the inward axis itself.
+    const float inward = std::atan2(-ns, -nc);
+    const float sweep = kPi / 2.0f - alpha;
+    const float mx = (ax + bx) * 0.5f, my = (ay + by) * 0.5f;  // fan hub: base midpoint
+
+    float px = ccx + r * std::cos(inward + sweep), py = ccy + r * std::sin(inward + sweep);
+    const float qx = ccx + r * std::cos(inward - sweep), qy = ccy + r * std::sin(inward - sweep);
+    // Body: base corners to the two tangent points. perp (+) is the `a` side.
+    const bool p_is_a = (px - tx) * perp_x + (py - ty) * perp_y > 0.0f;
+    dsc.p[0] = to_lv(ax, ay);
+    dsc.p[1] = to_lv(bx, by);
+    dsc.p[2] = p_is_a ? to_lv(qx, qy) : to_lv(px, py);
+    lv_draw_triangle(layer, &dsc);
+    dsc.p[0] = to_lv(ax, ay);
+    dsc.p[1] = p_is_a ? to_lv(qx, qy) : to_lv(px, py);
+    dsc.p[2] = p_is_a ? to_lv(px, py) : to_lv(qx, qy);
+    lv_draw_triangle(layer, &dsc);
+
+    for (int i = 1; i <= kNorthTipSteps; ++i) {
+        const float a = inward + sweep - 2.0f * sweep * static_cast<float>(i) / kNorthTipSteps;
+        const float nx = ccx + r * std::cos(a), ny = ccy + r * std::sin(a);
+        dsc.p[0] = to_lv(mx, my);
+        dsc.p[1] = to_lv(px, py);
+        dsc.p[2] = to_lv(nx, ny);
+        lv_draw_triangle(layer, &dsc);
+        px = nx;
+        py = ny;
+    }
 }
 
 } // namespace
@@ -99,75 +174,18 @@ void CompassRing::draw(lv_layer_t *layer, const lv_area_t &coords, float scale) 
     // direction, which is what "the compass spins backwards" on the 2026-09-23 ride was.
     // (-kPi/2 then converts "clockwise from up" to the atan2 convention, 0 = +x.)
     const float screen_angle = -north_heading_rad_ - kPi / 2.0f;
-    const float nc = std::cos(screen_angle), ns = std::sin(screen_angle);
     const float tip_r = half * (1.0f - kNorthLength);
     const float base_half_w = kNorthWidth * half;
-    const float perp_x = -ns, perp_y = nc;
-
-    // Base corners, on the rim.
-    const float ax = cx + nc * half + perp_x * base_half_w;
-    const float ay = cy + ns * half + perp_y * base_half_w;
-    const float bx = cx + nc * half - perp_x * base_half_w;
-    const float by = cy + ns * half - perp_y * base_half_w;
-    // The point, before rounding.
-    const float tx = cx + nc * tip_r, ty = cy + ns * tip_r;
-
-    // Rounded point. A filled triangle has no corner radius in LVGL, so the point is truncated and
-    // the corner filled with a circle inscribed against both edges: centre `d` back from the point
-    // along the axis, where d = r / sin(half apex angle), touching each edge at `d * cos(alpha)`
-    // measured back along it. Union of the truncated body and that circle IS the rounded point --
-    // stamping a circle on the full triangle would leave the sharp point poking through it.
-    const float depth = half * kNorthLength;
-    const float alpha = std::atan2(base_half_w, depth);
-    const float sin_a = std::sin(alpha);
+    const float alpha = std::atan2(base_half_w, half * kNorthLength);  // half apex angle
     const float r = kNorthTipRadius * half;
 
-    lv_draw_triangle_dsc_t dsc;
-    lv_draw_triangle_dsc_init(&dsc);
-    dsc.color = north_color();
-    dsc.opa = LV_OPA_COVER;
-
-    if (r > 0.5f && sin_a > 0.01f) {
-        const float d = r / sin_a;
-        const float back = d * std::cos(alpha);
-        // Unit vectors from the point back along each edge.
-        float eax = ax - tx, eay = ay - ty;
-        float ebx = bx - tx, eby = by - ty;
-        const float la = std::sqrt(eax * eax + eay * eay);
-        const float lb = std::sqrt(ebx * ebx + eby * eby);
-        eax /= la; eay /= la; ebx /= lb; eby /= lb;
-        const float pax = tx + eax * back, pay = ty + eay * back;
-        const float pbx = tx + ebx * back, pby = ty + eby * back;
-
-        // Truncated body as two triangles (LVGL draws triangles, not polygons).
-        dsc.p[0] = to_lv(ax, ay);
-        dsc.p[1] = to_lv(bx, by);
-        dsc.p[2] = to_lv(pax, pay);
-        lv_draw_triangle(layer, &dsc);
-        dsc.p[0] = to_lv(bx, by);
-        dsc.p[1] = to_lv(pbx, pby);
-        dsc.p[2] = to_lv(pax, pay);
-        lv_draw_triangle(layer, &dsc);
-
-        // +nc, not -nc: the marker's base sits on the rim and its point aims INWARD, so moving
-        // back from the point toward the base is the outward (increasing-radius) direction.
-        const float ccx = tx + nc * d, ccy = ty + ns * d;
-        lv_draw_rect_dsc_t cap;
-        lv_draw_rect_dsc_init(&cap);
-        cap.bg_color = north_color();
-        cap.bg_opa = LV_OPA_COVER;
-        cap.radius = LV_RADIUS_CIRCLE;
-        lv_area_t a;
-        a.x1 = static_cast<int32_t>(std::lround(ccx - r));
-        a.y1 = static_cast<int32_t>(std::lround(ccy - r));
-        a.x2 = static_cast<int32_t>(std::lround(ccx + r));
-        a.y2 = static_cast<int32_t>(std::lround(ccy + r));
-        lv_draw_rect(layer, &cap, &a);
-        return;
-    }
-
-    dsc.p[0] = to_lv(ax, ay);
-    dsc.p[1] = to_lv(bx, by);
-    dsc.p[2] = to_lv(tx, ty);
-    lv_draw_triangle(layer, &dsc);
+    // Outline first, then the red marker over it. The outline is the same marker grown outward by
+    // kNorthOutline on every side: each edge pushed out along its normal (the point moves in by
+    // o / sin(alpha)), the base pushed out past the rim, and the fillet radius grown by o about the
+    // SAME centre -- the offset of a rounded corner is a rounded corner, so a plain larger triangle
+    // with the red's own radius would read thinner at the tip than along the sides.
+    const float o = kNorthOutline * half;
+    draw_marker(layer, cx, cy, screen_angle, tip_r - o / std::sin(alpha), half + o,
+                base_half_w + o / std::cos(alpha) + o * std::tan(alpha), r + o, outline_color());
+    draw_marker(layer, cx, cy, screen_angle, tip_r, half, base_half_w, r, north_color());
 }

@@ -56,7 +56,11 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
 /** Size of the pool `lv_malloc()` allocates from. Needs to be at least 2kB (2048). */
+/* Overridable per env: the C3 pool is sized to the real part, but the S3 AMOLED tier (466px,
+ * PSRAM) needs more -- line/arc masks at that size exhaust 64kB and silently drop. */
+#ifndef LV_MEM_SIZE
 #define LV_MEM_SIZE 65536
+#endif
 
 /** Place the pool at a fixed address instead of allocating it as a normal array.
  *  0: unused.
@@ -1016,7 +1020,7 @@
 #define LV_FONT_MONTSERRAT_14 1
 
 /** Montserrat 16 */
-#define LV_FONT_MONTSERRAT_16 0
+#define LV_FONT_MONTSERRAT_16 1
 
 /** Montserrat 18 */
 #define LV_FONT_MONTSERRAT_18 1
@@ -1028,7 +1032,7 @@
 #define LV_FONT_MONTSERRAT_22 0
 
 /** Montserrat 24 */
-#define LV_FONT_MONTSERRAT_24 0
+#define LV_FONT_MONTSERRAT_24 1
 
 /** Montserrat 26 */
 #define LV_FONT_MONTSERRAT_26 0

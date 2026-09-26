@@ -25,6 +25,17 @@ static nav_icon_t derive_maneuver(const char *text) {
     char lower[RAW_TITLE_STR_LEN];
     to_lower(text, lower, sizeof(lower));
 
+    // Arrival, before the street split below: "Your destination is on the left" would lose its side
+    // to the " on " cut. Only a past-tense arrival is the end of navigation -- "Arriving" and
+    // "destination" are the final approach, which stays on the nav page (ARRIVED is decided by the
+    // route ending, in pipeline.c).
+    if (contains(lower, "arrived") || contains(lower, "reached")) return NAV_ICON_ARRIVED;
+    if (contains(lower, "arriv") || contains(lower, "destination")) {
+        if (contains(lower, "on the left") || contains(lower, "on your left")) return NAV_ICON_TURN_LEFT;
+        if (contains(lower, "on the right") || contains(lower, "on your right")) return NAV_ICON_TURN_RIGHT;
+        return NAV_ICON_DESTINATION;
+    }
+
     // Match against the maneuver clause only, never the street name: "Turn left onto Wright St"
     // contains "right" and used to classify as a RIGHT turn. Everything from "onto "/" on " is
     // the street (same split extract_street() uses) and is cut before any keyword matching.
@@ -43,8 +54,6 @@ static nav_icon_t derive_maneuver(const char *text) {
         if (contains(lower, "right")) return NAV_ICON_ROUNDABOUT_RIGHT;
         return NAV_ICON_UNKNOWN;  // "take the 1st exit" -- direction is only in the glyph
     }
-    // "arriv" rather than "arrive": Maps says "Arriving", which the longer stem misses.
-    if (contains(lower, "arriv") || contains(lower, "destination") || contains(lower, "reached")) return NAV_ICON_ARRIVED;
     if (contains(lower, "sharp right")) return NAV_ICON_SHARP_RIGHT;
     if (contains(lower, "sharp left")) return NAV_ICON_SHARP_LEFT;
     // Fork/merge/exit wording is a lane change, not a 90-degree turn -- the slight glyphs are the
@@ -104,8 +113,9 @@ static const glyph_entry_t MANEUVER_GLYPHS[] = {
     // case is caught by the lane/ramp wording in derive_maneuver() before it ever reaches here.
     {0,   NAV_ICON_STRAIGHT},      // 0x14c1db44 "Head toward ..."
     {113, NAV_ICON_TURN_LEFT},     // 0x52a3927d
-    {133, NAV_ICON_ARRIVED},       // 0x2060b4fa destination pin -- the title is the place name
-                                   // ("Home", "Daifuku Oceania"), which no keyword can catch
+    {133, NAV_ICON_DESTINATION},   // 0x2060b4fa destination pin -- the title is the place name
+                                   // ("Home", "Daifuku Oceania"), which no keyword can catch.
+                                   // Shown on the final approach, not on arrival.
     {181, NAV_ICON_STRAIGHT},      // 0xe39dc9b1 "Merge onto ..."
     {247, NAV_ICON_TURN_RIGHT},    // 0xfe8a3cb4
     {283, NAV_ICON_SHARP_RIGHT},   // 0x776c7837
@@ -299,6 +309,94 @@ static void abbreviate_street(char *name) {
     memcpy(name, out, o + 1);
 }
 
+static normalize_street_pref_t s_street_pref = NORMALIZE_STREET_PREF_DEFAULT;
+
+void normalize_set_street_pref(normalize_street_pref_t pref) { s_street_pref = pref; }
+
+// A route number rather than a name: "SH 17", "SH25", "M1", "A38", "I-95", "US 101", "State
+// Highway 1", "Route 66". Has a digit and at most a few letters -- or names itself a highway/route.
+// "5th Ave" has a digit too, but more letters than any route prefix.
+static bool is_route_name(const char *name) {
+    char lower[NAV_STREET_LEN];
+    to_lower(name, lower, sizeof(lower));
+    if (strncmp(lower, "state highway", 13) == 0 || strncmp(lower, "route ", 6) == 0 ||
+        strncmp(lower, "highway ", 8) == 0 || strncmp(lower, "hwy ", 4) == 0) {
+        return true;
+    }
+    bool digit = false;
+    int letters = 0;
+    for (const char *c = name; *c != '\0'; c++) {
+        if (isdigit((unsigned char)*c)) digit = true;
+        if (isalpha((unsigned char)*c)) letters++;
+    }
+    return digit && letters <= 3;
+}
+
+static void trim(char *s) {
+    size_t start = 0;
+    while (s[start] == ' ') start++;
+    size_t n = strlen(s + start);
+    memmove(s, s + start, n + 1);
+    while (n > 0 && s[n - 1] == ' ') s[--n] = '\0';
+}
+
+// Picks one name from a slash-joined pair (in place), per s_street_pref. With no route among the
+// parts -- two local names -- the first is kept.
+static void pick_street_name(char *name) {
+    char *slash = strchr(name, '/');
+    if (slash == NULL) return;
+    char first[NAV_STREET_LEN], second[NAV_STREET_LEN];
+    snprintf(first, sizeof(first), "%.*s", (int)(slash - name), name);
+    snprintf(second, sizeof(second), "%s", slash + 1);
+    char *more = strchr(second, '/');  // three names: the third is dropped with the rest
+    if (more != NULL) *more = '\0';
+    trim(first);
+    trim(second);
+    const bool first_route = is_route_name(first);
+    const bool second_route = is_route_name(second);
+    const char *keep = first;
+    if (first_route != second_route) {
+        const bool want_route = s_street_pref == NORMALIZE_STREET_PREFER_ROUTE;
+        keep = (first_route == want_route) ? first : second;
+    }
+    if (keep[0] == '\0') keep = keep == first ? second : first;
+    snprintf(name, NAV_STREET_LEN, "%s", keep);
+}
+
+// Fits an abbreviated name (in place) to NORMALIZE_STREET_MAX_LEN. The type suffix ("St", "Ave")
+// says what kind of road to look for, so it is kept, and whole words come off the end of the rest
+// before any word is cut: "Wellington Harbour Esplanade Rd" -> "Wellington Rd".
+static void truncate_street(char *name) {
+    size_t n = strlen(name);
+    if (n <= NORMALIZE_STREET_MAX_LEN) return;
+
+    const char *suffix = "";
+    char *last = strrchr(name, ' ');
+    if (last != NULL) {
+        for (size_t i = 0; i < sizeof(kStreetAbbrevs) / sizeof(kStreetAbbrevs[0]); i++) {
+            if (strcmp(last + 1, kStreetAbbrevs[i].abbrev) == 0) {
+                suffix = kStreetAbbrevs[i].abbrev;
+                *last = '\0';
+                break;
+            }
+        }
+    }
+    const size_t room = NORMALIZE_STREET_MAX_LEN - (suffix[0] != '\0' ? strlen(suffix) + 1 : 0);
+    n = strlen(name);
+    if (n > room) {
+        const bool mid_word = name[room] != ' ';
+        name[room] = '\0';
+        // Back off to a word boundary when there is one; one long word is cut mid-word instead.
+        char *space = strrchr(name, ' ');
+        if (mid_word && space != NULL) *space = '\0';
+        trim(name);
+    }
+    if (suffix[0] != '\0') {
+        const size_t len = strlen(name);
+        snprintf(name + len, NAV_STREET_LEN - len, " %s", suffix);
+    }
+}
+
 // Extracts the street name from "...onto/on <street>" phrasing. Returns 0 on no match.
 // Roundabout/arrive/reroute text has no separable street — empty is correct, not fabricated.
 static size_t extract_street(const char *text, char *out, size_t out_len) {
@@ -473,7 +571,9 @@ void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     if (extract_street(raw->title_str, out->street_name, sizeof(out->street_name)) == 0) {
         out->street_name[0] = '\0';
     }
+    pick_street_name(out->street_name);
     abbreviate_street(out->street_name);
+    truncate_street(out->street_name);
     strncpy(out->eta, raw->eta_str, sizeof(out->eta) - 1);
     out->eta[sizeof(out->eta) - 1] = '\0';
     shorten_eta(out->eta, sizeof(out->eta));
