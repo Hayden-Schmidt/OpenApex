@@ -267,7 +267,7 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 | Tag | Len | Field | Values | Default |
 |---|---|---|---|---|
 | 0x01 | 3 | Accent colour | RGB888, big-endian | `00 C2 FF` |
-| 0x02 | 1 | Avatar | 0 built-in logo, 1-10 preset character, 0xFF custom upload | 0 |
+| 0x02 | 1 | Avatar | 0 built-in logo, 1-9 preset character, 0xFF custom upload | 0 |
 | 0x03 | 1 | ETA format | 0 arrival time, 1 time left | 1 |
 | 0x04 | 1 | Clock | 0 24-hour, 1 12-hour (`H:MM`, no am/pm) | 0 |
 | 0x05 | 1 | Units | 0 metric, 1 imperial (distances) | 0 |
@@ -285,7 +285,7 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 `board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means custom avatar upload is supported.
 `avatar_px` is the edge an avatar is drawn at (64 on C3, 128 on S3), for previews.
 
-**Preset avatars.** The ten presets (crab, owl, dino, octopus, cat, chick, slime, bear, dragon,
+**Preset avatars.** The nine presets (crab, owl, dino, octopus, chick, slime, bear, dragon,
 robot, in tag order) are full-colour pixel art built into the firmware from
 `design reference/Characters` (`<name>.png` up to 32x32, the small versions in `small.png`). Each
 keeps a palette of at most 8 colours. Colours tied to the character's main colour follow the accent;

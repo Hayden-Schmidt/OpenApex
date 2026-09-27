@@ -35,8 +35,8 @@ class SettingsTlvTest {
         assertEquals(TerminalSettings(imperial = true), SettingsTlv.decode(unknown))
         assertNull(SettingsTlv.decode(byteArrayOf(0x02)))                   // unknown schema
         assertNull(SettingsTlv.decode(byteArrayOf(0x01, 0x03, 0x01, 0x02))) // out of range
-        assertNull(SettingsTlv.decode(byteArrayOf(0x01, 0x02, 0x01, 0x0B))) // past the presets
-        assertEquals(10, SettingsTlv.decode(byteArrayOf(0x01, 0x02, 0x01, 0x0A))!!.avatar)
+        assertNull(SettingsTlv.decode(byteArrayOf(0x01, 0x02, 0x01, 0x0A))) // past the presets
+        assertEquals(9, SettingsTlv.decode(byteArrayOf(0x01, 0x02, 0x01, 0x09))!!.avatar)
         assertNull(SettingsTlv.decode(byteArrayOf(0x01, 0x01, 0x02, 0x00, 0x00))) // accent len
         assertNull(SettingsTlv.decode(byteArrayOf(0x01, 0x05, 0x01)))       // truncated
     }

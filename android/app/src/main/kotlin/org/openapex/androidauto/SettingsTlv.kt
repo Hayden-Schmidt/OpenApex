@@ -15,8 +15,8 @@ data class TerminalSettings(
 ) {
     companion object {
         const val AVATAR_LOGO = 0
-        /** Presets in order: crab, owl, dino, octopus, cat, chick, slime, bear, dragon, robot. */
-        const val AVATAR_PRESETS = 10
+        /** Presets in order: crab, owl, dino, octopus, chick, slime, bear, dragon, robot. */
+        const val AVATAR_PRESETS = 9
         const val AVATAR_CUSTOM = 0xFF
     }
 }

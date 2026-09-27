@@ -171,7 +171,7 @@ void print_usage(const char *exe) {
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
                  "  --settings     apply a settings TLV write as the phone would, in hex\n"
                  "                 (docs/OpenApex_SPEC.md 5.5), e.g. 010103ff8000 = orange accent,\n"
-                 "                 010201NN = preset NN (01..0a)\n"
+                 "                 010201NN = preset NN (01..09)\n"
                  "  --avatar       custom avatar upload (80 bytes of A2 art) in hex; select it with\n"
                  "                 --settings 010201ff\n",
                  exe);

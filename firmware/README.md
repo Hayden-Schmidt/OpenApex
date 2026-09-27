@@ -72,7 +72,7 @@ The phone configures the accent colour, avatar, ETA format, clock, units and def
 BLE (docs/OpenApex_SPEC.md §5.5). Settings and a custom avatar are saved to NVS, so both apply
 from the splash on every boot with no phone connected.
 
-The ten preset avatars are the artist's pixel art in `design reference/Characters`, transcribed
+The nine preset avatars are the artist's pixel art in `design reference/Characters`, transcribed
 with their palettes into `gui/avatars_data.h` (spec §5.5 covers how themed colours follow the accent).
 
 Host test for the settings codec:

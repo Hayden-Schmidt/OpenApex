@@ -31,7 +31,7 @@ enum {
 // or the rider's upload.
 typedef enum {
     SETTINGS_AVATAR_LOGO = 0,          // built-in OpenApex logo
-    SETTINGS_AVATAR_PRESET_MAX = 10,   // presets are 1..10
+    SETTINGS_AVATAR_PRESET_MAX = 9,    // presets are 1..9
     SETTINGS_AVATAR_CUSTOM = 0xFF,     // uploaded art (avatar_store.c); falls back to the logo if none
 } settings_avatar_t;
 

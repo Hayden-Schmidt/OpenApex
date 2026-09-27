@@ -72,7 +72,7 @@ static void test_rejects_leave_settings_untouched(void) {
     const uint8_t truncated[] = {0x01, 0x04, 0x01};
     const uint8_t bad_len[] = {0x01, 0x01, 0x02, 0xFF, 0xFF};
     const uint8_t out_of_range[] = {0x01, 0x04, 0x01, 0x01, 0x05, 0x01, 0x09};
-    const uint8_t avatar_gap[] = {0x01, 0x02, 0x01, 0x0B}; // past the presets, not custom
+    const uint8_t avatar_gap[] = {0x01, 0x02, 0x01, 0x0A}; // past the presets, not custom
     assert(!settings_tlv_decode(bad_schema, sizeof(bad_schema), &s));
     assert(!settings_tlv_decode(truncated, sizeof(truncated), &s));
     assert(!settings_tlv_decode(bad_len, sizeof(bad_len), &s));
