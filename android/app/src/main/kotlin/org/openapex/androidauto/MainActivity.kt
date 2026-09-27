@@ -30,6 +30,9 @@ class MainActivity : Activity() {
         // Optional: only the fallback for answering a carrier call whose notification has no
         // answer action (CallRelay.acceptViaTelecom). Declining it leaves call display working.
         android.Manifest.permission.ANSWER_PHONE_CALLS,
+        // Optional: resolves a saved contact's number for the call page (CallRelay.contactNumber).
+        // Declining it shows the contact name alone.
+        android.Manifest.permission.READ_CONTACTS,
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {

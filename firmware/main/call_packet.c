@@ -43,12 +43,13 @@ bool call_event_decode(const uint8_t *data, size_t len, call_event_t *out) {
     if (data[0] != CALL_PACKET_VERSION) {
         return false;
     }
-    if (data[1] != CALL_EVENT_RING && data[1] != CALL_EVENT_CLEAR) {
+    if (data[1] != CALL_EVENT_RING && data[1] != CALL_EVENT_CLEAR && data[1] != CALL_EVENT_ACTIVE) {
         return false;
     }
     out->type = (call_event_type_t)data[1];
     out->call_id = (uint16_t)((uint16_t)data[2] | ((uint16_t)data[3] << 8));
     fold_ascii(&data[4], CALL_CALLER_WIRE_LEN, out->caller, CALL_CALLER_LEN);
+    fold_ascii(&data[4 + CALL_CALLER_WIRE_LEN], CALL_NUMBER_WIRE_LEN, out->number, CALL_NUMBER_LEN);
     return true;
 }
 

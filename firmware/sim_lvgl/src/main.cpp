@@ -161,12 +161,13 @@ namespace {
 void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
-                 " [--call <caller>] [--shot <ms> <file.png>]\n"
+                 " [--call <caller>] [--press <from_ms> <to_ms>] [--shot <ms> <file.png>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
-                 "  --call         ring an incoming call from <caller> over the fixture, 8s of every\n"
-                 "                 12s; tapping Accept logs to stdout\n"
+                 "  --call         call from <caller> (\"\" = unknown) over the fixture, every 20s: rings\n"
+                 "                 7s, answered for 8s (sooner if the 2s hold accepts), then ends\n"
+                 "  --press        hold the panel centre over [from_ms, to_ms) of fixture time\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
                  exe);
@@ -224,8 +225,50 @@ void spawn_companion(int argc, char *argv[], int32_t res) {
 #endif
 }
 
-// Accept seam for --call: the device queues this for BLE, the sim just shows it happened.
-void on_sim_call_accept(uint16_t call_id) { std::printf("sim_lvgl: accept call_id=%u\n", call_id); }
+// --call fixture: every kCallCycleMs a call rings for kCallRingMs, is answered (by the phone, or
+// sooner by the terminal's hold) and ends kCallActiveMs after that.
+constexpr uint32_t kCallCycleMs = 20000;
+constexpr uint32_t kCallRingMs = 7000;
+constexpr uint32_t kCallActiveMs = 8000;
+uint32_t s_elapsed_ms = 0;
+uint16_t s_accepted_id = 0;
+uint32_t s_accepted_ms = 0;
+
+// Accept seam for --call: the device queues this for BLE; the sim logs it and answers the call.
+void on_sim_call_accept(uint16_t call_id) {
+    std::printf("sim_lvgl: accept call_id=%u\n", call_id);
+    s_accepted_id = call_id;
+    s_accepted_ms = s_elapsed_ms;
+}
+
+void apply_call_fixture(terminal_view_state_t *frame, const char *caller, uint32_t elapsed) {
+    const uint16_t id = static_cast<uint16_t>(elapsed / kCallCycleMs + 1u);
+    const uint32_t t = elapsed % kCallCycleMs;
+    const uint32_t cycle_start = elapsed - t;
+    const uint32_t answered = s_accepted_id == id ? s_accepted_ms - cycle_start : kCallRingMs;
+    frame->call_id = id;
+    std::snprintf(frame->caller, sizeof(frame->caller), "%s", caller);
+    std::snprintf(frame->call_number, sizeof(frame->call_number), "%s", "+64 27 123 4567");
+    if (t < answered) {
+        frame->call_ringing = true;
+    } else if (t < answered + kCallActiveMs) {
+        frame->call_active = true;
+        frame->call_elapsed_s = (t - answered) / 1000u;
+    }
+}
+
+// --press: a scripted finger on the panel centre, so the hold can be screenshotted.
+uint32_t s_press_from_ms = 0;
+uint32_t s_press_to_ms = 0;
+
+void scripted_press_read(lv_indev_t *indev, lv_indev_data_t *data) {
+    lv_display_t *disp = lv_indev_get_display(indev);
+    data->point.x = lv_display_get_horizontal_resolution(disp) / 2;
+    data->point.y = lv_display_get_vertical_resolution(disp) / 2;
+    data->state = s_elapsed_ms >= s_press_from_ms && s_elapsed_ms < s_press_to_ms
+                      ? LV_INDEV_STATE_PRESSED
+                      : LV_INDEV_STATE_RELEASED;
+}
 
 } // namespace
 
@@ -296,6 +339,14 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             call_caller = argv[++i];
+        } else if (std::strcmp(argv[i], "--press") == 0) {
+            if (i + 2 >= argc) {
+                print_usage(argv[0]);
+                return 1;
+            }
+            s_press_from_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
+            s_press_to_ms = static_cast<uint32_t>(std::atol(argv[i + 2]));
+            i += 2;
         } else if (std::strcmp(argv[i], "--single") == 0) {
             single = true;
         } else if (std::strcmp(argv[i], "--paired") == 0) {
@@ -377,6 +428,11 @@ int main(int argc, char *argv[]) {
     if (trip_page) gui_app_set_dial_outer(GUI_DIAL_OUTER_TRIP_ARC);
     if (fade_nav_entry) gui_app_set_nav_entry(GUI_NAV_ENTRY_FADE);
     if (call_caller != nullptr) gui_app_set_call_accept_handler(on_sim_call_accept);
+    if (s_press_to_ms > s_press_from_ms) {
+        lv_indev_t *press = lv_indev_create();
+        lv_indev_set_type(press, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(press, scripted_press_read);
+    }
 
     std::printf("sim_lvgl: window open at %dx%d\n", disp_w, disp_h);
 
@@ -392,11 +448,8 @@ int main(int argc, char *argv[]) {
                                       : odometer_page ? make_odometer_fixture_frame(elapsed)
                                       : idle_page     ? make_idle_fixture_frame(elapsed)
                                                       : make_fixture_frame(elapsed);
-        if (call_caller != nullptr && elapsed % 12000u < 8000u) {
-            frame.call_ringing = true;
-            frame.call_id = static_cast<uint16_t>(elapsed / 12000u + 1u);
-            std::snprintf(frame.caller, sizeof(frame.caller), "%s", call_caller);
-        }
+        s_elapsed_ms = elapsed;
+        if (call_caller != nullptr) apply_call_fixture(&frame, call_caller, elapsed);
         gui_app_update(&frame);
 
         uint32_t idle_ms = lv_timer_handler();

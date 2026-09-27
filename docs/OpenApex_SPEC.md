@@ -259,17 +259,30 @@ seconds. This is explicitly excluded from Phase 1.
 
 ### 5.5 Incoming calls
 
-When the phone rings, the terminal shows the caller (contact name, else the number) and an Accept
-button. There is deliberately no reject: the rider lets it ring out.
+When the phone rings, the terminal shows the caller name and number
+(`design reference/6. Calling/OpenApex Call Screens.svg`, `call_screen.cpp`). Accept is a 2 s hold
+anywhere on the page, traced by a theme-coloured ring; letting go early retraces it. Once answered
+the page shows the call duration until the call ends. There is deliberately no reject: the rider
+lets it ring out.
+
+CALL_EVENT (64 B, `call_packet.h`) carries type RING / ACTIVE / CLEAR, the call id, the caller name
+(empty when the dialer only knows the number: shown as "Unknown Caller") and the number.
 
 **Android (implemented).**
 - **Source.** The existing NotificationListener picks up any `CATEGORY_CALL` notification that is
   incoming (`CallRelay.kt`).
   - On API 31+, `EXTRA_CALL_TYPE` identifies incoming calls.
   - Below API 31, the notification must have an answer action.
-  - The caller is `EXTRA_TITLE`, exactly as the dialer shows it. No contacts, call-log or
-    phone-state permission is needed, and VoIP apps that post CallStyle work too.
-- **Ring refresh.** RING is re-sent every 5 s while the call rings. The terminal drops a ring not
+  - The caller is `EXTRA_TITLE`, exactly as the dialer shows it; a title that is itself a number
+    is sent as the number with an empty name. No call-log or phone-state permission is needed, and
+    VoIP apps that post CallStyle work too.
+  - The number comes from the caller `Person` (`tel:` uri), the notification text, or -- for a
+    saved contact, whose `Person` carries a contacts uri -- a contacts lookup behind the optional
+    `READ_CONTACTS` permission. Without it a contact shows as "Saved contact" in the bubble.
+- **Answered.** The same notification reposted as ongoing sends ACTIVE (answered on the terminal
+  or on the phone); its removal sends CLEAR. An ongoing call never seen ringing (outgoing) is
+  ignored. The duration is timed on the terminal from the first ACTIVE.
+- **Refresh.** RING or ACTIVE is re-sent every 5 s while the call lasts. The terminal drops a ring not
   refreshed within 12 s, or immediately on link loss (`call_state.c`), so a lost CLEAR cannot
   strand the page.
 - **Accept.** The tap goes through `gui_app_set_call_accept_handler` to `call_accept_queue`, then
@@ -279,7 +292,7 @@ button. There is deliberately no reject: the rider lets it ring out.
     `ALLOWED`).
   - The fallback is `TelecomManager.acceptRingingCall()`, with the optional
     `ANSWER_PHONE_CALLS` permission (carrier calls only).
-- **Routing.** A ringing call outranks every page, including an active maneuver. The nav state keeps
+- **Routing.** A ringing or answered call outranks every page, including an active maneuver. The nav state keeps
   updating underneath and returns when the call clears.
 
 **iOS (TODO, not implemented).** A third-party iOS app cannot observe or answer cellular calls, so

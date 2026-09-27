@@ -145,9 +145,11 @@ void gui_app_update(const terminal_view_state_t *state) {
 #endif
     // Link status and every other live value keep flowing into the page while it animates: update()
     // runs every frame, leaving or not, so nothing is ever frozen behind a tween.
-    // An incoming call outranks every page, including a live maneuver: the rider chose to take
-    // calls on the terminal, and the nav page is back the moment it clears.
-    Screen *next = state->call_ringing ? static_cast<Screen *>(&call_screen()) : screen_for_state(state->state);
+    // A call, ringing or answered, outranks every page, including a live maneuver: the rider
+    // chose to take calls on the terminal, and the nav page is back the moment it clears.
+    Screen *next = (state->call_ringing || state->call_active)
+                       ? static_cast<Screen *>(&call_screen())
+                       : screen_for_state(state->state);
 #if BOARD_HAS_SPLASH
     // Boot always passes through idle, even when navigation is already running on the phone: the
     // phone-connect entry plays out and idle's hold floor applies before the nav page takes over.

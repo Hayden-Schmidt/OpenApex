@@ -45,6 +45,9 @@ typedef struct {
     // --- Incoming call (call_state.c). Outranks every page while set; the nav fields above keep
     // updating underneath so the page comes back current when the call clears.
     bool call_ringing;
+    bool call_active;              // answered; call_ringing is false while this is set
+    uint32_t call_elapsed_s;       // since the call was answered (call_active only)
     uint16_t call_id;              // echo back in the accept (gui_app_set_call_accept_handler)
-    char caller[CALL_CALLER_LEN];  // contact name or number, folded to ASCII; may be empty
+    char caller[CALL_CALLER_LEN];  // contact name, folded to ASCII; empty for an unknown caller
+    char call_number[CALL_NUMBER_LEN];  // may be empty (withheld)
 } terminal_view_state_t;

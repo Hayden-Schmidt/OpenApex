@@ -11,26 +11,29 @@ import java.nio.charset.StandardCharsets
  * | Offset | Size | Field   | Encoding                                              |
  * |--------|------|---------|-------------------------------------------------------|
  * | 0      | 1    | version | [CALL_PACKET_VERSION]                                 |
- * | 1      | 1    | type    | [CALL_EVENT_RING] / [CALL_EVENT_CLEAR]                |
+ * | 1      | 1    | type    | [CALL_EVENT_RING] / [CALL_EVENT_ACTIVE] / [CALL_EVENT_CLEAR] |
  * | 2      | 2    | call_id | uint16 LE, phone-assigned, echoed back in the accept  |
  * | 4      | 40   | caller  | UTF-8, NUL-padded, cut on a character boundary        |
+ * | 44     | 20   | number  | UTF-8, NUL-padded; empty when withheld/unknown        |
  *
  * CALL_ACTION, terminal -> phone (notification on [RelayBleClient.CALL_ACTION_UUID]):
  * version (1), action (1, [CALL_ACTION_ACCEPT]), call_id (2, uint16 LE).
  *
- * The caller is whatever the dialer's notification shows -- contact name, or the number when there
- * is no contact. The phone does no lookup and no folding; the terminal folds to its font.
+ * The caller is the contact name the dialer resolved, empty when it only knows the number (the
+ * terminal then shows "Unknown Caller"). The phone does no folding; the terminal folds to its font.
  */
 const val CALL_PACKET_VERSION = 1
-const val CALL_EVENT_PACKET_SIZE = 44
+const val CALL_EVENT_PACKET_SIZE = 64
 const val CALL_ACTION_PACKET_SIZE = 4
 const val CALL_CALLER_WIRE_LEN = 40
+const val CALL_NUMBER_WIRE_LEN = 20
 
 const val CALL_EVENT_RING = 1
 const val CALL_EVENT_CLEAR = 2
+const val CALL_EVENT_ACTIVE = 3
 const val CALL_ACTION_ACCEPT = 1
 
-fun packCallEvent(type: Int, callId: Int, caller: String?): ByteArray {
+fun packCallEvent(type: Int, callId: Int, caller: String?, number: String? = null): ByteArray {
     val out = ByteArray(CALL_EVENT_PACKET_SIZE)
     out[0] = CALL_PACKET_VERSION.toByte()
     out[1] = type.toByte()
@@ -38,6 +41,8 @@ fun packCallEvent(type: Int, callId: Int, caller: String?): ByteArray {
     out[3] = ((callId shr 8) and 0xFF).toByte()
     val bytes = utf8Truncated(caller.orEmpty(), CALL_CALLER_WIRE_LEN)
     System.arraycopy(bytes, 0, out, 4, bytes.size)
+    val num = utf8Truncated(number.orEmpty(), CALL_NUMBER_WIRE_LEN)
+    System.arraycopy(num, 0, out, 4 + CALL_CALLER_WIRE_LEN, num.size)
     return out
 }
 

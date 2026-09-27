@@ -75,7 +75,7 @@ static void countdown_task(void *argument) {
             memset(&next, 0, sizeof(next));
             view_state_apply_packet(&raw, platform_now_ms(), &next);
             next.phone_connected = ble_link_is_connected();
-            call_state_fill(&next);
+            call_state_fill(&next, platform_now_ms());
             if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 shared_view = next;
                 xSemaphoreGive(view_mutex);
@@ -98,7 +98,7 @@ static void countdown_task(void *argument) {
         if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             view_state_tick(now, &shared_view);
             shared_view.phone_connected = ble_link_is_connected();
-            call_state_fill(&shared_view);
+            call_state_fill(&shared_view, now);
             // A link that is delivering writes we cannot decode is NOT the same as no link and
             // NOT the same as "not navigating", but the terminal used to render all three
             // identically. On 2026-09-24 three whole sessions sat on the idle screen while the

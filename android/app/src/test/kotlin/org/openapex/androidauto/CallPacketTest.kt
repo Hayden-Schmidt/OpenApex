@@ -8,8 +8,8 @@ class CallPacketTest {
 
     @Test
     fun `ring packet matches the firmware golden bytes`() {
-        // Same packet firmware/test_host/call_test.c decodes: RING, id 0x1234, "Jane Doe".
-        val p = packCallEvent(CALL_EVENT_RING, 0x1234, "Jane Doe")
+        // Same packet firmware/test_host/call_test.c decodes: RING, id 0x1234, "Jane Doe", "+64 27 123".
+        val p = packCallEvent(CALL_EVENT_RING, 0x1234, "Jane Doe", "+64 27 123")
         assertEquals(CALL_EVENT_PACKET_SIZE, p.size)
         assertEquals(1, p[0].toInt())
         assertEquals(CALL_EVENT_RING, p[1].toInt())
@@ -17,6 +17,8 @@ class CallPacketTest {
         assertEquals(0x12, p[3].toInt() and 0xFF)
         assertEquals("Jane Doe", String(p, 4, 8, Charsets.UTF_8))
         assertEquals(0, p[12].toInt())
+        assertEquals("+64 27 123", String(p, 44, 10, Charsets.UTF_8))
+        assertEquals(0, p[54].toInt())
     }
 
     @Test
