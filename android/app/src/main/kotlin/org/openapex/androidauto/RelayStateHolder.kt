@@ -10,6 +10,8 @@ sealed class RelayStateEvent {
     object ListenerDisconnected : RelayStateEvent()
     object BleConnected : RelayStateEvent()
     data class BleDisconnected(val status: Int) : RelayStateEvent()
+    /** An encoded CALL_EVENT packet (CallPacket.kt) for the terminal. */
+    class CallEvent(val packet: ByteArray) : RelayStateEvent()
 }
 
 object RelayStateHolder {
@@ -28,6 +30,7 @@ object RelayStateHolder {
     fun noteListenerDisconnected() = emit(RelayStateEvent.ListenerDisconnected)
     fun noteBleConnected() = emit(RelayStateEvent.BleConnected)
     fun noteBleDisconnected(status: Int) = emit(RelayStateEvent.BleDisconnected(status))
+    fun sendCallEvent(packet: ByteArray) = emit(RelayStateEvent.CallEvent(packet))
 
     private fun emit(event: RelayStateEvent) {
         observer?.invoke(event)

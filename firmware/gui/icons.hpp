@@ -1,6 +1,6 @@
 #pragma once
 
-// Access to the offline-rasterized A8 icon set (design/icons/README.md). The per-profile pixel
+// Access to the offline-rasterized A8 icon set (design reference/nav_icons_svg/README.md). The per-profile pixel
 // data lives in firmware/gui/generated/icons_<profile>.h, which is picked here by the board
 // profile so GUI code never names a profile itself -- the generator already scaled every icon by
 // (profile width / 240), so an ICON_* id means "the right size for this panel".

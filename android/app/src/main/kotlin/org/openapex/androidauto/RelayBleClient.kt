@@ -5,11 +5,14 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -25,6 +28,7 @@ class RelayBleClient(private val context: Context) {
 
     private var gatt: BluetoothGatt? = null
     private var characteristic: BluetoothGattCharacteristic? = null
+    private var callEventChar: BluetoothGattCharacteristic? = null
     private var connectedAddress: String? = null
     private var bondReceiver: BroadcastReceiver? = null
 
@@ -38,7 +42,11 @@ class RelayBleClient(private val context: Context) {
     // (2026-09-24: "packet=N fragment 1/9 queue failed" on every publish). Fragments are now
     // paced one at a time, kicked off again from onCharacteristicWrite once the controller has
     // drained the previous one.
-    private val pendingFragments = ArrayDeque<ByteArray>()
+    //
+    // Call-event fragments share the same queue (one GATT operation at a time, whatever the
+    // target) but jump ahead of nav fragments: a ring must not wait behind a nav packet.
+    private class Frame(val call: Boolean, val bytes: ByteArray)
+    private val pendingFragments = ArrayDeque<Frame>()
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -116,6 +124,7 @@ class RelayBleClient(private val context: Context) {
         gatt?.close()
         gatt = null
         characteristic = null
+        callEventChar = null
         connectedAddress = null
         bondReceiver?.let { context.unregisterReceiver(it) }
         bondReceiver = null
@@ -140,6 +149,38 @@ class RelayBleClient(private val context: Context) {
     fun write(packet: ByteArray) {
         val packetId = nextPacketId
         nextPacketId = (nextPacketId + 1) and 0xFF
+        val frames = fragment(packet, packetId, FRAG_COUNT).map { Frame(call = false, bytes = it) }
+        synchronized(pendingFragments) {
+            // A newer publish (~3Hz) supersedes whatever of the previous packet hasn't gone out
+            // yet; the reassembler on the terminal keys off packet_id so a partial old packet is
+            // harmless, not corrupting. Queued call fragments are kept.
+            pendingFragments.removeAll { !it.call }
+            pendingFragments.addAll(frames)
+        }
+        Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$FRAG_COUNT queued")
+        pumpQueue()
+    }
+
+    /**
+     * Sends a CALL_EVENT packet (CallPacket.kt) to the terminal's call characteristic, fragmented
+     * the same way as nav packets and queued ahead of them. Dropped while not connected: the
+     * ring refresh (CallRelay) re-sends once the link is back.
+     */
+    fun writeCall(packet: ByteArray) {
+        val packetId = nextPacketId
+        nextPacketId = (nextPacketId + 1) and 0xFF
+        val frames = fragment(packet, packetId, CALL_FRAG_COUNT).map { Frame(call = true, bytes = it) }
+        synchronized(pendingFragments) {
+            // Only the newest call event matters (a CLEAR supersedes a queued RING).
+            pendingFragments.removeAll { it.call }
+            val firstNav = pendingFragments.indexOfFirst { !it.call }.let { if (it < 0) pendingFragments.size else it }
+            pendingFragments.addAll(firstNav, frames)
+        }
+        Log.i(TAG, "writeCall: packet=$packetId frags=$CALL_FRAG_COUNT queued")
+        pumpQueue()
+    }
+
+    private fun fragment(packet: ByteArray, packetId: Int, fragCount: Int): List<ByteArray> {
         val frames = mutableListOf<ByteArray>()
         var offset = 0
         var fragIndex = 0
@@ -148,34 +189,30 @@ class RelayBleClient(private val context: Context) {
             val frame = ByteArray(FRAG_HEADER_BYTES + chunkLen)
             frame[0] = packetId.toByte()
             frame[1] = fragIndex.toByte()
-            frame[2] = FRAG_COUNT.toByte()
+            frame[2] = fragCount.toByte()
             System.arraycopy(packet, offset, frame, FRAG_HEADER_BYTES, chunkLen)
             frames += frame
             offset += chunkLen
             fragIndex++
         }
-        synchronized(pendingFragments) {
-            // A newer publish (~3Hz) supersedes whatever of the previous packet hasn't gone out
-            // yet; the reassembler on the terminal keys off packet_id so a partial old packet is
-            // harmless, not corrupting.
-            pendingFragments.clear()
-            pendingFragments.addAll(frames)
-        }
-        Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$FRAG_COUNT queued")
-        pumpQueue()
+        return frames
     }
 
     @SuppressLint("MissingPermission")
-    @Suppress("DEPRECATION") // writeCharacteristic(char, type, value) needs API 33; minSdk is 26
     private fun pumpQueue() {
         val g = gatt ?: return
-        val char = characteristic ?: return
         synchronized(pendingFragments) {
             if (writeInFlight) return
             val frame = pendingFragments.firstOrNull() ?: return
-            char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            char.value = frame
-            if (g.writeCharacteristic(char)) {
+            val char = (if (frame.call) callEventChar else characteristic) ?: run {
+                // Old firmware without the call characteristic: drop call frames, keep nav going.
+                if (frame.call) {
+                    pendingFragments.removeFirst()
+                    mainHandler.post { pumpQueue() }
+                }
+                return
+            }
+            if (writeNoResponse(g, char, frame.bytes)) {
                 writeInFlight = true
                 pendingFragments.removeFirst()
             } else {
@@ -184,6 +221,49 @@ class RelayBleClient(private val context: Context) {
                 mainHandler.postDelayed({ pumpQueue() }, FRAG_RETRY_DELAY_MS)
             }
         }
+    }
+
+    /** API 33 replaced the mutate-then-write characteristic API; both paths kept for minSdk 26. */
+    @SuppressLint("MissingPermission")
+    private fun writeNoResponse(g: BluetoothGatt, char: BluetoothGattCharacteristic, value: ByteArray): Boolean {
+        val type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return g.writeCharacteristic(char, value, type) == BluetoothStatusCodes.SUCCESS
+        }
+        @Suppress("DEPRECATION")
+        run {
+            char.writeType = type
+            char.value = value
+            return g.writeCharacteristic(char)
+        }
+    }
+
+    /**
+     * Subscribes to CALL_ACTION so the terminal's Accept reaches us. The CCCD write is a GATT
+     * operation like any other, so it holds [writeInFlight] until onDescriptorWrite releases it.
+     */
+    @SuppressLint("MissingPermission")
+    private fun subscribeCallAction(g: BluetoothGatt): Boolean {
+        val char = g.getService(SERVICE_UUID)?.getCharacteristic(CALL_ACTION_UUID) ?: return false
+        if (!g.setCharacteristicNotification(char, true)) return false
+        val cccd = char.getDescriptor(CCCD_UUID) ?: return false
+        val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            g.writeDescriptor(cccd, value) == BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                cccd.value = value
+                g.writeDescriptor(cccd)
+            }
+        }
+    }
+
+    private fun onCallAction(char: BluetoothGattCharacteristic, value: ByteArray?) {
+        if (char.uuid != CALL_ACTION_UUID) return
+        val callId = parseCallAccept(value) ?: return
+        Log.i(TAG, "terminal accepted call id=$callId")
+        mainHandler.post { CallRelay.onAccept(callId) }
     }
 
     private val callback = object : BluetoothGattCallback() {
@@ -198,6 +278,7 @@ class RelayBleClient(private val context: Context) {
                 g.discoverServices()
             } else {
                 characteristic = null
+                callEventChar = null
                 connectedAddress = null
                 backgroundPending = false
                 // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
@@ -208,12 +289,35 @@ class RelayBleClient(private val context: Context) {
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-            characteristic = g.getService(SERVICE_UUID)?.getCharacteristic(CHAR_UUID)
-            Log.i(TAG, "services discovered: status=$status characteristicFound=${characteristic != null}")
+            val service = g.getService(SERVICE_UUID)
+            characteristic = service?.getCharacteristic(CHAR_UUID)
+            callEventChar = service?.getCharacteristic(CALL_EVENT_UUID)
+            Log.i(TAG, "services discovered: status=$status characteristicFound=${characteristic != null} " +
+                "callEvent=${callEventChar != null}")
             if (characteristic != null) {
-                synchronized(pendingFragments) { writeInFlight = false }
+                // Held through the CCCD write when there is one; onDescriptorWrite releases it.
+                val subscribing = subscribeCallAction(g)
+                Log.i(TAG, "call action subscribe started=$subscribing")
+                synchronized(pendingFragments) { writeInFlight = subscribing }
                 RelayStateHolder.noteBleConnected()
             }
+        }
+
+        override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            Log.i(TAG, "descriptor write ${descriptor.characteristic.uuid} status=$status")
+            synchronized(pendingFragments) { writeInFlight = false }
+            pumpQueue()
+        }
+
+        // API 33+ delivers the value here; the deprecated overload below is only called before 33.
+        override fun onCharacteristicChanged(g: BluetoothGatt, char: BluetoothGattCharacteristic, value: ByteArray) {
+            onCallAction(char, value)
+        }
+
+        @Deprecated("Pre-API 33 path")
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicChanged(g: BluetoothGatt, char: BluetoothGattCharacteristic) {
+            onCallAction(char, char.value)
         }
 
         override fun onCharacteristicWrite(
@@ -243,6 +347,11 @@ class RelayBleClient(private val context: Context) {
         // Fixed OpenApex BLE identifiers — see docs/OpenApex_SPEC.md §5.3.
         val SERVICE_UUID: UUID = UUID.fromString("c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f")
         val CHAR_UUID: UUID = UUID.fromString("c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f")
+        /** Incoming call, phone -> terminal (CallPacket.kt / firmware call_packet.h). */
+        val CALL_EVENT_UUID: UUID = UUID.fromString("c9c6d0a0-0003-4f0a-9c8e-2f6b1a2d3e4f")
+        /** Accept, terminal -> phone, by notification. */
+        val CALL_ACTION_UUID: UUID = UUID.fromString("c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f")
+        private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         /** Packet id (1) + fragment index (1) + fragment count (1) ahead of each chunk's payload. */
         private const val FRAG_HEADER_BYTES = 3
@@ -252,6 +361,7 @@ class RelayBleClient(private val context: Context) {
 
         private const val FRAG_WRITE_BYTES = FRAG_HEADER_BYTES + FRAG_CHUNK_BYTES
         private val FRAG_COUNT = (RAW_NOTIF_PACKET_SIZE + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES
+        private val CALL_FRAG_COUNT = (CALL_EVENT_PACKET_SIZE + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES
 
         private const val FRAG_RETRY_DELAY_MS = 15L
 

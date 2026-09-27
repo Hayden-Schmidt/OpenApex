@@ -69,6 +69,7 @@ class NavNotificationRelayService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         recordWholesale(sbn, "posted")
+        CallRelay.onPosted(this, sbn)
         relayIfNav(sbn)
     }
 
@@ -553,6 +554,7 @@ class NavNotificationRelayService : NotificationListenerService() {
         // Recorded too: a nav notification disappearing is the event behind "the display went
         // blank", and it is invisible if only posts are captured.
         recordWholesale(sbn, "removed")
+        CallRelay.onRemoved(sbn)
         if (sbn.packageName == MAPS_PACKAGE) {
             RelayStateHolder.updateNav(null)
         }
