@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+
+#include "board_profile.h"
 #include "lvgl.h"
 
 // The compass ring shared by the turn-by-turn page and the odometer page: a full-diameter ring of
@@ -35,4 +38,21 @@ private:
     const int32_t display_diameter_px_;
     float north_heading_rad_ = 0.0f;
     bool north_known_ = false;
+
+    // -- north marker (pre-rasterized alpha masks) ----------------------------------------------
+    // Same reasoning as NavRenderer's arrowhead mask: the filleted marker used to be a fan of
+    // lv_draw_triangle calls, and every shared interior edge was its own anti-aliasing boundary,
+    // leaving a visible seam line through the red. The shape is fixed; only its rotation (and the
+    // entry zoom) change, so it is rasterized once into coverage masks -- outline and fill -- and
+    // drawn as two recoloured, rotated images. No interior edges, no seams.
+    //
+    // Marker plus border is ~0.13 x display diameter on its longest side; /6 leaves headroom.
+    static constexpr int kMarkerMaskMaxSide = BOARD_DISP_WIDTH / 6 + 8;
+    uint8_t outline_mask_[kMarkerMaskMaxSide * kMarkerMaskMaxSide];
+    uint8_t fill_mask_[kMarkerMaskMaxSide * kMarkerMaskMaxSide];
+    lv_image_dsc_t outline_img_{};
+    lv_image_dsc_t fill_img_{};
+    // The base midpoint, which sits on the rim: both the placement anchor and the rotation pivot.
+    lv_point_t marker_pivot_{0, 0};
+    void build_marker_masks();
 };

@@ -30,8 +30,6 @@ constexpr float kNorthWidth = 8.0f / 120.0f;    // design ref 8
 // Fillet on the marker's point, as a fraction of the half-frame (2.5px at 240): enough to take the
 // needle-sharp edge off, not so much that the point reads as blunt.
 constexpr float kNorthTipRadius = 2.5f / 120.0f;
-// Triangles in the fillet's fan. Plenty at a few pixels' radius.
-constexpr int kNorthTipSteps = 6;
 // Dark border around the marker, as a fraction of the half-frame (4px at 240).
 constexpr float kNorthOutline = 4.0f / 120.0f;
 
@@ -62,86 +60,101 @@ void stroke_line(lv_layer_t *layer, float x1, float y1, float x2, float y2, floa
     lv_draw_line(layer, &dsc);
 }
 
-// Truncates, where stroke_line() above rounds. That asymmetry is inherited deliberately: it is
-// what nav_renderer.cpp's to_lv()/stroke_line() pair did, and matching it keeps the nav dial's
-// compass pixel-for-pixel identical across this extraction (verified by screenshot diff).
-lv_point_precise_t to_lv(float x, float y) {
-    return {static_cast<lv_value_precise_t>(x), static_cast<lv_value_precise_t>(y)};
+// Supersampling per mask pixel: 4x4 gives 17 coverage levels, finer than LVGL's own anti-aliasing.
+constexpr int kMaskSupersample = 4;
+
+// Marker in mask space: axis vertical, base on the line y = `base_y`, point below it at `tip_y`,
+// centred on x = `mid_x`. The point is filleted by a circle of radius `r` inscribed against both
+// edges (half apex angle `alpha`), so inside the tangent points the test is the circle, outside it
+// is the plain triangle.
+struct MarkerShape {
+    float mid_x, base_y, tip_y, base_half_w, r, sin_a;
+
+    bool contains(float x, float y) const {
+        if (y < base_y || y > tip_y) return false;
+        const float depth = tip_y - base_y;
+        if (std::fabs(x - mid_x) > base_half_w * (tip_y - y) / depth) return false;
+        const float d = r / sin_a;                   // point -> fillet centre, along the axis
+        const float tangent = d * (1.0f - sin_a * sin_a);  // point -> tangent points, along the axis
+        if (tip_y - y >= tangent) return true;
+        const float dx = x - mid_x, dy = y - (tip_y - d);
+        return dx * dx + dy * dy <= r * r;
+    }
+};
+
+void rasterize_a8(const MarkerShape &shape, int w, int h, uint8_t *out) {
+    constexpr int kSamples = kMaskSupersample * kMaskSupersample;
+    const float step = 1.0f / kMaskSupersample;
+    for (int py = 0; py < h; ++py) {
+        for (int px = 0; px < w; ++px) {
+            int hits = 0;
+            for (int sy = 0; sy < kMaskSupersample; ++sy) {
+                const float y = static_cast<float>(py) + (sy + 0.5f) * step;
+                for (int sx = 0; sx < kMaskSupersample; ++sx) {
+                    const float x = static_cast<float>(px) + (sx + 0.5f) * step;
+                    if (shape.contains(x, y)) ++hits;
+                }
+            }
+            out[py * w + px] = static_cast<uint8_t>((hits * 255) / kSamples);
+        }
+    }
 }
 
-// One filleted marker triangle, base on the circle of radius `base_r` about (cx, cy) and point at
-// `tip_r`, aimed along `angle` (atan2 convention) -- inward, since tip_r < base_r.
-//
-// A filled triangle has no corner radius in LVGL, so the point is cut back to the two tangent
-// points of a circle of radius `r` inscribed against both edges, and the arc between them is filled
-// as a fan of triangles back to the base. The fan joins the edges exactly at the tangent points in
-// sub-pixel coordinates -- a separate integer-snapped circle stamped on the cut end (an earlier
-// approach) sat proud of the edges and read as a nub rather than a rounded tip. The circle's centre
-// is `d` back from the point along the axis, where d = r / sin(half apex angle).
-void draw_marker(lv_layer_t *layer, float cx, float cy, float angle, float tip_r, float base_r,
-                 float base_half_w, float r, lv_color_t color) {
-    const float nc = std::cos(angle), ns = std::sin(angle);
-    const float perp_x = -ns, perp_y = nc;
-    const float ax = cx + nc * base_r + perp_x * base_half_w;
-    const float ay = cy + ns * base_r + perp_y * base_half_w;
-    const float bx = cx + nc * base_r - perp_x * base_half_w;
-    const float by = cy + ns * base_r - perp_y * base_half_w;
-    const float tx = cx + nc * tip_r, ty = cy + ns * tip_r;
-
-    const float alpha = std::atan2(base_half_w, base_r - tip_r);
-    const float sin_a = std::sin(alpha);
-
-    lv_draw_triangle_dsc_t dsc;
-    lv_draw_triangle_dsc_init(&dsc);
-    dsc.color = color;
-    dsc.opa = LV_OPA_COVER;
-
-    if (r <= 0.5f || sin_a <= 0.01f) {
-        dsc.p[0] = to_lv(ax, ay);
-        dsc.p[1] = to_lv(bx, by);
-        dsc.p[2] = to_lv(tx, ty);
-        lv_draw_triangle(layer, &dsc);
-        return;
-    }
-
-    // +nc: the base sits outward of the point, so moving back from the point is +nc.
-    const float d = r / sin_a;
-    const float ccx = tx + nc * d, ccy = ty + ns * d;
-    // Tangent points sit at +-(90deg - alpha) either side of the inward axis, seen from the
-    // centre; the arc between them runs through the inward axis itself.
-    const float inward = std::atan2(-ns, -nc);
-    const float sweep = kPi / 2.0f - alpha;
-    const float mx = (ax + bx) * 0.5f, my = (ay + by) * 0.5f;  // fan hub: base midpoint
-
-    float px = ccx + r * std::cos(inward + sweep), py = ccy + r * std::sin(inward + sweep);
-    const float qx = ccx + r * std::cos(inward - sweep), qy = ccy + r * std::sin(inward - sweep);
-    // Body: base corners to the two tangent points. perp (+) is the `a` side.
-    const bool p_is_a = (px - tx) * perp_x + (py - ty) * perp_y > 0.0f;
-    dsc.p[0] = to_lv(ax, ay);
-    dsc.p[1] = to_lv(bx, by);
-    dsc.p[2] = p_is_a ? to_lv(qx, qy) : to_lv(px, py);
-    lv_draw_triangle(layer, &dsc);
-    dsc.p[0] = to_lv(ax, ay);
-    dsc.p[1] = p_is_a ? to_lv(qx, qy) : to_lv(px, py);
-    dsc.p[2] = p_is_a ? to_lv(px, py) : to_lv(qx, qy);
-    lv_draw_triangle(layer, &dsc);
-
-    for (int i = 1; i <= kNorthTipSteps; ++i) {
-        const float a = inward + sweep - 2.0f * sweep * static_cast<float>(i) / kNorthTipSteps;
-        const float nx = ccx + r * std::cos(a), ny = ccy + r * std::sin(a);
-        dsc.p[0] = to_lv(mx, my);
-        dsc.p[1] = to_lv(px, py);
-        dsc.p[2] = to_lv(nx, ny);
-        lv_draw_triangle(layer, &dsc);
-        px = nx;
-        py = ny;
-    }
+void init_a8(lv_image_dsc_t &img, const uint8_t *data, int w, int h) {
+    img.header.magic = LV_IMAGE_HEADER_MAGIC;
+    img.header.cf = LV_COLOR_FORMAT_A8;
+    img.header.w = static_cast<uint32_t>(w);
+    img.header.h = static_cast<uint32_t>(h);
+    img.header.stride = static_cast<uint32_t>(w);
+    img.data = data;
+    img.data_size = static_cast<uint32_t>(w * h);
 }
 
 } // namespace
 
 CompassRing::CompassRing(int32_t display_diameter_px)
-    : display_diameter_px_(display_diameter_px) {}
+    : display_diameter_px_(display_diameter_px) {
+    build_marker_masks();
+}
+
+// Bakes the marker at scale 1, pointing down from the top of the ring (north-up). Per frame,
+// draw() only rotates it about the base midpoint and zooms it with the ring's entry scale.
+//
+// The outline is the red marker grown outward by kNorthOutline on every side: each edge pushed out
+// along its normal (the point moves in by o / sin(alpha)), the base pushed out past the rim, and
+// the fillet radius grown by o about the SAME centre -- the offset of a rounded corner is a rounded
+// corner, so a plain larger triangle with the red's own radius would read thinner at the tip.
+void CompassRing::build_marker_masks() {
+    const float half = static_cast<float>(display_diameter_px_) / 2.0f;
+    const float depth = kNorthLength * half;
+    const float base_half_w = kNorthWidth * half;
+    const float alpha = std::atan2(base_half_w, depth);  // half apex angle
+    const float sin_a = std::sin(alpha);
+    const float r = kNorthTipRadius * half;
+    const float o = kNorthOutline * half;
+    const float outline_half_w = base_half_w + o / std::cos(alpha) + o * std::tan(alpha);
+
+    // One transparent pixel of margin all round, so the rotation's bilinear sampling has empty
+    // pixels to fade into. Integer pivot on an even width keeps the axis exactly on it.
+    constexpr int kMargin = 1;
+    const int rim_y = kMargin + static_cast<int>(std::ceil(o));
+    int w = 2 * (static_cast<int>(std::ceil(outline_half_w)) + kMargin);
+    int h = rim_y + static_cast<int>(std::ceil(depth + o / sin_a)) + kMargin;
+    LV_ASSERT_MSG(w <= kMarkerMaskMaxSide && h <= kMarkerMaskMaxSide,
+                  "compass marker mask too large for this display; raise kMarkerMaskMaxSide");
+    if (w > kMarkerMaskMaxSide) w = kMarkerMaskMaxSide;
+    if (h > kMarkerMaskMaxSide) h = kMarkerMaskMaxSide;
+
+    const float mid_x = static_cast<float>(w) / 2.0f;
+    const float rim = static_cast<float>(rim_y);
+    const MarkerShape fill{mid_x, rim, rim + depth, base_half_w, r, sin_a};
+    const MarkerShape outline{mid_x, rim - o, rim + depth + o / sin_a, outline_half_w, r + o, sin_a};
+    rasterize_a8(outline, w, h, outline_mask_);
+    rasterize_a8(fill, w, h, fill_mask_);
+    init_a8(outline_img_, outline_mask_, w, h);
+    init_a8(fill_img_, fill_mask_, w, h);
+    marker_pivot_ = {w / 2, rim_y};
+}
 
 void CompassRing::set_north(float heading_rad, bool known) {
     north_heading_rad_ = heading_rad;
@@ -174,18 +187,35 @@ void CompassRing::draw(lv_layer_t *layer, const lv_area_t &coords, float scale) 
     // direction, which is what "the compass spins backwards" on the 2026-09-23 ride was.
     // (-kPi/2 then converts "clockwise from up" to the atan2 convention, 0 = +x.)
     const float screen_angle = -north_heading_rad_ - kPi / 2.0f;
-    const float tip_r = half * (1.0f - kNorthLength);
-    const float base_half_w = kNorthWidth * half;
-    const float alpha = std::atan2(base_half_w, half * kNorthLength);  // half apex angle
-    const float r = kNorthTipRadius * half;
+    const float rim_x = cx + std::cos(screen_angle) * half;
+    const float rim_y = cy + std::sin(screen_angle) * half;
 
-    // Outline first, then the red marker over it. The outline is the same marker grown outward by
-    // kNorthOutline on every side: each edge pushed out along its normal (the point moves in by
-    // o / sin(alpha)), the base pushed out past the rim, and the fillet radius grown by o about the
-    // SAME centre -- the offset of a rounded corner is a rounded corner, so a plain larger triangle
-    // with the red's own radius would read thinner at the tip than along the sides.
-    const float o = kNorthOutline * half;
-    draw_marker(layer, cx, cy, screen_angle, tip_r - o / std::sin(alpha), half + o,
-                base_half_w + o / std::cos(alpha) + o * std::tan(alpha), r + o, outline_color());
-    draw_marker(layer, cx, cy, screen_angle, tip_r, half, base_half_w, r, north_color());
+    lv_draw_image_dsc_t dsc;
+    lv_draw_image_dsc_init(&dsc);
+    dsc.opa = LV_OPA_COVER;
+    dsc.recolor_opa = LV_OPA_COVER;
+    dsc.antialias = true;
+    dsc.pivot = marker_pivot_;
+    // The mask is baked pointing down from the top (screen_angle -pi/2). lv_draw_image takes 0.1
+    // degree units, positive clockwise -- the same sense as screen_angle, since y points down.
+    int32_t rot_tenths =
+        static_cast<int32_t>(std::lround((screen_angle + kPi / 2.0f) * 1800.0f / kPi)) % 3600;
+    if (rot_tenths < 0) rot_tenths += 3600;
+    dsc.rotation = rot_tenths;
+    dsc.scale_x = dsc.scale_y = static_cast<int32_t>(std::lround(scale * LV_SCALE_NONE));
+
+    // Placing the image so its pivot lands on the rim point keeps it fixed under rotation and zoom.
+    lv_area_t area;
+    area.x1 = static_cast<int32_t>(std::lround(rim_x)) - marker_pivot_.x;
+    area.y1 = static_cast<int32_t>(std::lround(rim_y)) - marker_pivot_.y;
+    area.x2 = area.x1 + static_cast<int32_t>(fill_img_.header.w) - 1;
+    area.y2 = area.y1 + static_cast<int32_t>(fill_img_.header.h) - 1;
+
+    // Outline first, then the red marker over it.
+    dsc.src = &outline_img_;
+    dsc.recolor = outline_color();
+    lv_draw_image(layer, &dsc, &area);
+    dsc.src = &fill_img_;
+    dsc.recolor = north_color();
+    lv_draw_image(layer, &dsc, &area);
 }
