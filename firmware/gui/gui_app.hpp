@@ -64,8 +64,17 @@ gui_nav_entry_t gui_app_nav_entry(void);
 typedef void (*gui_call_accept_cb_t)(uint16_t call_id);
 void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb);
 
+// The rider's uploaded avatar (firmware/main/avatar_store.h): GUI_AVATAR_BYTES of A2 art, 16x16
+// then 8x8 (the 8x8 is not drawn yet), shown in place of the boot logo in the accent.
+// Copied, so the caller's buffer may go. NULL clears it. Call before gui_app_init() to have it on
+// the first frame; later calls take effect immediately.
+#define GUI_AVATAR_BYTES 80
+void gui_app_set_avatar(const uint8_t *a2);
+
 #ifdef __cplusplus
 }
+
+#include "lvgl.h"
 
 class GuiTheme;
 
@@ -74,4 +83,16 @@ class GuiTheme;
 // theme owns the *how*, the screen owns the *what*. Valid before gui_app_init(); the theme is a
 // stateless namespace-scope object.
 const GuiTheme &gui_theme(void);
+
+// Shared style carrying the accent as text colour, background colour and image recolour. An object
+// that wears the theme colour for its whole life adds this instead of setting the colour locally,
+// so a colour change from the phone restyles every page with one lv_obj_report_style_change().
+lv_style_t *gui_accent_style(void);
+
+// Image source for the boot logo: the selected preset or uploaded avatar, else ICON_LOGO.
+const void *gui_logo_src(void);
+
+// True when gui_logo_src() is the built-in logo, an A8 mask to tint with the accent; an avatar
+// already carries its colours.
+bool gui_logo_is_mask(void);
 #endif

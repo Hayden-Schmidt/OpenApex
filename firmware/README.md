@@ -65,3 +65,26 @@ displayed on the road.
 
 Captures contain the rider's route, addresses and timestamps. Scrub before committing one as a
 fixture.
+
+## UI settings
+
+The phone configures the accent colour, avatar, ETA format, clock, units and default dial ring over
+BLE (docs/OpenApex_SPEC.md §5.6). Settings and a custom avatar are saved to NVS, so both apply
+from the splash on every boot with no phone connected.
+
+The nine preset avatars are the artist's pixel art in `design reference/Characters`, transcribed
+with their palettes into `gui/avatars_data.h` (spec §5.6 covers how themed colours follow the accent).
+
+Host test for the settings codec:
+
+```powershell
+gcc -std=c11 -Ifirmware/main -o settings_test firmware/test_host/settings_test.c firmware/main/settings.c
+./settings_test
+```
+
+Preview settings in the simulator using a TLV in hex. This shows the orange owl preset in imperial
+units; for a custom avatar pass `--settings 010201ff --avatar <160 hex digits>`:
+
+```powershell
+program.exe --settings 010103ff8000020102050101
+```

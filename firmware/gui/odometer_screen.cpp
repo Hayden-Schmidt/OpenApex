@@ -7,7 +7,7 @@
 
 #include "gui_app.hpp"
 #include "gui_font.hpp"
-#include "theme.hpp"
+#include "units.hpp"
 
 namespace {
 
@@ -104,8 +104,6 @@ OdometerScreen::OdometerScreen()
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
     lv_obj_set_scrollable(root_, false);
 
-    const lv_color_t accent = gui_theme().palette();
-
     // --- Compass ring. Same draw-into-the-layer approach DialScreen uses: 36 ticks as widgets
     // would be 36 lv_obj_t for something that is never hit-tested or individually styled.
     compass_obj_ = lv_obj_create(root_);
@@ -117,13 +115,13 @@ OdometerScreen::OdometerScreen()
 
     // --- Heading readout, in the theme colour per the page doc.
     heading_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_color(heading_label_, accent, 0);
+    lv_obj_add_style(heading_label_, gui_accent_style(), 0);
     lv_obj_set_style_text_font(heading_label_,
                                montserrat_at_most(px(kHeadingGlyphH * kFontPerGlyphH)), 0);
     lv_label_set_text_fmt(heading_label_, "--%s", kDegree);
 
     cardinal_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_color(cardinal_label_, accent, 0);
+    lv_obj_add_style(cardinal_label_, gui_accent_style(), 0);
     lv_obj_set_style_text_font(cardinal_label_,
                                montserrat_at_most(px(kCardinalGlyphH * kFontPerGlyphH)), 0);
     lv_label_set_text(cardinal_label_, "");
@@ -186,8 +184,9 @@ OdometerScreen::OdometerScreen()
 
     lv_obj_update_layout(root_);
     place_text();
-    lv_obj_set_pos(km_label_, px(kKmCx) - lv_obj_get_width(km_label_) / 2,
-                   px(kKmCy) - lv_obj_get_height(km_label_) / 2);
+    // Centre-aligned with offsets rather than positioned from a measured width, so it stays centred
+    // when the unit setting swaps "km" for "mi".
+    lv_obj_align(km_label_, LV_ALIGN_CENTER, px(kKmCx) - width_ / 2, px(kKmCy) - width_ / 2);
 }
 
 // Centre-anchored text has to be positioned from its measured height, so this runs after a layout
@@ -229,10 +228,14 @@ void OdometerScreen::update(const terminal_view_state_t &state) {
         lv_obj_invalidate(compass_obj_);
     }
 
-    if (state.odometer_meters != last_odometer_meters_) {
+    if (state.odometer_meters != last_odometer_meters_ || units_imperial() != last_imperial_) {
         last_odometer_meters_ = state.odometer_meters;
+        if (units_imperial() != last_imperial_) {
+            last_imperial_ = units_imperial();
+            lv_label_set_text(km_label_, units_long_label());
+        }
         char digits[kDigitCount];
-        odometer_digits(state.odometer_meters, digits);
+        odometer_digits(units_odometer_milli(state.odometer_meters), digits);
         for (int i = 0; i < kDigitCount; ++i) {
             const char text[2] = {digits[i], '\0'};
             lv_label_set_text(digit_label_[i], text);

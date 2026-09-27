@@ -20,6 +20,9 @@ public:
     void update(const terminal_view_state_t &state) override;
     void leave(LeaveDone done, void *ctx) override;
 
+    // Swaps the logo image (the rider's avatar or the built-in logo, gui_logo_src()) in place.
+    void set_logo(const void *src);
+
 private:
     // Tweens the logo's opacity from wherever it is to `to`.
     void fade(lv_opa_t to, lv_anim_completed_cb_t completed);

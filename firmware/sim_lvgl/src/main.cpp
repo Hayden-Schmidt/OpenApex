@@ -13,6 +13,7 @@ extern "C" {
 #include "lvgl.h"
 
 #include "board_profile.h"
+#include "settings.h"
 
 #include "view_state.h"
 }
@@ -162,14 +163,21 @@ void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
                  " [--call <caller>] [--press <from_ms> <to_ms>] [--shot <ms> <file.png>]\n"
+                 " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <hex>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
-                 "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
+                 "  --page         fixture to run: 'all' (default, full state cycle), 'idle' or\n"
+                 "                 'avatars' (the splash, a random preset in a random accent every 2s)\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --call         call from <caller> (\"\" = unknown) over the fixture, every 20s: rings\n"
                  "                 7s, answered for 8s (sooner if the 2s hold accepts), then ends\n"
                  "  --press        hold the panel centre over [from_ms, to_ms) of fixture time\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
-                 "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
+                 "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
+                 "  --settings     apply a settings TLV write as the phone would, in hex\n"
+                 "                 (docs/OpenApex_SPEC.md 5.6), e.g. 010103ff8000 = orange accent,\n"
+                 "                 010201NN = preset NN (01..09)\n"
+                 "  --avatar       custom avatar upload (80 bytes of A2 art) in hex; select it with\n"
+                 "                 --settings 010201ff\n",
                  exe);
 }
 
@@ -286,6 +294,7 @@ int main(int argc, char *argv[]) {
     uint32_t shot_at_ms = 0;
     const char *shot_path = nullptr;
     bool idle_page = false;
+    bool avatars_page = false;
     bool odometer_page = false;
     bool trip_page = false;
     bool fade_nav_entry = false;
@@ -293,6 +302,8 @@ int main(int argc, char *argv[]) {
     const char *call_caller = nullptr;
     bool paired = false;
     int positional = 0;
+    uint8_t avatar[GUI_AVATAR_BYTES];
+    bool have_avatar = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--page") == 0) {
@@ -307,6 +318,8 @@ int main(int argc, char *argv[]) {
                 odometer_page = true;
             } else if (std::strcmp(argv[i], "trip") == 0) {
                 trip_page = true;
+            } else if (std::strcmp(argv[i], "avatars") == 0) {
+                avatars_page = true;
             } else if (std::strcmp(argv[i], "all") != 0) {
                 std::fprintf(stderr, "sim_lvgl: unknown page '%s'\n", argv[i]);
                 print_usage(argv[0]);
@@ -347,6 +360,36 @@ int main(int argc, char *argv[]) {
             s_press_from_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
             s_press_to_ms = static_cast<uint32_t>(std::atol(argv[i + 2]));
             i += 2;
+        } else if (std::strcmp(argv[i], "--settings") == 0) {
+            // Same decode path as the settings characteristic, so the sim exercises the real codec.
+            uint8_t tlv[64];
+            size_t n = 0;
+            const char *hex = i + 1 < argc ? argv[++i] : "";
+            while (hex[0] != '\0' && hex[1] != '\0' && n < sizeof(tlv)) {
+                const char pair[3] = {hex[0], hex[1], '\0'};
+                tlv[n++] = static_cast<uint8_t>(std::strtoul(pair, nullptr, 16));
+                hex += 2;
+            }
+            terminal_settings_t s = *settings_get();
+            if (!settings_tlv_decode(tlv, n, &s)) {
+                std::fprintf(stderr, "sim_lvgl: settings TLV rejected\n");
+                return 1;
+            }
+            settings_set(&s);
+        } else if (std::strcmp(argv[i], "--avatar") == 0) {
+            const char *hex = i + 1 < argc ? argv[++i] : "";
+            size_t n = 0;
+            while (hex[0] != '\0' && hex[1] != '\0' && n < sizeof(avatar)) {
+                const char pair[3] = {hex[0], hex[1], '\0'};
+                avatar[n++] = static_cast<uint8_t>(std::strtoul(pair, nullptr, 16));
+                hex += 2;
+            }
+            if (n != sizeof(avatar) || hex[0] != '\0') {
+                std::fprintf(stderr, "sim_lvgl: --avatar needs exactly %d bytes of hex\n",
+                             GUI_AVATAR_BYTES);
+                return 1;
+            }
+            have_avatar = true;
         } else if (std::strcmp(argv[i], "--single") == 0) {
             single = true;
         } else if (std::strcmp(argv[i], "--paired") == 0) {
@@ -421,6 +464,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (have_avatar) gui_app_set_avatar(avatar);
     gui_app_init();
     // The odometer is a rider-selected page rather than a view_state_t, so it is reached through
     // the page-override seam, not by feeding a different state.
@@ -442,6 +486,22 @@ int main(int argc, char *argv[]) {
     // A second SDL_PollEvent loop here would race with it and starve it of events (observed:
     // window opens but never repaints past the first frame).
     const uint32_t start_ms = SDL_GetTicks();
+    if (avatars_page) {
+        std::srand(static_cast<unsigned>(std::time(nullptr)));
+        for (uint32_t next_ms = 0;; SDL_Delay(5)) {
+            if (SDL_GetTicks() >= next_ms) {
+                // Fully saturated, fully bright hue: what a rider would pick as a theme colour.
+                const lv_color_t c = lv_color_hsv_to_rgb(std::rand() % 360, 100, 100);
+                terminal_settings_t s = *settings_get();
+                s.accent_rgb = (uint32_t)c.red << 16 | (uint32_t)c.green << 8 | c.blue;
+                s.avatar = static_cast<uint8_t>(1 + std::rand() % SETTINGS_AVATAR_PRESET_MAX);
+                settings_set(&s);
+                gui_app_init(); // back to the splash, which picks the new avatar up
+                next_ms = SDL_GetTicks() + 2000;
+            }
+            lv_timer_handler();
+        }
+    }
     for (;;) {
         uint32_t elapsed = SDL_GetTicks() - start_ms;
         terminal_view_state_t frame = trip_page     ? make_trip_fixture_frame(elapsed)

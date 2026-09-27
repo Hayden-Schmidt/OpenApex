@@ -1,8 +1,6 @@
 #include "splash_screen.hpp"
 
 #include "gui_app.hpp"
-#include "icons.hpp"
-#include "theme.hpp"
 
 namespace {
 
@@ -12,7 +10,9 @@ namespace {
 //
 // The SVG fills the logo #D0D000, which is a Figma placeholder that contradicts the "default theme
 // colour is not yellow" rule in DESIGN NOTES.md. The raster is an A8 mask, so the colour comes from
-// the theme instead and the boot screen tracks the brand colour for free.
+// the theme instead and the boot screen tracks the brand colour for free. The rider's avatar
+// (gui_logo_src) takes the logo's place at the same size but carries its own colours, so it goes
+// untinted.
 constexpr uint32_t kFadeMs = 400;
 
 } // namespace
@@ -23,10 +23,8 @@ SplashScreen::SplashScreen() {
     lv_obj_set_scrollable(root_, false);
 
     logo_ = lv_image_create(root_);
-    lv_image_set_src(logo_, icon_image(ICON_LOGO));
-    lv_obj_set_style_image_recolor(logo_, gui_theme().palette(), 0);
-    lv_obj_set_style_image_recolor_opa(logo_, LV_OPA_COVER, 0);
-    lv_obj_center(logo_);
+    lv_obj_add_style(logo_, gui_accent_style(), 0);
+    set_logo(gui_logo_src());
 
     // The page doc allows a fade-in "maybe, if the C3 can handle it". It can: this is one whole-object
     // opacity value animated over a 70px image, which costs a blend on an area LVGL already redraws.
@@ -60,6 +58,12 @@ void SplashScreen::leave(LeaveDone done, void *ctx) {
         auto *self = static_cast<SplashScreen *>(lv_anim_get_user_data(a));
         self->done_(self->done_ctx_);
     });
+}
+
+void SplashScreen::set_logo(const void *src) {
+    lv_image_set_src(logo_, src);
+    lv_obj_set_style_image_recolor_opa(logo_, gui_logo_is_mask() ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_center(logo_);
 }
 
 // Nothing on this page is state-driven: it shows the same thing regardless of link, navigation or

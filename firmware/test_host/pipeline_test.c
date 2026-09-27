@@ -103,6 +103,12 @@ int main(void) {
     pipeline_set_eta_format(PIPELINE_ETA_ARRIVAL);
     view_state_tick(2000, &view);
     assert(strcmp(view.eta, "ETA 00:40") == 0);
+    // 12-hour clock (rider setting): 00:40 -> 12:40, 20:15 -> 8:15.
+    pipeline_set_clock_12h(true);
+    view_state_tick(2000, &view);
+    assert(strcmp(view.eta, "ETA 12:40") == 0);
+    assert(strcmp(view.clock, "8:15") == 0);
+    pipeline_set_clock_12h(false);
     pipeline_set_eta_format(PIPELINE_ETA_TIME_LEFT);
     memset(&p[35], 0, 32);
 

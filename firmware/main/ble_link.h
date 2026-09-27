@@ -15,6 +15,9 @@
 // Android relay), and decodes each incoming characteristic write into a raw_notif_t pushed onto
 // raw_packet_queue, and each incoming-call write into a call_event_t on call_event_queue. Board-specific BLE plumbing lives entirely in ble_link.c; the navigation
 // model and packet decoder stay hardware-agnostic (see board_profile.h comment on this boundary).
+//
+// Also serves the settings, device-info and avatar-upload characteristics (§5.6). NVS must already
+// be initialised: main.c does it first, so saved settings are applied before the GUI starts.
 void ble_link_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queue);
 
 // True when a long run of writes has arrived that could not be decoded â€” a truncating or

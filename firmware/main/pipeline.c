@@ -31,6 +31,7 @@ static int64_t s_local_epoch_s_at_sync;
 static uint32_t s_sync_ms;
 
 static pipeline_eta_format_t s_eta_format = PIPELINE_ETA_FORMAT_DEFAULT;
+static bool s_clock_12h;
 // The arrival time as normalize.c left it; out->eta is rebuilt from it every tick so the time left
 // keeps counting down between packets.
 static char s_eta_arrival[NAV_ETA_LEN];
@@ -48,6 +49,22 @@ static bool s_arrived;
 static uint32_t s_arrived_ms;
 
 void pipeline_set_eta_format(pipeline_eta_format_t format) { s_eta_format = format; }
+
+void pipeline_set_clock_12h(bool twelve_hour) { s_clock_12h = twelve_hour; }
+
+// "HH:MM", or "H:MM" on a 12-hour clock (00:xx reads 12:xx).
+static void format_hhmm(int minute_of_day, char *out, size_t out_len) {
+    // Unsigned and reduced so -Wformat-truncation can bound both fields.
+    unsigned h = ((unsigned)minute_of_day / 60U) % 24U;
+    const unsigned m = (unsigned)minute_of_day % 60U;
+    if (s_clock_12h) {
+        h %= 12U;
+        if (h == 0U) h = 12U;
+        snprintf(out, out_len, "%u:%02u", h, m);
+    } else {
+        snprintf(out, out_len, "%02u:%02u", h, m);
+    }
+}
 
 static uint32_t maneuver_identity(const nav_model_t *model) {
     bool changed = !s_have_maneuver || model->icon_type != s_last_icon ||
@@ -90,8 +107,7 @@ static void format_clock(uint32_t now_ms, char *out, size_t out_len) {
         return;
     }
     int64_t local_s = s_local_epoch_s_at_sync + (int64_t)((now_ms - s_sync_ms) / 1000U);
-    int64_t minute_of_day = ((local_s / 60) % 1440 + 1440) % 1440;
-    snprintf(out, out_len, "%02d:%02d", (int)(minute_of_day / 60), (int)(minute_of_day % 60));
+    format_hhmm((int)(((local_s / 60) % 1440 + 1440) % 1440), out, out_len);
 }
 
 // Local minute of day, or -1 when the phone clock has never synced.
@@ -124,7 +140,9 @@ static void format_eta(uint32_t now_ms, char *out, size_t out_len) {
     }
     const int now = local_minute_of_day(now_ms);
     if (s_eta_format != PIPELINE_ETA_TIME_LEFT || now < 0) {
-        snprintf(out, out_len, "ETA %02d:%02d", arrive / 60, arrive % 60);
+        char hhmm[NAV_CLOCK_LEN];
+        format_hhmm(arrive, hhmm, sizeof(hhmm));
+        snprintf(out, out_len, "ETA %s", hhmm);
         return;
     }
     // An arrival past midnight wraps forward; one only just behind the clock (Maps not yet caught

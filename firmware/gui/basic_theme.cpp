@@ -1,11 +1,12 @@
 #include "basic_theme.hpp"
 
 #include "screen.hpp"
+#include "settings.h"
 
 lv_color_t BasicTheme::palette() const {
-    // Placeholder high-contrast colour -- final brand colour TBC (design reference/DESIGN
-    // NOTES.md), deliberately not yellow.
-    return lv_color_hex(0x00C2FF);
+    // The rider's colour, set from the phone and persisted (settings.h); defaults to the #00C2FF
+    // placeholder until one is chosen. Read live so every caller follows a change.
+    return lv_color_hex(settings_get()->accent_rgb);
 }
 
 // #1E8D3E, straight off "design reference/3.Turn by Turn/Arrived Pop Up.svg".

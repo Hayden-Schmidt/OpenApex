@@ -60,4 +60,5 @@ private:
     bool connected_ = false;
     uint8_t last_battery_percent_ = 0xFE;  // != 0xFF so the first update always paints
     uint32_t last_odometer_meters_ = UINT32_MAX;
+    bool last_imperial_ = false;
 };

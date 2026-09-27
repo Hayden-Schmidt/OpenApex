@@ -50,6 +50,16 @@ class RelayBleClient(private val context: Context) {
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // Settings / device-info / avatar operations (spec §5.6). Android allows one GATT operation in
+    // flight, so these share writeInFlight with the nav fragments and go ahead of them in
+    // pumpQueue(): they are rare and user-driven, while a delayed nav packet is superseded anyway.
+    private sealed class ControlOp {
+        class Write(val uuid: UUID, val value: ByteArray, val done: (Boolean) -> Unit) : ControlOp()
+        class Read(val uuid: UUID, val done: (ByteArray?) -> Unit) : ControlOp()
+    }
+    private val controlOps = ArrayDeque<ControlOp>()
+    private var controlInFlight: ControlOp? = null
+
     // True while a background (autoConnect=true) request is parked in the controller waiting for
     // the terminal to come back. A direct connect() for the same device may replace it.
     private var backgroundPending = false
@@ -198,11 +208,106 @@ class RelayBleClient(private val context: Context) {
         return frames
     }
 
+    /** Reads the terminal's settings; [done] gets null if not connected or unreadable. */
+    fun readSettings(done: (TerminalSettings?) -> Unit) =
+        enqueue(ControlOp.Read(SETTINGS_UUID) { done(it?.let { b -> SettingsTlv.decode(b) }) })
+
+    /** Reads the device-info characteristic, which says the board and avatar size. */
+    fun readDeviceInfo(done: (DeviceInfo?) -> Unit) =
+        enqueue(ControlOp.Read(DEVICE_INFO_UUID) { done(it?.let(DeviceInfo::parse)) })
+
+    /** Writes every setting, split into MTU-sized partial writes. [done] is false if any failed. */
+    fun writeSettings(settings: TerminalSettings, done: (Boolean) -> Unit = {}) =
+        writeAll(SETTINGS_UUID, SettingsTlv.encodeWrites(settings), done)
+
+    /**
+     * Stores custom avatar art ([AvatarArt]) on the terminal. Show it by writing settings with
+     * avatar = [TerminalSettings.AVATAR_CUSTOM]. One 80-byte write, which Android sends as an ATT
+     * long write, so the terminal gets all of it or none.
+     */
+    fun uploadAvatar(art: AvatarArt, done: (Boolean) -> Unit = {}) =
+        writeAll(AVATAR_UUID, listOf(art.bytes), done)
+
+    /** Reads the stored custom avatar; [done] gets null if none is stored or the read failed. */
+    fun readAvatar(done: (AvatarArt?) -> Unit) =
+        enqueue(ControlOp.Read(AVATAR_UUID) { done(it?.let(AvatarArt::fromBytes)) })
+
+    fun clearAvatar(done: (Boolean) -> Unit = {}) =
+        writeAll(AVATAR_UUID, listOf(ByteArray(0)), done)
+
+    // With-response writes in order; the first failure drops the rest of this batch.
+    private fun writeAll(uuid: UUID, frames: List<ByteArray>, done: (Boolean) -> Unit) {
+        if (characteristic == null) {
+            done(false)
+            return
+        }
+        var failed = false
+        val batch = frames.mapIndexed { i, frame ->
+            ControlOp.Write(uuid, frame) { ok ->
+                if (failed) return@Write
+                if (!ok) failed = true
+                if (!ok || i == frames.lastIndex) done(ok)
+            }
+        }
+        synchronized(pendingFragments) { controlOps.addAll(batch) }
+        pumpQueue()
+    }
+
+    private fun enqueue(op: ControlOp.Read) {
+        if (characteristic == null) {
+            op.done(null)
+            return
+        }
+        synchronized(pendingFragments) { controlOps.addLast(op) }
+        pumpQueue()
+    }
+
+    private fun failOp(op: ControlOp) = when (op) {
+        is ControlOp.Write -> op.done(false)
+        is ControlOp.Read -> op.done(null)
+    }
+
+    // Starts the next control op, if any. Returns true when one was pending, so nav waits.
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION") // read/writeCharacteristic(char, ...) overloads need API 33; minSdk is 26
+    private fun pumpControl(g: BluetoothGatt): Boolean {
+        val op = controlOps.firstOrNull() ?: return false
+        val uuid = when (op) {
+            is ControlOp.Write -> op.uuid
+            is ControlOp.Read -> op.uuid
+        }
+        val char = g.getService(SERVICE_UUID)?.getCharacteristic(uuid)
+        if (char == null) {
+            // Firmware older than spec §5.6.
+            controlOps.removeFirst()
+            mainHandler.post { failOp(op) }
+            mainHandler.post { pumpQueue() }
+            return true
+        }
+        val started = when (op) {
+            is ControlOp.Write -> {
+                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                char.value = op.value
+                g.writeCharacteristic(char)
+            }
+            is ControlOp.Read -> g.readCharacteristic(char)
+        }
+        if (started) {
+            writeInFlight = true
+            controlInFlight = op
+            controlOps.removeFirst()
+        } else {
+            mainHandler.postDelayed({ pumpQueue() }, FRAG_RETRY_DELAY_MS)
+        }
+        return true
+    }
+
     @SuppressLint("MissingPermission")
     private fun pumpQueue() {
         val g = gatt ?: return
         synchronized(pendingFragments) {
             if (writeInFlight) return
+            if (pumpControl(g)) return
             val frame = pendingFragments.firstOrNull() ?: return
             val char = (if (frame.call) callEventChar else characteristic) ?: run {
                 // Old firmware without the call characteristic: drop call frames, keep nav going.
@@ -283,7 +388,14 @@ class RelayBleClient(private val context: Context) {
                 backgroundPending = false
                 // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
                 // set would stall pumpQueue() on every later connection: packets queue, none send.
-                synchronized(pendingFragments) { writeInFlight = false }
+                val dropped = synchronized(pendingFragments) {
+                    writeInFlight = false
+                    val ops = listOfNotNull(controlInFlight) + controlOps
+                    controlInFlight = null
+                    controlOps.clear()
+                    ops
+                }
+                dropped.forEach { failOp(it) }
                 RelayStateHolder.noteBleDisconnected(status)
             }
         }
@@ -325,7 +437,27 @@ class RelayBleClient(private val context: Context) {
             char: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            synchronized(pendingFragments) { writeInFlight = false }
+            val op = synchronized(pendingFragments) {
+                writeInFlight = false
+                controlInFlight.also { controlInFlight = null }
+            }
+            (op as? ControlOp.Write)?.done?.invoke(status == BluetoothGatt.GATT_SUCCESS)
+            pumpQueue()
+        }
+
+        @Deprecated("Deprecated in API 33, but the only read callback below it; minSdk is 26")
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicRead(
+            g: BluetoothGatt,
+            char: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            val value = char.value
+            val op = synchronized(pendingFragments) {
+                writeInFlight = false
+                controlInFlight.also { controlInFlight = null }
+            }
+            (op as? ControlOp.Read)?.done?.invoke(if (status == BluetoothGatt.GATT_SUCCESS) value else null)
             pumpQueue()
         }
     }
@@ -352,6 +484,11 @@ class RelayBleClient(private val context: Context) {
         /** Accept, terminal -> phone, by notification. */
         val CALL_ACTION_UUID: UUID = UUID.fromString("c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f")
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+        // Terminal settings, device info and avatar upload — docs/OpenApex_SPEC.md §5.6.
+        val SETTINGS_UUID: UUID = UUID.fromString("c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f")
+        val DEVICE_INFO_UUID: UUID = UUID.fromString("c9c6d0a0-0006-4f0a-9c8e-2f6b1a2d3e4f")
+        val AVATAR_UUID: UUID = UUID.fromString("c9c6d0a0-0007-4f0a-9c8e-2f6b1a2d3e4f")
 
         /** Packet id (1) + fragment index (1) + fragment count (1) ahead of each chunk's payload. */
         private const val FRAG_HEADER_BYTES = 3

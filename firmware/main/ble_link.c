@@ -1,11 +1,14 @@
 #include "ble_link.h"
 
 #include "call_packet.h"
+#include "avatar_store.h"
+#include "board_profile.h"
 #include "drive_log.h"
 #include "packet.h"
+#include "settings.h"
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
 
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
@@ -31,6 +34,23 @@ static const ble_uuid128_t s_call_event_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x03, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 static const ble_uuid128_t s_call_action_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x04, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+// Settings (§5.6): read the full TLV, write a partial one. Device info: read-only capabilities the
+// phone needs before it can build a settings screen or rasterise an avatar. Avatar: 80 B of A2 art.
+static const ble_uuid128_t s_settings_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x05, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+static const ble_uuid128_t s_info_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x06, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+static const ble_uuid128_t s_avatar_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x07, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+
+#define DEVICE_INFO_VERSION 1u
+#define DEVICE_INFO_CAP_AVATAR 0x01u
+
+#if defined(BOARD_PROFILE_PROTOTYPE_C3_GC9A01)
+#define DEVICE_INFO_BOARD_ID 1u
+#elif defined(BOARD_PROFILE_S3_AMOLED_175)
+#define DEVICE_INFO_BOARD_ID 2u
+#endif
 
 static QueueHandle_t s_raw_packet_queue;
 static QueueHandle_t s_call_event_queue;
@@ -291,6 +311,60 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
+static int settings_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                              struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    uint8_t buf[SETTINGS_TLV_MAX_LEN + 16]; // room for a newer phone's extra tags
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        const size_t n = settings_tlv_encode(settings_get(), buf, sizeof(buf));
+        return os_mbuf_append(ctxt->om, buf, n) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    uint16_t len = 0;
+    if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &len) != 0) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    }
+    // Copy-on-success: a rejected write changes nothing, and the phone sees the ATT error.
+    terminal_settings_t next = *settings_get();
+    if (!settings_tlv_decode(buf, len, &next)) {
+        ESP_LOGW(TAG, "rejected settings write (len=%u)", len);
+        return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+    }
+    settings_set(&next);
+    return 0;
+}
+
+static int info_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    const esp_app_desc_t *app = esp_app_get_description();
+    const uint8_t head[] = {
+        DEVICE_INFO_VERSION,
+        DEVICE_INFO_BOARD_ID,
+        BOARD_GFX_TIER,
+        SETTINGS_SCHEMA_VERSION,
+        DEVICE_INFO_CAP_AVATAR,
+        (uint8_t)(BOARD_AVATAR_PX & 0xFF),
+        (uint8_t)(BOARD_AVATAR_PX >> 8),
+    };
+    if (os_mbuf_append(ctxt->om, head, sizeof(head)) != 0 ||
+        os_mbuf_append(ctxt->om, app->version, strnlen(app->version, sizeof(app->version))) != 0) {
+        return BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    return 0;
+}
+
+static int avatar_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                            struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    return avatar_store_ble_access(ctxt);
+}
+
 static const struct ble_gatt_svc_def s_gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -318,6 +392,26 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .access_cb = call_action_access_cb,
                 .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ_ENC,
                 .val_handle = &s_call_action_val_handle,
+            },
+            {
+                // Same bonded-only rule as nav packets: settings and the avatar are the rider's.
+                // Writes are acknowledged so the app can show sync state (Phone_App_Architecture.md
+                // §7) and a rejected value surfaces as an ATT error.
+                .uuid = &s_settings_uuid.u,
+                .access_cb = settings_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
+                         BLE_GATT_CHR_F_WRITE_ENC,
+            },
+            {
+                .uuid = &s_info_uuid.u,
+                .access_cb = info_access_cb,
+                .flags = BLE_GATT_CHR_F_READ,
+            },
+            {
+                .uuid = &s_avatar_uuid.u,
+                .access_cb = avatar_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
+                         BLE_GATT_CHR_F_WRITE_ENC,
             },
             {0}, // terminator
         },
@@ -444,13 +538,6 @@ static void host_task(void *param) {
 void ble_link_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queue) {
     s_raw_packet_queue = raw_packet_queue;
     s_call_event_queue = call_event_queue;
-
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
 
     ESP_ERROR_CHECK(nimble_port_init());
 

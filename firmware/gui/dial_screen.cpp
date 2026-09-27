@@ -8,6 +8,7 @@
 #include "gui_app.hpp"
 #include "gui_font.hpp"
 #include "theme.hpp"
+#include "units.hpp"
 
 namespace {
 
@@ -425,7 +426,7 @@ void DialScreen::update(const terminal_view_state_t &state) {
     // because a held distance reads far better on the road than an empty dial.
     if (state.state == VIEW_ACTIVE || state.state == VIEW_STALE) {
         char text[16];
-        std::snprintf(text, sizeof(text), "%u m", static_cast<unsigned>(state.distance_meters));
+        units_format_maneuver(text, sizeof(text), state.distance_meters);
         lv_label_set_text(distance_label_, text);
         lv_obj_set_style_text_color(distance_label_,
                                     state.state == VIEW_STALE ? lv_color_hex(kStaleGrey)
