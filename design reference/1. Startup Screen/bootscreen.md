@@ -56,19 +56,8 @@ firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe --page idle
 - The 2s hold lives in `gui_app.cpp`, not in `SplashScreen`, because it is a *routing* decision: the
   splash is not a `view_state_t`, it is what is shown before any state is honoured. It is a floor,
   not an added delay — real startup work runs concurrently behind it.
-- The logo is an ordinary manifest icon, so it is rasterized per board profile like every other
-  glyph, and `lv_obj_center()` places it (the SVG has it dead-centre, so no reference-pixel maths).
-- **Swapping the logo is a manifest edit only.** The manifest key is `logo`, deliberately not named
-  after the current art, so it generates `ICON_LOGO` and `splash_screen.cpp` never has to change.
-  Point `icons.logo.svg` at the new file, set `size_240` to the desired box size at the 240px
-  reference, re-run `python tools/build_icon_raster.py`, rebuild. Two constraints from the pipeline:
-  the source must have a **square viewBox** (the generator hard-fails otherwise), and it is
-  rasterized to an **A8 alpha mask**, so only the silhouette survives — a multi-colour logo renders
-  as a flat theme-coloured shape. A multi-colour logo would need a different pixel format and a
-  different accessor.
-- The placeholder SVG fills the logo `#D0D000`. That is a Figma placeholder and contradicts the
-  "default theme colour is not yellow" rule in `DESIGN NOTES.md`, so the mask is recoloured from
-  `gui_theme().palette()` and the boot screen tracks the brand colour automatically.
+- The "logo" is the rider's avatar (`gui_logo_src()` in `gui_app.cpp`), the dragon by default.
+  The placeholder manifest icon (`cat-svgrepo-com.svg`, an A8 mask tinted with the accent) is gone.
 - Fade-in (400ms) is on for both tiers. The requirements above allowed it "maybe, if the C3 can
   handle it" — it can: one object-opacity value over a 70px image, blended into an area LVGL is
   already redrawing.

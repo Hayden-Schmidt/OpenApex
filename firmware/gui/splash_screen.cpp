@@ -4,15 +4,9 @@
 
 namespace {
 
-// "Boot Screen.svg": black field, logo in a 70x70 box dead-centred on the 240px frame. The icon
-// manifest already renders it at the right size for this panel (size_240 = 70), so the only
-// geometry here is "centre it" -- no reference-pixel maths needed.
-//
-// The SVG fills the logo #D0D000, which is a Figma placeholder that contradicts the "default theme
-// colour is not yellow" rule in DESIGN NOTES.md. The raster is an A8 mask, so the colour comes from
-// the theme instead and the boot screen tracks the brand colour for free. The rider's avatar
-// (gui_logo_src) takes the logo's place at the same size but carries its own colours, so it goes
-// untinted.
+// "Boot Screen.svg": black field, logo dead-centred. The logo is the rider's avatar (gui_logo_src),
+// already drawn at its board size (BOARD_AVATAR_PX) in its own colours, so the only geometry here is
+// "centre it" and nothing is tinted.
 constexpr uint32_t kFadeMs = 400;
 
 } // namespace
@@ -23,7 +17,6 @@ SplashScreen::SplashScreen() {
     lv_obj_set_scrollable(root_, false);
 
     logo_ = lv_image_create(root_);
-    lv_obj_add_style(logo_, gui_accent_style(), 0);
     set_logo(gui_logo_src());
 
     // The page doc allows a fade-in "maybe, if the C3 can handle it". It can: this is one whole-object
@@ -62,7 +55,6 @@ void SplashScreen::leave(LeaveDone done, void *ctx) {
 
 void SplashScreen::set_logo(const void *src) {
     lv_image_set_src(logo_, src);
-    lv_obj_set_style_image_recolor_opa(logo_, gui_logo_is_mask() ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     lv_obj_center(logo_);
 }
 

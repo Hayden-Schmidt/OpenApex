@@ -5,8 +5,8 @@
 // Current settings start at the defaults so a build that never loads NVS (host tests, the
 // simulator) behaves exactly as before settings existed.
 static const terminal_settings_t kDefaults = {
-    .accent_rgb = 0x00C2FF,
-    .avatar = SETTINGS_AVATAR_LOGO,
+    .accent_rgb = 0x00FFE8,
+    .avatar = SETTINGS_AVATAR_DEFAULT,
     .eta_format = PIPELINE_ETA_FORMAT_DEFAULT,
     .clock_12h = 0,
     .units = SETTINGS_UNITS_METRIC,

@@ -11,8 +11,8 @@
 // encoding of the factory defaults.
 static const uint8_t kDefaultsTlv[] = {
     0x01,                         // schema
-    0x01, 0x03, 0x00, 0xC2, 0xFF, // accent #00C2FF
-    0x02, 0x01, 0x00,             // avatar: logo
+    0x01, 0x03, 0x00, 0xFF, 0xE8, // accent #00FFE8
+    0x02, 0x01, 0x00,             // avatar: default (dragon)
     0x03, 0x01, 0x01,             // ETA: time left
     0x04, 0x01, 0x00,             // clock: 24h
     0x05, 0x01, 0x00,             // units: metric
@@ -53,7 +53,7 @@ static void test_partial_write_keeps_other_fields(void) {
     const uint8_t w[] = {0x01, 0x05, 0x01, 0x01};
     assert(settings_tlv_decode(w, sizeof(w), &s));
     assert(s.units == SETTINGS_UNITS_IMPERIAL);
-    assert(s.accent_rgb == 0x00C2FF);
+    assert(s.accent_rgb == 0x00FFE8);
 }
 
 static void test_unknown_tag_skipped(void) {

@@ -324,15 +324,15 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 
 | Tag | Len | Field | Values | Default |
 |---|---|---|---|---|
-| 0x01 | 3 | Accent colour | RGB888, big-endian | `00 C2 FF` |
-| 0x02 | 1 | Avatar | 0 built-in logo, 1-9 preset character, 0xFF custom upload | 0 |
+| 0x01 | 3 | Accent colour | RGB888, big-endian | `00 FF E8` |
+| 0x02 | 1 | Avatar | 0 default character (the dragon, preset 8), 1-9 preset character, 0xFF custom upload | 0 |
 | 0x03 | 1 | ETA format | 0 arrival time, 1 time left | 1 |
 | 0x04 | 1 | Clock | 0 24-hour, 1 12-hour (`H:MM`, no am/pm) | 0 |
 | 0x05 | 1 | Units | 0 metric, 1 imperial (distances) | 0 |
 | 0x06 | 1 | Default dial outer ring | 0 compass, 1 trip | 0 |
 
 - A read returns every field. Golden fixture for the defaults (21 bytes):
-  `01 01 03 00 C2 FF 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00`.
+  `01 01 03 00 FF E8 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00`.
 - A write may carry any subset of records; untouched fields keep their value. Split a full config
   across several writes to stay within 20 bytes.
 - Unknown tags are skipped (forward compatibility). A wrong schema byte, truncated record, wrong
@@ -341,7 +341,7 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 
 **Device info.** `[info_ver=1][board_id][gfx_tier][settings_schema][caps][avatar_px u16 LE][fw version, ASCII]`.
 `board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means custom avatar upload is supported.
-`avatar_px` is the edge an avatar is drawn at (64 on C3, 128 on S3), for previews.
+`avatar_px` is the edge an avatar is drawn at (96 on C3, 192 on S3), for previews.
 
 **Preset avatars.** The nine presets (crab, owl, dino, octopus, chick, slime, bear, dragon,
 robot, in tag order) are full-colour pixel art built into the firmware from
@@ -363,7 +363,7 @@ the same character (16 B) for small surfaces. The 16x16 is drawn at a whole-numb
 exactly 80 bytes replaces it and an empty write deletes it; any other length is rejected. The
 value is longer than one packet, so the phone sends it as an ATT long write (prepare/execute,
 Android's default write type does this); the terminal only sees the whole value, so an interrupted
-upload changes nothing. Selecting 0xFF with nothing stored shows the logo.
+upload changes nothing. Selecting 0xFF with nothing stored shows the default character.
 
 ## 6. Hardware Profiles
 

@@ -5,16 +5,16 @@ package org.openapex.androidauto
  * docs/OpenApex_SPEC.md §5.6; [SettingsTlv.DEFAULTS_FIXTURE] is the spec's golden fixture.
  */
 data class TerminalSettings(
-    val accentRgb: Int = 0x00C2FF,
-    /** [AVATAR_LOGO], a preset 1..[AVATAR_PRESETS] or [AVATAR_CUSTOM]. */
-    val avatar: Int = AVATAR_LOGO,
+    val accentRgb: Int = 0x00FFE8,
+    /** [AVATAR_DEFAULT], a preset 1..[AVATAR_PRESETS] or [AVATAR_CUSTOM]. */
+    val avatar: Int = AVATAR_DEFAULT,
     val etaTimeLeft: Boolean = true,
     val clock12h: Boolean = false,
     val imperial: Boolean = false,
     val dialOuterTrip: Boolean = false,
 ) {
     companion object {
-        const val AVATAR_LOGO = 0
+        const val AVATAR_DEFAULT = 0
         /** Presets in order: crab, owl, dino, octopus, chick, slime, bear, dragon, robot. */
         const val AVATAR_PRESETS = 9
         const val AVATAR_CUSTOM = 0xFF

@@ -12,8 +12,7 @@
 // store and show nothing until the MCU clocks the init sequence out over SPI, so "boot screen" is
 // necessarily software. See the page doc for why the bootloader-side alternative was rejected.
 //
-// BASIC and RICH render the same thing today. The spec's richer logo animation is deferred until
-// the real logo asset exists -- the placeholder is `cat-svgrepo-com.svg`.
+// BASIC and RICH render the same thing today: the rider's avatar, the dragon by default.
 class SplashScreen : public Screen {
 public:
     SplashScreen();

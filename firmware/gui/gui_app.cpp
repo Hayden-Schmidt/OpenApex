@@ -134,13 +134,13 @@ void describe_avatar(void) {
     s_avatar.data = s_avatar_buf;
 }
 
-// The selected art (an avatar_preset_t or the 80-byte upload), or nullptr for the logo (also when
-// "custom" has nothing uploaded).
+// The selected art: an avatar_preset_t or the 80-byte upload. The default character stands in for
+// anything else, including "custom" with nothing uploaded.
 const void *selected_avatar(void) {
     const uint8_t v = settings_get()->avatar;
-    if (v == SETTINGS_AVATAR_CUSTOM) return s_have_custom ? s_custom : nullptr;
+    if (v == SETTINGS_AVATAR_CUSTOM && s_have_custom) return s_custom;
     if (v >= 1 && v <= AVATAR_PRESET_COUNT) return &kAvatarPresets[v - 1];
-    return nullptr;
+    return &kAvatarPresets[SETTINGS_AVATAR_DEFAULT_PRESET - 1];
 }
 
 gui_page_override_t s_page_override = GUI_PAGE_AUTO;
@@ -237,7 +237,6 @@ lv_style_t *gui_accent_style(void) {
 
 const void *gui_logo_src(void) {
     const void *art = selected_avatar();
-    if (art == nullptr) return icon_image(ICON_LOGO);
     const lv_color_t accent = s_theme.palette();
     if (art != s_avatar_shown || !lv_color_eq(accent, s_avatar_accent)) {
         if (art == s_custom) draw_custom(s_custom, accent);
@@ -248,8 +247,6 @@ const void *gui_logo_src(void) {
     }
     return &s_avatar;
 }
-
-bool gui_logo_is_mask(void) { return selected_avatar() == nullptr; }
 
 void gui_app_set_avatar(const uint8_t *a2) {
     s_have_custom = a2 != nullptr;

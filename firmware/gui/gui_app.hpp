@@ -89,10 +89,6 @@ const GuiTheme &gui_theme(void);
 // so a colour change from the phone restyles every page with one lv_obj_report_style_change().
 lv_style_t *gui_accent_style(void);
 
-// Image source for the boot logo: the selected preset or uploaded avatar, else ICON_LOGO.
+// Image source for the boot logo: the selected preset or uploaded avatar, else the default character.
 const void *gui_logo_src(void);
-
-// True when gui_logo_src() is the built-in logo, an A8 mask to tint with the accent; an avatar
-// already carries its colours.
-bool gui_logo_is_mask(void);
 #endif

@@ -52,8 +52,8 @@
 #define BOARD_DISP_WIDTH 240
 #define BOARD_DISP_HEIGHT 240
 
-// Drawn avatar edge: 16x16 art at 4x, just inside the 70px boot logo's box (gui_app.cpp).
-#define BOARD_AVATAR_PX 64
+// Drawn avatar edge: 32px preset art at 3x (16px upload at 6x), 1.5x the 70px boot logo box.
+#define BOARD_AVATAR_PX 96
 
 // Touch: CST816/CST816D over I2C (touch variant only). Compiles out when BOARD_HAS_TOUCH == 0.
 #define BOARD_TOUCH_PIN_SDA 4
@@ -87,8 +87,8 @@
 #define BOARD_DISP_WIDTH 466
 #define BOARD_DISP_HEIGHT 466
 
-// Drawn avatar edge: 16x16 art at 8x, just inside the 136px boot logo's box (gui_app.cpp).
-#define BOARD_AVATAR_PX 128
+// Drawn avatar edge: 32px preset art at 6x (16px upload at 12x), 1.5x the 136px boot logo box.
+#define BOARD_AVATAR_PX 192
 
 #else
 #error "No board profile selected. Define BOARD_PROFILE_PROTOTYPE_C3_GC9A01 or BOARD_PROFILE_S3_AMOLED_175 (or add a new profile)."
