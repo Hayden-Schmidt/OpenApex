@@ -50,3 +50,20 @@ __pycache__/
 *.jsonl
 esp_log.bin
 drivelogs/
+
+# PlatformIO regenerates these with machine-specific toolchain paths on every build
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+
+# Design-canvas tool state
+/.design-canvas/
+
+# Third-party screenshots used as phone app mood-board; not ours to redistribute
+design reference/5. Phone App/Examples/
+
+# Character art working files (export GUIDs, pixel-snapper/rehab passes, archive). The masters are
+# the named PNGs in design reference/Characters plus Full Res Characters.png.
+design reference/Characters/**/{*}*.png
+design reference/Characters/**/*pixel-snapper*.png
+design reference/Characters/**/*pixel-rehab*.png
+design reference/Characters/archive/

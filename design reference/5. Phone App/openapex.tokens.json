@@ -1,0 +1,71 @@
+{
+  "$description": "OpenApex design tokens, extracted from firmware/gui (terminal LVGL UI). W3C DTCG format. Source of truth for the device and the phone app.",
+  "color": {
+    "$type": "color",
+    "brand": {
+      "accent": { "$value": "#00FFE8", "$description": "Theme accent (GuiTheme::palette). Runtime-themeable. Never yellow." }
+    },
+    "surface": {
+      "background": { "$value": "#000000", "$description": "All terminal pages. Pure black for AMOLED + sun contrast." },
+      "outline": { "$value": "#1A1A1A", "$description": "Compass marker border" }
+    },
+    "text": {
+      "primary": { "$value": "#FFFFFF" },
+      "secondary": { "$value": "#969696", "$description": "Odometer chrome" },
+      "stale": { "$value": "#808080", "$description": "Stale data / ETA label" },
+      "icon": { "$value": "#E3E3E3", "$description": "Status icons (Material Symbols default)" }
+    },
+    "semantic": {
+      "success": { "$value": "#1E8D3E", "$description": "Arrived surface. Stays green regardless of theme." },
+      "north": { "$value": "#FF3B30", "$description": "Compass north marker" },
+      "neutral": { "$value": "#585F68", "$description": "Minor ticks, unknown traffic" }
+    },
+    "traffic": {
+      "free": { "$value": "#009AA6" },
+      "slow": { "$value": "#F5A623" },
+      "heavy": { "$value": "#E0392B" },
+      "stopped": { "$value": "#8B1A12" }
+    }
+  },
+  "font": {
+    "family": { "$type": "fontFamily", "$value": "Montserrat" },
+    "weight": { "$type": "fontWeight", "$value": 400 }
+  },
+  "fontSize": {
+    "$type": "dimension",
+    "$description": "Terminal sizes at 240px reference. Phone scale is TBD; keep the ratios.",
+    "display": { "$value": "44px", "$description": "Idle clock" },
+    "headline": { "$value": "38px", "$description": "Odometer digits" },
+    "title": { "$value": "28px", "$description": "Heading, clock" },
+    "body": { "$value": "24px", "$description": "Maneuver distance" },
+    "label": { "$value": "20px", "$description": "Cardinal, odometer, tenths" },
+    "caption": { "$value": "16px", "$description": "Street name" },
+    "micro": { "$value": "14px", "$description": "ETA" }
+  },
+  "radius": {
+    "$type": "dimension",
+    "small": { "$value": "4px", "$description": "Odometer boxes" },
+    "pill": { "$value": "9999px", "$description": "Odometer bubble (LV_RADIUS_CIRCLE)" }
+  },
+  "stroke": {
+    "$type": "dimension",
+    "thin": { "$value": "1.5px" },
+    "regular": { "$value": "2px" },
+    "ring": { "$value": "7px", "$description": "Trip / traffic arc at 240px" }
+  },
+  "duration": {
+    "$type": "duration",
+    "fast": { "$value": "400ms", "$description": "Page fade, link glyph slide, splash fade" },
+    "medium": { "$value": "600ms", "$description": "Nav text slide-in" },
+    "slow": { "$value": "900ms", "$description": "Nav arrow entry" },
+    "tween": { "$value": "1000ms", "$description": "Idle state tween" },
+    "reveal": { "$value": "2000ms", "$description": "Arrived reveal; minimum splash / nav-leave hold" }
+  },
+  "easing": {
+    "$type": "cubicBezier",
+    "$description": "Rule: never linear. S-curve or exponential only. Exits are entries reversed.",
+    "standard": { "$value": [0.65, 0, 0.35, 1], "$description": "S-curve ease-in-out" },
+    "enter": { "$value": [0.16, 1, 0.3, 1], "$description": "Exponential ease-out: arrive fast, settle" },
+    "exit": { "$value": [0.7, 0, 0.84, 0], "$description": "Exponential ease-in: slow start, then away" }
+  }
+}

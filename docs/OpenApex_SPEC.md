@@ -227,6 +227,9 @@ specific telemetry characteristic. (This path keeps the terminal as central for 
 since ANCS requires the terminal to be the GATT client of the iPhone's notification service; it is
 unrelated to the Android path's peripheral/central roles in §5.1.)
 
+Phone-side settings, firmware-update and device-info contracts are planned in
+[Phone_App_Architecture.md](Phone_App_Architecture.md) §6 and must land here before implementation.
+
 ### 5.3 Project BLE identifiers
 
 The Android implementation currently defines:

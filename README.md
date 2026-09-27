@@ -18,6 +18,9 @@ polylines, offline routing, or terminal-side GNSS navigation.
 See [docs/OpenApex_SPEC.md](docs/OpenApex_SPEC.md) for the complete architecture, hardware
 profiles, BLE contract, countdown model, and development roadmap.
 
+See [docs/Phone_App_Architecture.md](docs/Phone_App_Architecture.md) for the Android + iOS phone app
+architecture (Kotlin Multiplatform + Compose Multiplatform).
+
 See [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md) for Android SDK, Gradle, ESP-IDF,
 host-test, and VS Code task setup.
 
