@@ -59,15 +59,11 @@ void gui_app_set_nav_entry(gui_nav_entry_t entry);
 gui_nav_entry_t gui_app_nav_entry(void);
 
 // The rider's uploaded avatar (firmware/main/avatar_store.h): GUI_AVATAR_BYTES of A2 art, 16x16
-// then 8x8, shown in place of the boot logo when settings select it and tinted with the accent.
+// then 8x8 (the 8x8 is not drawn yet), shown in place of the boot logo in the accent.
 // Copied, so the caller's buffer may go. NULL clears it. Call before gui_app_init() to have it on
 // the first frame; later calls take effect immediately.
 #define GUI_AVATAR_BYTES 80
 void gui_app_set_avatar(const uint8_t *a2);
-
-// 8x8 A2 art (16 bytes) of the selected avatar, or NULL when the logo is selected. Not drawn yet;
-// here for small surfaces.
-const uint8_t *gui_avatar_small(void);
 
 #ifdef __cplusplus
 }
@@ -89,4 +85,8 @@ lv_style_t *gui_accent_style(void);
 
 // Image source for the boot logo: the selected preset or uploaded avatar, else ICON_LOGO.
 const void *gui_logo_src(void);
+
+// True when gui_logo_src() is the built-in logo, an A8 mask to tint with the accent; an avatar
+// already carries its colours.
+bool gui_logo_is_mask(void);
 #endif

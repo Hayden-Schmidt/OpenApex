@@ -64,43 +64,81 @@ SplashScreen &splash_screen(void) {
 uint32_t s_applied_generation = UINT32_MAX;
 uint8_t s_applied_dial_outer = GUI_DIAL_OUTER_COMPASS;
 
-// The avatar on show, expanded from 2-bit art (avatars_data.h, or the rider's upload) to an A8 mask
-// at an integer scale so the pixels stay crisp; tinted with the accent like the logo.
-constexpr int kAvatarArtPx = 16;
-constexpr int kAvatarScale = BOARD_AVATAR_PX / kAvatarArtPx;
-static_assert(kAvatarScale * kAvatarArtPx == BOARD_AVATAR_PX, "avatar must be a whole multiple");
-uint8_t s_avatar_a8[BOARD_AVATAR_PX * BOARD_AVATAR_PX];
+// The avatar on show, drawn at an integer scale so the pixels stay crisp. A preset is full colour,
+// its themed palette entries resolved against the accent (avatars_data.h); the rider's upload is
+// 2-bit art in the accent alone. Both land in one RGB565A8 buffer: colour plane, then alpha plane.
+constexpr int kAvatarScale = BOARD_AVATAR_PX / AVATAR_ART_PX;
+static_assert(kAvatarScale * AVATAR_ART_PX == BOARD_AVATAR_PX, "avatar must be a whole multiple");
+constexpr int kCustomArtPx = 16;
+constexpr int kCustomScale = BOARD_AVATAR_PX / kCustomArtPx;
+constexpr int kAvatarPixels = BOARD_AVATAR_PX * BOARD_AVATAR_PX;
+uint8_t s_avatar_buf[kAvatarPixels * 3];
 lv_image_dsc_t s_avatar;
-const uint8_t *s_avatar_shown = nullptr; // art currently expanded into s_avatar_a8
+const void *s_avatar_shown = nullptr; // art currently drawn into s_avatar_buf
+lv_color_t s_avatar_accent;           // and the accent it was drawn with
 uint8_t s_custom[GUI_AVATAR_BYTES];
 bool s_have_custom = false;
 
-void expand_avatar(const uint8_t *a2) {
-    static const uint8_t kAlpha[4] = {0, 85, 170, 255};
+void put_avatar_px(int x, int y, lv_color_t c, uint8_t alpha) {
+    const int i = y * BOARD_AVATAR_PX + x;
+    const uint16_t c16 = lv_color_to_u16(c);
+    s_avatar_buf[i * 2] = c16 & 0xFF;
+    s_avatar_buf[i * 2 + 1] = c16 >> 8;
+    s_avatar_buf[kAvatarPixels * 2 + i] = alpha;
+}
+
+// Main colour: the accent's hue at the preset's saturation and brightness (scaled by the accent's
+// own). Other themed colours: the main colour turned by dh, saturation and brightness scaled by x/64.
+lv_color_t resolve_palette(const avatar_preset_t &p, const avatar_pal_t &e, lv_color_hsv_t accent) {
+    if (!e.themed) return lv_color_make(e.a, e.b, e.c);
+    const int s = accent.s * p.main_s / 255 * e.b / 64;
+    const int v = accent.v * p.main_v / 255 * e.c / 64;
+    const int h = (accent.h + static_cast<int8_t>(e.a) + 360) % 360;
+    return lv_color_hsv_to_rgb(h, s > 100 ? 100 : s, v > 100 ? 100 : v);
+}
+
+void draw_preset(const avatar_preset_t &p, lv_color_t accent) {
+    const lv_color_hsv_t hsv = lv_color_to_hsv(accent);
+    lv_color_t pal[AVATAR_PALETTE_MAX];
+    for (int i = 0; i < p.palette_len; ++i) pal[i] = resolve_palette(p, p.palette[i], hsv);
     for (int y = 0; y < BOARD_AVATAR_PX; ++y) {
-        const int row = y / kAvatarScale * kAvatarArtPx;
         for (int x = 0; x < BOARD_AVATAR_PX; ++x) {
-            const int i = row + x / kAvatarScale;
-            s_avatar_a8[y * BOARD_AVATAR_PX + x] = kAlpha[(a2[i / 4] >> (6 - 2 * (i % 4))) & 3];
+            const int i = y / kAvatarScale * AVATAR_ART_PX + x / kAvatarScale;
+            const int n = (p.art[i / 2] >> (i % 2 ? 0 : 4)) & 0xF;
+            put_avatar_px(x, y, n ? pal[n - 1] : lv_color_black(), n ? 255 : 0);
         }
     }
+}
+
+void draw_custom(const uint8_t *a2, lv_color_t accent) {
+    static const uint8_t kAlpha[4] = {0, 85, 170, 255};
+    for (int y = 0; y < BOARD_AVATAR_PX; ++y) {
+        for (int x = 0; x < BOARD_AVATAR_PX; ++x) {
+            const int i = y / kCustomScale * kCustomArtPx + x / kCustomScale;
+            put_avatar_px(x, y, accent, kAlpha[(a2[i / 4] >> (6 - 2 * (i % 4))) & 3]);
+        }
+    }
+}
+
+void describe_avatar(void) {
     // The descriptor is reused, so drop LVGL's cached decode of the old pixels.
     if (s_avatar_shown != nullptr) lv_image_cache_drop(&s_avatar);
     s_avatar = {};
     s_avatar.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s_avatar.header.cf = LV_COLOR_FORMAT_A8;
+    s_avatar.header.cf = LV_COLOR_FORMAT_RGB565A8;
     s_avatar.header.w = BOARD_AVATAR_PX;
     s_avatar.header.h = BOARD_AVATAR_PX;
-    s_avatar.header.stride = BOARD_AVATAR_PX;
-    s_avatar.data_size = sizeof(s_avatar_a8);
-    s_avatar.data = s_avatar_a8;
+    s_avatar.header.stride = BOARD_AVATAR_PX * 2;
+    s_avatar.data_size = sizeof(s_avatar_buf);
+    s_avatar.data = s_avatar_buf;
 }
 
-// The selected 80-byte art, or nullptr for the logo (also when "custom" has nothing uploaded).
-const uint8_t *selected_avatar(void) {
+// The selected art (an avatar_preset_t or the 80-byte upload), or nullptr for the logo (also when
+// "custom" has nothing uploaded).
+const void *selected_avatar(void) {
     const uint8_t v = settings_get()->avatar;
     if (v == SETTINGS_AVATAR_CUSTOM) return s_have_custom ? s_custom : nullptr;
-    if (v >= 1 && v <= AVATAR_PRESET_COUNT) return kAvatarPresets[v - 1];
+    if (v >= 1 && v <= AVATAR_PRESET_COUNT) return &kAvatarPresets[v - 1];
     return nullptr;
 }
 
@@ -191,19 +229,20 @@ lv_style_t *gui_accent_style(void) {
 }
 
 const void *gui_logo_src(void) {
-    const uint8_t *art = selected_avatar();
+    const void *art = selected_avatar();
     if (art == nullptr) return icon_image(ICON_LOGO);
-    if (art != s_avatar_shown) {
-        expand_avatar(art);
+    const lv_color_t accent = s_theme.palette();
+    if (art != s_avatar_shown || !lv_color_eq(accent, s_avatar_accent)) {
+        if (art == s_custom) draw_custom(s_custom, accent);
+        else draw_preset(*static_cast<const avatar_preset_t *>(art), accent);
+        describe_avatar();
         s_avatar_shown = art;
+        s_avatar_accent = accent;
     }
     return &s_avatar;
 }
 
-const uint8_t *gui_avatar_small(void) {
-    const uint8_t *art = selected_avatar();
-    return art != nullptr ? art + GUI_AVATAR_BYTES - 16 : nullptr;
-}
+bool gui_logo_is_mask(void) { return selected_avatar() == nullptr; }
 
 void gui_app_set_avatar(const uint8_t *a2) {
     s_have_custom = a2 != nullptr;
