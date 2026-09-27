@@ -1,10 +1,12 @@
 #include "rich_theme.hpp"
 
 #include "screen.hpp"
+#include "settings.h"
 
 lv_color_t RichTheme::palette() const {
-    // Same placeholder as BasicTheme for now -- see basic_theme.cpp.
-    return lv_color_hex(0x00C2FF);
+    // The rider's colour, set from the phone and persisted (settings.h); defaults to the #00C2FF
+    // placeholder until one is chosen. Read live so every caller follows a change.
+    return lv_color_hex(settings_get()->accent_rgb);
 }
 
 // #1E8D3E, straight off "design reference/3.Turn by Turn/Arrived Pop Up.svg".

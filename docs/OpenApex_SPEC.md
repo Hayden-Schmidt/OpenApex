@@ -248,6 +248,57 @@ Route context is Phase 2 or later. A future smartphone companion may downsample 
 route-ahead buffer into local `(delta_x, delta_y)` points and stream them in BLE chunks every 1-2
 seconds. This is explicitly excluded from Phase 1.
 
+
+### 5.5 Terminal settings, device info and avatar
+
+Three further characteristics on the same service let the phone configure the terminal UI. All
+settings persist on the terminal (NVS namespace `settings`, and the `avatar` flash partition) and
+are loaded before the splash, so the rider's configuration shows on every boot with no phone in
+range. The default ATT MTU is 23, so the phone must keep every write at 20 bytes or less.
+
+| UUID | Properties | Purpose |
+|---|---|---|
+| `c9c6d0a0-0003-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE (both encrypted) | Settings TLV |
+| `c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f` | READ | Device info |
+| `c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f` | WRITE, WRITE_NO_RSP (encrypted) | Avatar upload |
+
+**Settings TLV.** `[schema=0x01]` followed by records of `[tag u8][len u8][value]`.
+
+| Tag | Len | Field | Values | Default |
+|---|---|---|---|---|
+| 0x01 | 3 | Accent colour | RGB888, big-endian | `00 C2 FF` |
+| 0x02 | 1 | Avatar | 0 built-in logo, 1 custom upload | 0 |
+| 0x03 | 1 | ETA format | 0 arrival time, 1 time left | 1 |
+| 0x04 | 1 | Clock | 0 24-hour, 1 12-hour (`H:MM`, no am/pm) | 0 |
+| 0x05 | 1 | Units | 0 metric, 1 imperial (distances) | 0 |
+| 0x06 | 1 | Default dial outer ring | 0 compass, 1 trip | 0 |
+
+- A read returns every field. Golden fixture for the defaults (21 bytes):
+  `01 01 03 00 C2 FF 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00`.
+- A write may carry any subset of records; untouched fields keep their value. Split a full config
+  across several writes to stay within 20 bytes.
+- Unknown tags are skipped (forward compatibility). A wrong schema byte, truncated record, wrong
+  length or out-of-range value rejects the whole write with an ATT error, and nothing is applied.
+- The terminal applies a write live and saves it to flash after 1 s without further changes.
+
+**Device info.** `[info_ver=1][board_id][gfx_tier][settings_schema][caps][avatar_px u16 LE][fw version, ASCII]`.
+`board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means avatar upload is supported. `avatar_px` is
+the square avatar edge in pixels (70 on C3, 136 on S3).
+
+**Avatar upload.** The avatar is an A8 alpha mask of exactly `avatar_px` x `avatar_px`, one byte per
+pixel in row-major order, tinted with the accent colour when drawn. Operations:
+
+| Op | Payload | Meaning |
+|---|---|---|
+| 0x01 BEGIN | `[w u16 LE][h u16 LE][crc32 u32 LE]` | Erases the stored avatar and starts an upload. w and h must equal `avatar_px`. |
+| 0x02 DATA | `[offset u16 LE][up to 17 bytes]` | Writes mask bytes at `offset`. |
+| 0x03 COMMIT | none | Checks the CRC over the written mask and stores it. On a mismatch it rejects the upload. |
+| 0x04 CLEAR | none | Deletes the stored avatar. |
+
+The CRC is standard CRC-32 (zlib, `java.util.zip.CRC32`). The header is written last, so an
+interrupted upload leaves no avatar and the terminal falls back to the built-in logo. Setting the
+avatar tag to 1 with no valid upload also shows the logo.
+
 ## 6. Hardware Profiles
 
 Firmware uses compile-time profiles. Board-specific pins and drivers must not leak into the

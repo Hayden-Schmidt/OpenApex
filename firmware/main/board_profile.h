@@ -52,6 +52,10 @@
 #define BOARD_DISP_WIDTH 240
 #define BOARD_DISP_HEIGHT 240
 
+// Rider avatar edge (avatar_store.h): the boot logo's box, so the avatar drops into its place.
+// Matches ICON_LOGO in gui/generated/icons_prototype_c3_gc9a01.h. 4,900 bytes as A8.
+#define BOARD_AVATAR_PX 70
+
 // Touch: CST816/CST816D over I2C (touch variant only). Compiles out when BOARD_HAS_TOUCH == 0.
 #define BOARD_TOUCH_PIN_SDA 4
 #define BOARD_TOUCH_PIN_SCL 5
@@ -83,6 +87,10 @@
 // Display: CO5300 over QSPI. Pins not yet sourced -- see stub note above.
 #define BOARD_DISP_WIDTH 466
 #define BOARD_DISP_HEIGHT 466
+
+// Rider avatar edge (avatar_store.h); matches ICON_LOGO in gui/generated/icons_s3_amoled_175.h.
+// 18,496 bytes as A8.
+#define BOARD_AVATAR_PX 136
 
 #else
 #error "No board profile selected. Define BOARD_PROFILE_PROTOTYPE_C3_GC9A01 or BOARD_PROFILE_S3_AMOLED_175 (or add a new profile)."

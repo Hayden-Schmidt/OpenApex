@@ -51,5 +51,6 @@ private:
     // Last rendered values, so update() only touches LVGL when something actually changed.
     uint16_t last_heading_deg_ = 0xFFFE;
     uint32_t last_odometer_meters_ = UINT32_MAX;
+    bool last_imperial_ = false;
     char last_clock_[NAV_CLOCK_LEN] = {0};
 };

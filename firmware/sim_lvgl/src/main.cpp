@@ -13,6 +13,7 @@ extern "C" {
 #include "lvgl.h"
 
 #include "board_profile.h"
+#include "settings.h"
 
 #include "view_state.h"
 }
@@ -161,12 +162,15 @@ namespace {
 void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
-                 " [--shot <ms> <file.png>]\n"
+                 " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <file>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
-                 "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
+                 "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
+                 "  --settings     apply a settings TLV write as the phone would, in hex\n"
+                 "                 (docs/OpenApex_SPEC.md 5.4), e.g. 010103ff8000 = orange accent\n"
+                 "  --avatar       raw square A8 mask file (the avatar upload payload) for the splash\n",
                  exe);
 }
 
@@ -244,6 +248,8 @@ int main(int argc, char *argv[]) {
     bool single = false;
     bool paired = false;
     int positional = 0;
+    static uint8_t avatar[256 * 256];
+    uint16_t avatar_px = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--page") == 0) {
@@ -284,6 +290,31 @@ int main(int argc, char *argv[]) {
             shot_at_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
             shot_path = argv[i + 2];
             i += 2;
+        } else if (std::strcmp(argv[i], "--settings") == 0) {
+            // Same decode path as the settings characteristic, so the sim exercises the real codec.
+            uint8_t tlv[64];
+            size_t n = 0;
+            const char *hex = i + 1 < argc ? argv[++i] : "";
+            while (hex[0] != '\0' && hex[1] != '\0' && n < sizeof(tlv)) {
+                const char pair[3] = {hex[0], hex[1], '\0'};
+                tlv[n++] = static_cast<uint8_t>(std::strtoul(pair, nullptr, 16));
+                hex += 2;
+            }
+            terminal_settings_t s = *settings_get();
+            if (!settings_tlv_decode(tlv, n, &s)) {
+                std::fprintf(stderr, "sim_lvgl: settings TLV rejected\n");
+                return 1;
+            }
+            settings_set(&s);
+        } else if (std::strcmp(argv[i], "--avatar") == 0) {
+            FILE *f = i + 1 < argc ? std::fopen(argv[++i], "rb") : nullptr;
+            const size_t n = f != nullptr ? std::fread(avatar, 1, sizeof(avatar), f) : 0;
+            if (f != nullptr) std::fclose(f);
+            while (static_cast<size_t>(avatar_px + 1) * (avatar_px + 1) <= n) ++avatar_px;
+            if (avatar_px == 0 || static_cast<size_t>(avatar_px) * avatar_px != n) {
+                std::fprintf(stderr, "sim_lvgl: --avatar needs a square A8 file\n");
+                return 1;
+            }
         } else if (std::strcmp(argv[i], "--single") == 0) {
             single = true;
         } else if (std::strcmp(argv[i], "--paired") == 0) {
@@ -358,6 +389,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (avatar_px != 0) gui_app_set_avatar(avatar, avatar_px, avatar_px);
     gui_app_init();
     // The odometer is a rider-selected page rather than a view_state_t, so it is reached through
     // the page-override seam, not by feeding a different state.

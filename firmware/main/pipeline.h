@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "countdown.h"
@@ -31,6 +32,10 @@ typedef enum {
 
 /** Selects the ETA label format. Survives pipeline_reset(). */
 void pipeline_set_eta_format(pipeline_eta_format_t format);
+
+/** 12-hour clock and ETA ("3:06", no am/pm -- the label has no room) instead of "15:06". Survives
+ *  pipeline_reset(). */
+void pipeline_set_clock_12h(bool twelve_hour);
 
 // Advances countdown interpolation to now_ms and refreshes distance/stale in out.
 void view_state_tick(uint32_t now_ms, terminal_view_state_t *out);

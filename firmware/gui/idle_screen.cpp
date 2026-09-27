@@ -8,7 +8,7 @@
 #include "gui_app.hpp"
 #include "gui_font.hpp"
 #include "icons.hpp"
-#include "theme.hpp"
+#include "units.hpp"
 
 namespace {
 
@@ -75,10 +75,9 @@ float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
 // "3,500 km", matching the Figma reference. Grouping is done by hand: printf's %'u is a
 // glibc/locale extension that newlib on the C3 does not provide.
-// TODO(backend): unit choice (km vs mi) belongs in the runtime config store, which does not exist
-// yet -- the reference is metric, so that is what ships for now.
+// Km or miles per the rider's setting (units.hpp).
 void format_odometer(char *out, size_t out_len, uint32_t meters) {
-    const uint32_t km = (meters + 500u) / 1000u;
+    const uint32_t km = (units_odometer_milli(meters) + 500u) / 1000u;
     char digits[12];
     const int n = std::snprintf(digits, sizeof(digits), "%lu", static_cast<unsigned long>(km));
     size_t w = 0;
@@ -88,7 +87,7 @@ void format_odometer(char *out, size_t out_len, uint32_t meters) {
         }
         out[w++] = digits[i];
     }
-    std::snprintf(out + w, out_len - w, " km");
+    std::snprintf(out + w, out_len - w, " %s", units_long_label());
 }
 
 // Centres an object horizontally in its parent and puts its top edge at `top`.
@@ -111,8 +110,6 @@ IdleScreen::IdleScreen() {
     lv_obj_set_style_bg_color(root_, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
     lv_obj_set_scrollable(root_, false);
-
-    const lv_color_t accent = gui_theme().palette();
 
     // --- Clip window for the rising clock/battery group. An lv_obj clips its children to its own
     // area unless LV_OBJ_FLAG_OVERFLOW_VISIBLE is set, which is exactly the mask the spec asks for
@@ -138,7 +135,7 @@ IdleScreen::IdleScreen() {
     bubble_ = lv_obj_create(root_);
     lv_obj_remove_style_all(bubble_);
     lv_obj_set_size(bubble_, px(kBubbleW), px(kBubbleH));
-    lv_obj_set_style_bg_color(bubble_, accent, 0);
+    lv_obj_add_style(bubble_, gui_accent_style(), 0);
     lv_obj_set_style_bg_opa(bubble_, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bubble_, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_scrollable(bubble_, false);
@@ -153,7 +150,7 @@ IdleScreen::IdleScreen() {
     // entry needs for the glyph to emerge from *under* the bubble rather than over it.
     link_icon_ = lv_image_create(root_);
     lv_image_set_src(link_icon_, icon_image(ICON_BLUETOOTH_DISABLED));
-    lv_obj_set_style_image_recolor(link_icon_, accent, 0);
+    lv_obj_add_style(link_icon_, gui_accent_style(), 0);
     lv_obj_set_style_image_recolor_opa(link_icon_, LV_OPA_COVER, 0);
     lv_obj_move_background(link_icon_);
 
@@ -291,8 +288,9 @@ void IdleScreen::update(const terminal_view_state_t &state) {
         if (landed_ && !leaving_) start_link_tween();
     }
 
-    if (state.odometer_meters != last_odometer_meters_) {
+    if (state.odometer_meters != last_odometer_meters_ || units_imperial() != last_imperial_) {
         last_odometer_meters_ = state.odometer_meters;
+        last_imperial_ = units_imperial();
         char text[24];
         format_odometer(text, sizeof(text), state.odometer_meters);
         lv_label_set_text(odometer_label_, text);

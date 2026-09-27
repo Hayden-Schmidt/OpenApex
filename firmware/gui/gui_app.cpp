@@ -4,9 +4,14 @@
 #include "basic_theme.hpp"
 #include "board_profile.h"
 #include "dial_screen.hpp"
+#include "icons.hpp"
 #include "idle_screen.hpp"
 #include "odometer_screen.hpp"
 #include "rich_theme.hpp"
+#include "settings.h"
+
+// lv_image_cache_drop: not re-exported by lvgl.h in v9.
+#include "src/misc/cache/lv_cache.h"
 
 #if BOARD_HAS_SPLASH
 #include "splash_screen.hpp"
@@ -49,6 +54,15 @@ SplashScreen &splash_screen(void) {
     return splash;
 }
 #endif
+
+// Rider settings (settings.h) as last applied here. Colour reaches most pages through the shared
+// accent style; the dial ring is a start-up choice that touch-hold can still flip, so it is only
+// pushed when the setting itself changes, never re-asserted over the rider's hold.
+uint32_t s_applied_generation = UINT32_MAX;
+uint8_t s_applied_dial_outer = GUI_DIAL_OUTER_COMPASS;
+
+lv_image_dsc_t s_avatar;
+bool s_have_avatar = false;
 
 gui_page_override_t s_page_override = GUI_PAGE_AUTO;
 gui_nav_entry_t s_nav_entry = GUI_NAV_ENTRY_ELEMENTS;
@@ -96,7 +110,67 @@ bool may_leave(void) {
     return lv_tick_elaps(s_entered_ms) >= kIdleLeaveHoldMs;
 }
 
+// The splash is the only page showing the logo, and only for the first seconds after boot; a change
+// arriving then (a phone that connected fast) swaps it in place.
+void refresh_logo(void) {
+#if BOARD_HAS_SPLASH
+    if (!s_splash_done && s_active == &splash_screen()) splash_screen().set_logo(gui_logo_src());
+#endif
+}
+
+void apply_settings(void) {
+    const uint32_t gen = settings_generation();
+    if (gen == s_applied_generation) return;
+    s_applied_generation = gen;
+    const terminal_settings_t *s = settings_get();
+
+    const lv_color_t accent = s_theme.palette();
+    lv_style_t *style = gui_accent_style();
+    lv_style_set_text_color(style, accent);
+    lv_style_set_bg_color(style, accent);
+    lv_style_set_image_recolor(style, accent);
+    lv_obj_report_style_change(style);
+
+    if (s->dial_outer != s_applied_dial_outer) {
+        s_applied_dial_outer = s->dial_outer;
+        gui_app_set_dial_outer(static_cast<gui_dial_outer_t>(s->dial_outer));
+    }
+    refresh_logo();
+}
+
 } // namespace
+
+lv_style_t *gui_accent_style(void) {
+    static lv_style_t style;
+    static bool init = false;
+    if (!init) {
+        lv_style_init(&style);
+        init = true;
+    }
+    return &style;
+}
+
+const void *gui_logo_src(void) {
+    if (s_have_avatar && settings_get()->avatar == SETTINGS_AVATAR_CUSTOM) return &s_avatar;
+    return icon_image(ICON_LOGO);
+}
+
+void gui_app_set_avatar(const uint8_t *a8, uint16_t w, uint16_t h) {
+    // The descriptor is reused across uploads, so drop LVGL's cached decode of the old pixels.
+    if (s_have_avatar) lv_image_cache_drop(&s_avatar);
+    s_have_avatar = a8 != nullptr;
+    if (s_have_avatar) {
+        s_avatar = {};
+        s_avatar.header.magic = LV_IMAGE_HEADER_MAGIC;
+        s_avatar.header.cf = LV_COLOR_FORMAT_A8;
+        s_avatar.header.w = w;
+        s_avatar.header.h = h;
+        s_avatar.header.stride = w;
+        s_avatar.data_size = static_cast<uint32_t>(w) * h;
+        s_avatar.data = a8;
+    }
+    if (s_active != nullptr) refresh_logo();
+}
 
 void gui_app_set_page_override(gui_page_override_t page) { s_page_override = page; }
 
@@ -113,6 +187,7 @@ gui_nav_entry_t gui_app_nav_entry(void) { return s_nav_entry; }
 const GuiTheme &gui_theme(void) { return s_theme; }
 
 void gui_app_init(void) {
+    apply_settings();
 #if BOARD_HAS_SPLASH
     s_boot_ms = lv_tick_get();
     s_splash_done = false;
@@ -125,6 +200,7 @@ void gui_app_init(void) {
 }
 
 void gui_app_update(const terminal_view_state_t *state) {
+    apply_settings();
 #if BOARD_HAS_SPLASH
     if (!s_splash_done) {
         if (lv_tick_elaps(s_boot_ms) < kSplashMinMs) {

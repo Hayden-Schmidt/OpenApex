@@ -1,3 +1,4 @@
+#include "avatar_store.h"
 #include "ble_link.h"
 #include "countdown.h"
 #include "drive_log.h"
@@ -8,15 +9,19 @@
 #include "odometer_store.h"
 #include "packet.h"
 #include "pipeline.h"
+#include "settings.h"
+#include "settings_store.h"
 #include "view_state.h"
 
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "openapex";
@@ -53,10 +58,23 @@ uint32_t platform_now_ms(void) {
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+// Pushes the pipeline-side settings (ETA format, clock) whenever the phone changes them. Called on
+// countdown_task, the only task that runs the pipeline.
+static void apply_pipeline_settings(void) {
+    static uint32_t applied_generation;
+    const uint32_t gen = settings_generation();
+    if (gen == applied_generation) return;
+    applied_generation = gen;
+    const terminal_settings_t *s = settings_get();
+    pipeline_set_eta_format((pipeline_eta_format_t)s->eta_format);
+    pipeline_set_clock_12h(s->clock_12h != 0);
+}
+
 static void countdown_task(void *argument) {
     (void)argument;
     raw_notif_t raw;
     for (;;) {
+        apply_pipeline_settings();
         while (xQueueReceive(raw_packet_queue, &raw, 0) == pdTRUE) {
             terminal_view_state_t next;
             memset(&next, 0, sizeof(next));
@@ -72,6 +90,7 @@ static void countdown_task(void *argument) {
         // Self-throttled to ~30s; cheap to call on every 100ms tick (see heading_store.h).
         heading_store_maybe_save(now);
         odometer_store_maybe_save(now);
+        settings_store_maybe_save(now);
         if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             view_state_tick(now, &shared_view);
             shared_view.phone_connected = ble_link_is_connected();
@@ -106,6 +125,13 @@ static void gui_task(void *argument) {
     lv_tick_set_cb(platform_now_ms);
     display_driver_init();
     touch_driver_init();
+
+    // The avatar is read here rather than in app_main so its buffer is owned by the one task that
+    // hands it to LVGL. Settings are already loaded (app_main), so gui_app_init draws the splash in
+    // the rider's colour with their avatar from the very first frame, phone or no phone.
+    uint16_t avatar_w = 0, avatar_h = 0;
+    uint8_t *avatar = avatar_store_read(&avatar_w, &avatar_h);
+    gui_app_set_avatar(avatar, avatar_w, avatar_h);
     gui_app_init();
 
     // Paint the boot screen fully, *then* light the panel. lv_refr_now blocks until every pending
@@ -119,6 +145,13 @@ static void gui_task(void *argument) {
     for (;;) {
         terminal_view_state_t frame;
         view_state_snapshot(&frame);
+        if (avatar_store_take_changed()) {
+            // Swap before freeing: LVGL must never be left pointing at released memory.
+            uint8_t *next = avatar_store_read(&avatar_w, &avatar_h);
+            gui_app_set_avatar(next, avatar_w, avatar_h);
+            free(avatar);
+            avatar = next;
+        }
         gui_app_update(&frame);
         // Sleep exactly until LVGL's next timer is due, not a fixed 16ms: a fixed poll beats against
         // the 33ms refresh period, so a frame landed on the 2nd or 3rd poll alternately (~32/48ms)
@@ -137,6 +170,18 @@ void app_main(void) {
     pipeline_reset();
     memset(&shared_view, 0, sizeof(shared_view));
     shared_view.state = VIEW_IDLE;
+
+    // NVS first, ahead of the GUI: saved settings (accent, avatar choice, units) must be in place
+    // before gui_task paints the splash, and must not wait on the phone. This used to live in
+    // ble_link_init; it is a few ms on a normal boot, and the backlight stays off until the splash
+    // is fully drawn regardless (gui_task).
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_err);
+    settings_store_load();
 
     raw_packet_queue = xQueueCreate(RAW_PACKET_QUEUE_LEN, sizeof(raw_notif_t));
     view_mutex = xSemaphoreCreateMutex();
@@ -157,8 +202,8 @@ void app_main(void) {
     xTaskCreate(gui_task, "gui_task", 8192, NULL, 5, NULL);
 
     // ble_link_init spawns NimBLE's own host task (single-producer into raw_packet_queue); there
-    // is no separate ble_handler_task to create. It also brings up NVS (for BLE bonding), which
-    // heading_store_load() below depends on -- load the cached heading/mount-offset only after this,
+    // is no separate ble_handler_task to create. NVS (for BLE bonding, and heading_store_load()
+    // below) is already up from the top of app_main -- load the cached heading/mount-offset only after this,
     // and before countdown_task starts decoding packets so the first packet already has a warm
     // offset estimator instead of reconverging from scratch every ride.
     ble_link_init(raw_packet_queue);

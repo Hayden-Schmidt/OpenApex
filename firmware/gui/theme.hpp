@@ -11,6 +11,8 @@ class GuiTheme {
 public:
     virtual ~GuiTheme() = default;
 
+    // The accent: the rider's chosen theme colour (settings.h). Objects that keep the accent for
+    // their whole life use gui_accent_style() instead, so a live colour change restyles them.
     virtual lv_color_t palette() const = 0;
 
     // Semantic status colour for a completed navigation (the arrived pop-up's surface). Separate

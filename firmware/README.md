@@ -65,3 +65,23 @@ displayed on the road.
 
 Captures contain the rider's route, addresses and timestamps. Scrub before committing one as a
 fixture.
+
+## UI settings
+
+The phone configures the accent colour, avatar, ETA format, clock, units and default dial ring over
+BLE (docs/OpenApex_SPEC.md §5.5). Settings are saved to NVS and the avatar to the `avatar`
+partition, so both apply from the splash on every boot with no phone connected.
+
+Host test for the settings codec:
+
+```powershell
+gcc -std=c11 -Ifirmware/main -o settings_test firmware/test_host/settings_test.c firmware/main/settings.c
+./settings_test
+```
+
+Preview settings in the simulator, using a TLV in hex and an optional raw A8 avatar mask of the
+board's avatar size (70x70 on C3, 136x136 on S3):
+
+```powershell
+program.exe --settings 010103ff8000020101050101 --avatar avatar70.a8
+```
