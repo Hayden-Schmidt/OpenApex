@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "call_packet.h"
 #include "nav_model.h"
 
 // Render state the GUI consumes. The GUI reads this and only this — it never touches BLE, UART,
@@ -40,4 +41,10 @@ typedef struct {
     nav_traffic_span_t traffic[NAV_TRAFFIC_MAX_SPANS];
     uint8_t traffic_count;            // 0 = no traffic data; the ring renders neutral, not "clear"
     uint16_t trip_progress_permille;  // 0..1000 of the whole trip; the ring is consumed up to here
+
+    // --- Incoming call (call_state.c). Outranks every page while set; the nav fields above keep
+    // updating underneath so the page comes back current when the call clears.
+    bool call_ringing;
+    uint16_t call_id;              // echo back in the accept (gui_app_set_call_accept_handler)
+    char caller[CALL_CALLER_LEN];  // contact name or number, folded to ASCII; may be empty
 } terminal_view_state_t;

@@ -161,10 +161,12 @@ namespace {
 void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
-                 " [--shot <ms> <file.png>]\n"
+                 " [--call <caller>] [--shot <ms> <file.png>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
+                 "  --call         ring an incoming call from <caller> over the fixture, 8s of every\n"
+                 "                 12s; tapping Accept logs to stdout\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n",
                  exe);
@@ -222,6 +224,9 @@ void spawn_companion(int argc, char *argv[], int32_t res) {
 #endif
 }
 
+// Accept seam for --call: the device queues this for BLE, the sim just shows it happened.
+void on_sim_call_accept(uint16_t call_id) { std::printf("sim_lvgl: accept call_id=%u\n", call_id); }
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -242,6 +247,7 @@ int main(int argc, char *argv[]) {
     bool trip_page = false;
     bool fade_nav_entry = false;
     bool single = false;
+    const char *call_caller = nullptr;
     bool paired = false;
     int positional = 0;
 
@@ -284,6 +290,12 @@ int main(int argc, char *argv[]) {
             shot_at_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
             shot_path = argv[i + 2];
             i += 2;
+        } else if (std::strcmp(argv[i], "--call") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(argv[0]);
+                return 1;
+            }
+            call_caller = argv[++i];
         } else if (std::strcmp(argv[i], "--single") == 0) {
             single = true;
         } else if (std::strcmp(argv[i], "--paired") == 0) {
@@ -364,6 +376,7 @@ int main(int argc, char *argv[]) {
     if (odometer_page) gui_app_set_page_override(GUI_PAGE_ODOMETER);
     if (trip_page) gui_app_set_dial_outer(GUI_DIAL_OUTER_TRIP_ARC);
     if (fade_nav_entry) gui_app_set_nav_entry(GUI_NAV_ENTRY_FADE);
+    if (call_caller != nullptr) gui_app_set_call_accept_handler(on_sim_call_accept);
 
     std::printf("sim_lvgl: window open at %dx%d\n", disp_w, disp_h);
 
@@ -379,6 +392,11 @@ int main(int argc, char *argv[]) {
                                       : odometer_page ? make_odometer_fixture_frame(elapsed)
                                       : idle_page     ? make_idle_fixture_frame(elapsed)
                                                       : make_fixture_frame(elapsed);
+        if (call_caller != nullptr && elapsed % 12000u < 8000u) {
+            frame.call_ringing = true;
+            frame.call_id = static_cast<uint16_t>(elapsed / 12000u + 1u);
+            std::snprintf(frame.caller, sizeof(frame.caller), "%s", call_caller);
+        }
         gui_app_update(&frame);
 
         uint32_t idle_ms = lv_timer_handler();

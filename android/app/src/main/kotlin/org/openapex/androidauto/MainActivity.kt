@@ -27,6 +27,9 @@ class MainActivity : Activity() {
         android.Manifest.permission.BLUETOOTH_CONNECT,
         android.Manifest.permission.BLUETOOTH_SCAN,
         android.Manifest.permission.POST_NOTIFICATIONS,
+        // Optional: only the fallback for answering a carrier call whose notification has no
+        // answer action (CallRelay.acceptViaTelecom). Declining it leaves call display working.
+        android.Manifest.permission.ANSWER_PHONE_CALLS,
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {

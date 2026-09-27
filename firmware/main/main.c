@@ -1,4 +1,5 @@
 #include "ble_link.h"
+#include "call_state.h"
 #include "countdown.h"
 #include "drive_log.h"
 #include "display_driver.h"
@@ -22,6 +23,8 @@
 static const char *TAG = "openapex";
 
 #define RAW_PACKET_QUEUE_LEN 8
+#define CALL_EVENT_QUEUE_LEN 4
+#define CALL_ACCEPT_QUEUE_LEN 2
 
 // Concurrency model
 // ------------------
@@ -35,7 +38,12 @@ static const char *TAG = "openapex";
 //   shared_view directly. countdown.c's own internal state (current/filtered_speed_kmh/
 //   has_baseline) is private to countdown_task's call path and must not be called from any other
 //   task.
+// call_event_queue: NimBLE host task -> countdown_task, same bounded-wait rule as raw_packet_queue.
+// call_accept_queue: gui_task -> countdown_task. The Accept tap lands here rather than calling BLE
+//   from the GUI (§346); countdown_task sends it on.
 static QueueHandle_t raw_packet_queue;
+static QueueHandle_t call_event_queue;
+static QueueHandle_t call_accept_queue;
 static SemaphoreHandle_t view_mutex;
 static terminal_view_state_t shared_view;
 
@@ -53,6 +61,11 @@ uint32_t platform_now_ms(void) {
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+// gui_app's Accept seam. Runs on gui_task; never blocks it.
+static void on_call_accept(uint16_t call_id) {
+    xQueueSend(call_accept_queue, &call_id, 0);
+}
+
 static void countdown_task(void *argument) {
     (void)argument;
     raw_notif_t raw;
@@ -62,6 +75,7 @@ static void countdown_task(void *argument) {
             memset(&next, 0, sizeof(next));
             view_state_apply_packet(&raw, platform_now_ms(), &next);
             next.phone_connected = ble_link_is_connected();
+            call_state_fill(&next);
             if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                 shared_view = next;
                 xSemaphoreGive(view_mutex);
@@ -69,12 +83,22 @@ static void countdown_task(void *argument) {
         }
 
         uint32_t now = platform_now_ms();
+        call_event_t call;
+        while (xQueueReceive(call_event_queue, &call, 0) == pdTRUE) {
+            call_state_apply(&call, now);
+        }
+        call_state_tick(now, ble_link_is_connected());
+        uint16_t accept_id;
+        while (xQueueReceive(call_accept_queue, &accept_id, 0) == pdTRUE) {
+            ble_link_send_call_accept(accept_id);
+        }
         // Self-throttled to ~30s; cheap to call on every 100ms tick (see heading_store.h).
         heading_store_maybe_save(now);
         odometer_store_maybe_save(now);
         if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             view_state_tick(now, &shared_view);
             shared_view.phone_connected = ble_link_is_connected();
+            call_state_fill(&shared_view);
             // A link that is delivering writes we cannot decode is NOT the same as no link and
             // NOT the same as "not navigating", but the terminal used to render all three
             // identically. On 2026-09-24 three whole sessions sat on the idle screen while the
@@ -107,6 +131,7 @@ static void gui_task(void *argument) {
     display_driver_init();
     touch_driver_init();
     gui_app_init();
+    gui_app_set_call_accept_handler(on_call_accept);
 
     // Paint the boot screen fully, *then* light the panel. lv_refr_now blocks until every pending
     // partial-flush area has been transferred (flush_cb is DMA-async), so the first thing the rider
@@ -135,10 +160,13 @@ void app_main(void) {
     display_driver_hold_dark();
     ESP_LOGI(TAG, "OpenApex terminal boot: PROTOTYPE_C3_GC9A01");
     pipeline_reset();
+    call_state_reset();
     memset(&shared_view, 0, sizeof(shared_view));
     shared_view.state = VIEW_IDLE;
 
     raw_packet_queue = xQueueCreate(RAW_PACKET_QUEUE_LEN, sizeof(raw_notif_t));
+    call_event_queue = xQueueCreate(CALL_EVENT_QUEUE_LEN, sizeof(call_event_t));
+    call_accept_queue = xQueueCreate(CALL_ACCEPT_QUEUE_LEN, sizeof(uint16_t));
     view_mutex = xSemaphoreCreateMutex();
 
     // Dev-only; no-ops entirely in the production build. Started before ble_link_init so the very
@@ -161,7 +189,7 @@ void app_main(void) {
     // heading_store_load() below depends on -- load the cached heading/mount-offset only after this,
     // and before countdown_task starts decoding packets so the first packet already has a warm
     // offset estimator instead of reconverging from scratch every ride.
-    ble_link_init(raw_packet_queue);
+    ble_link_init(raw_packet_queue, call_event_queue);
     heading_store_load();
     odometer_store_load();
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);

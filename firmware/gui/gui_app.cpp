@@ -3,6 +3,7 @@
 #include "arrived_screen.hpp"
 #include "basic_theme.hpp"
 #include "board_profile.h"
+#include "call_screen.hpp"
 #include "dial_screen.hpp"
 #include "idle_screen.hpp"
 #include "odometer_screen.hpp"
@@ -58,6 +59,11 @@ IdleScreen &idle_screen(void) {
     return idle;
 }
 
+CallScreen &call_screen(void) {
+    static CallScreen call;
+    return call;
+}
+
 Screen *screen_for_state(view_state_t state) {
     static DialScreen dial;
     static OdometerScreen odometer;
@@ -85,9 +91,10 @@ void on_leave_done(void *ctx) {
 }
 
 // Whether s_active may start leaving now. Only the idle page holds: every other page gives way the
-// moment routing asks, because a late turn instruction is worse than a clipped animation.
-bool may_leave(void) {
-    if (s_active != &idle_screen()) return true;
+// moment routing asks, because a late turn instruction is worse than a clipped animation. A ringing
+// phone skips the hold too -- it only rings for so long.
+bool may_leave(const Screen *next) {
+    if (s_active != &idle_screen() || next == &call_screen()) return true;
     if (!s_active->entered()) return false;
     if (!s_entered_seen) {
         s_entered_seen = true;
@@ -107,6 +114,8 @@ void gui_app_set_dial_outer(gui_dial_outer_t outer) {
 }
 
 void gui_app_set_nav_entry(gui_nav_entry_t entry) { s_nav_entry = entry; }
+
+void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb) { call_screen().set_accept_handler(cb); }
 
 gui_nav_entry_t gui_app_nav_entry(void) { return s_nav_entry; }
 
@@ -136,7 +145,9 @@ void gui_app_update(const terminal_view_state_t *state) {
 #endif
     // Link status and every other live value keep flowing into the page while it animates: update()
     // runs every frame, leaving or not, so nothing is ever frozen behind a tween.
-    Screen *next = screen_for_state(state->state);
+    // An incoming call outranks every page, including a live maneuver: the rider chose to take
+    // calls on the terminal, and the nav page is back the moment it clears.
+    Screen *next = state->call_ringing ? static_cast<Screen *>(&call_screen()) : screen_for_state(state->state);
 #if BOARD_HAS_SPLASH
     // Boot always passes through idle, even when navigation is already running on the phone: the
     // phone-connect entry plays out and idle's hold floor applies before the nav page takes over.
@@ -144,7 +155,7 @@ void gui_app_update(const terminal_view_state_t *state) {
 #endif
     if (s_leaving) {
         s_pending = next;
-    } else if (next != s_active && may_leave()) {
+    } else if (next != s_active && may_leave(next)) {
         s_pending = next;
         s_leaving = true;
         // A page that enters over its predecessor (the arrived reveal) covers it as it stands:

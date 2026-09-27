@@ -242,11 +242,57 @@ than retried.
 The terminal must reject unsupported protocol versions and malformed lengths. BLE callbacks must
 not block on rendering. Parsed packets are copied into a bounded queue or immutable state buffer.
 
+Incoming calls use two more characteristics in the same service (layout in
+`firmware/main/call_packet.h`, mirrored by `CallPacket.kt`):
+
+- Call event `c9c6d0a0-0003-4f0a-9c8e-2f6b1a2d3e4f`, phone → terminal. Same flags and fragment
+  framing as the navigation characteristic, with its own reassembly. It carries RING/CLEAR, a
+  `call_id` and the caller string.
+- Call action `c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f`, terminal → phone. `NOTIFY`, with an
+  encrypted CCCD. It carries ACCEPT plus the `call_id`.
+
 ### 5.4 Future polyline stream
 
 Route context is Phase 2 or later. A future smartphone companion may downsample a 500 m to 1 km
 route-ahead buffer into local `(delta_x, delta_y)` points and stream them in BLE chunks every 1-2
 seconds. This is explicitly excluded from Phase 1.
+
+### 5.5 Incoming calls
+
+When the phone rings, the terminal shows the caller (contact name, else the number) and an Accept
+button. There is deliberately no reject: the rider lets it ring out.
+
+**Android (implemented).**
+- **Source.** The existing NotificationListener picks up any `CATEGORY_CALL` notification that is
+  incoming (`CallRelay.kt`).
+  - On API 31+, `EXTRA_CALL_TYPE` identifies incoming calls.
+  - Below API 31, the notification must have an answer action.
+  - The caller is `EXTRA_TITLE`, exactly as the dialer shows it. No contacts, call-log or
+    phone-state permission is needed, and VoIP apps that post CallStyle work too.
+- **Ring refresh.** RING is re-sent every 5 s while the call rings. The terminal drops a ring not
+  refreshed within 12 s, or immediately on link loss (`call_state.c`), so a lost CLEAR cannot
+  strand the page.
+- **Accept.** The tap goes through `gui_app_set_call_accept_handler` to `call_accept_queue`, then
+  `countdown_task` sends the CALL_ACTION notify. The GUI never touches BLE (§8). On the phone,
+  `CallRelay.onAccept` fires the notification's own answer `PendingIntent`.
+  - On API 34+ it is sent with background-activity-start opt-in (`ALLOW_ALWAYS` on 36, otherwise
+    `ALLOWED`).
+  - The fallback is `TelecomManager.acceptRingingCall()`, with the optional
+    `ANSWER_PHONE_CALLS` permission (carrier calls only).
+- **Routing.** A ringing call outranks every page, including an active maneuver. The nav state keeps
+  updating underneath and returns when the call clears.
+
+**iOS (TODO, not implemented).** A third-party iOS app cannot observe or answer cellular calls, so
+there is no companion-app work. The whole path is terminal-side ANCS, on the same client as §5.2:
+- Notification Source reports `CategoryIDIncomingCall` (1) *added*. The terminal then sends Get
+  Notification Attributes for `Title`, which is the caller name or number.
+- `call_state` is fed with the ANCS UID as the call id.
+- Accept writes Perform Notification Action (`ActionIDPositive`) for that UID to the Control
+  Point.
+- The notification being *removed* clears the call. Ringing out works with no extra logic.
+- Needs bonding with the iPhone, ANCS service solicitation in the advertisement, and the terminal
+  acting as a GATT client alongside its peripheral role.
+- `CallScreen` and `call_state` are source-agnostic and are reused unchanged.
 
 ## 6. Hardware Profiles
 
@@ -483,6 +529,7 @@ the flaky peripheral role has moved off the OEM phone Bluetooth stack.
 - [x] Implement BLE reception and normalized packet decoding.
 - [x] Implement Android NotificationListenerService source adapter for Google Maps.
 - [ ] Implement the iOS/ANCS source contract and adapter path for Apple Maps.
+- [ ] Implement ANCS incoming-call support (§5.5): IncomingCall category, Title attribute, Accept via Control Point.
 - [ ] Pass phone GNSS speed, heading, validity, and freshness through the packet.
 - [x] Implement C3-side speed smoothing and distance countdown between notifications.
 - [ ] Implement the basic LVGL maneuver/distance/speed/stale UI on-device (prototyped in

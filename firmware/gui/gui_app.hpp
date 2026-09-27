@@ -58,6 +58,12 @@ typedef enum {
 void gui_app_set_nav_entry(gui_nav_entry_t entry);
 gui_nav_entry_t gui_app_nav_entry(void);
 
+// Called on gui_task when the rider taps Accept on the incoming-call page, with the view state's
+// call_id. The GUI never touches BLE (§346): main.c queues it for countdown_task to send, the
+// simulator just logs it. Unset = the page shows the caller with no button.
+typedef void (*gui_call_accept_cb_t)(uint16_t call_id);
+void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb);
+
 #ifdef __cplusplus
 }
 

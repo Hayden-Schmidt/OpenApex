@@ -226,6 +226,11 @@ class RelayService : Service() {
 
     private fun handle(event: RelayStateEvent) {
         when (event) {
+            // Straight out on its own characteristic; not a reason to republish the nav packet.
+            is RelayStateEvent.CallEvent -> {
+                ble.writeCall(event.packet)
+                return
+            }
             is RelayStateEvent.NavUpdated -> nav = event.nav
             is RelayStateEvent.ListenerConnected -> {
                 listening = true

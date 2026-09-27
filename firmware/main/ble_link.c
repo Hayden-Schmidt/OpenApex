@@ -1,5 +1,6 @@
 #include "ble_link.h"
 
+#include "call_packet.h"
 #include "drive_log.h"
 #include "packet.h"
 
@@ -24,8 +25,22 @@ static const ble_uuid128_t s_svc_uuid =
 static const ble_uuid128_t s_chr_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x02, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 
+// Incoming-call characteristics (call_packet.h): CALL_EVENT is written by the phone, CALL_ACTION
+// notifies the phone when the rider taps Accept.
+static const ble_uuid128_t s_call_event_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x03, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+static const ble_uuid128_t s_call_action_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x04, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+
 static QueueHandle_t s_raw_packet_queue;
+static QueueHandle_t s_call_event_queue;
 static uint16_t s_chr_val_handle;
+static uint16_t s_call_event_val_handle;
+static uint16_t s_call_action_val_handle;
+// Current link and whether the phone has subscribed to CALL_ACTION. Written from the NimBLE host
+// task, read by ble_link_send_call_accept() from countdown_task; aligned single-word stores.
+static volatile uint16_t s_conn_handle;
+static volatile bool s_call_action_subscribed;
 static uint8_t s_own_addr_type;
 
 static void start_advertising(void);
@@ -52,6 +67,14 @@ static uint8_t s_reasm_buf[RAW_NOTIF_PACKET_SIZE];
 static uint8_t s_reasm_packet_id;
 static uint16_t s_reasm_have_mask;
 static bool s_reasm_active;
+
+// Call events use the same fragment header on their own characteristic, with their own
+// reassembly so an interleaved nav packet never corrupts a ring (or the other way round).
+#define CALL_FRAG_COUNT ((CALL_EVENT_PACKET_SIZE + BLE_FRAG_CHUNK_BYTES - 1U) / BLE_FRAG_CHUNK_BYTES)
+static uint8_t s_call_reasm_buf[CALL_EVENT_PACKET_SIZE];
+static uint8_t s_call_reasm_packet_id;
+static uint8_t s_call_reasm_have_mask;
+static bool s_call_reasm_active;
 
 // Whether the link is currently unusable: nothing has decoded for a long run of writes. The GUI
 // reads this to show a fault instead of a frozen last-good screen.
@@ -110,6 +133,91 @@ static void note_decode_failure(uint16_t out_len, uint16_t expected_len) {
 static void reasm_reset(void) {
     s_reasm_active = false;
     s_reasm_have_mask = 0;
+    s_call_reasm_active = false;
+    s_call_reasm_have_mask = 0;
+}
+
+static int call_event_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    uint8_t buf[BLE_FRAG_HEADER_BYTES + BLE_FRAG_CHUNK_BYTES];
+    uint16_t out_len = 0;
+    if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &out_len) != 0 || out_len < BLE_FRAG_HEADER_BYTES) {
+        ESP_LOGW(TAG, "call event: short write (len=%u)", out_len);
+        return 0;
+    }
+    const uint8_t packet_id = buf[0];
+    const uint8_t frag_index = buf[1];
+    const uint8_t frag_count = buf[2];
+    if (frag_count != CALL_FRAG_COUNT || frag_index >= frag_count) {
+        ESP_LOGW(TAG, "call event: bad framing %u/%u", frag_index, frag_count);
+        return 0;
+    }
+    const size_t expected_chunk = (frag_index == frag_count - 1)
+                                      ? (CALL_EVENT_PACKET_SIZE - (size_t)frag_index * BLE_FRAG_CHUNK_BYTES)
+                                      : BLE_FRAG_CHUNK_BYTES;
+    const size_t got_chunk = (size_t)out_len - BLE_FRAG_HEADER_BYTES;
+    if (got_chunk != expected_chunk) {
+        ESP_LOGW(TAG, "call event: fragment %u is %u bytes, need %u", frag_index, (unsigned)got_chunk,
+                 (unsigned)expected_chunk);
+        return 0;
+    }
+    if (!s_call_reasm_active || packet_id != s_call_reasm_packet_id) {
+        s_call_reasm_active = true;
+        s_call_reasm_packet_id = packet_id;
+        s_call_reasm_have_mask = 0;
+    }
+    memcpy(&s_call_reasm_buf[(size_t)frag_index * BLE_FRAG_CHUNK_BYTES], &buf[BLE_FRAG_HEADER_BYTES], got_chunk);
+    s_call_reasm_have_mask = (uint8_t)(s_call_reasm_have_mask | (1u << frag_index));
+    if (s_call_reasm_have_mask != (uint8_t)((1u << frag_count) - 1u)) {
+        return 0;
+    }
+    s_call_reasm_active = false;
+    s_call_reasm_have_mask = 0;
+
+    call_event_t event;
+    if (!call_event_decode(s_call_reasm_buf, CALL_EVENT_PACKET_SIZE, &event)) {
+        ESP_LOGW(TAG, "call event: dropped malformed/unsupported-version packet");
+        return 0;
+    }
+    ESP_LOGI(TAG, "call event type=%d id=%u caller=\"%s\"", (int)event.type, event.call_id, event.caller);
+    if (xQueueSend(s_call_event_queue, &event, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGW(TAG, "call_event_queue full, dropping call event id=%u", event.call_id);
+    }
+    return 0;
+}
+
+// CALL_ACTION is notify-only; nothing reads it.
+static int call_action_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                 struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)ctxt;
+    (void)arg;
+    return BLE_ATT_ERR_READ_NOT_PERMITTED;
+}
+
+bool ble_link_send_call_accept(uint16_t call_id) {
+    if (!s_connected || !s_call_action_subscribed) {
+        ESP_LOGW(TAG, "call accept id=%u not sent: connected=%d subscribed=%d", call_id, s_connected,
+                 s_call_action_subscribed);
+        return false;
+    }
+    uint8_t payload[CALL_ACTION_PACKET_SIZE];
+    call_action_encode(CALL_ACTION_ACCEPT, call_id, payload);
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(payload, sizeof(payload));
+    if (om == NULL) {
+        return false;
+    }
+    // ble_gatts_notify_custom consumes om whether or not it succeeds.
+    const int rc = ble_gatts_notify_custom(s_conn_handle, s_call_action_val_handle, om);
+    ESP_LOGI(TAG, "call accept id=%u notify rc=%d", call_id, rc);
+    return rc == 0;
 }
 
 static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -197,6 +305,20 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC,
                 .val_handle = &s_chr_val_handle,
             },
+            {
+                .uuid = &s_call_event_uuid.u,
+                .access_cb = call_event_access_cb,
+                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC,
+                .val_handle = &s_call_event_val_handle,
+            },
+            {
+                // Notify only. READ_ENC keeps the CCCD write (the phone's subscription) on the
+                // encrypted, bonded link like everything else here.
+                .uuid = &s_call_action_uuid.u,
+                .access_cb = call_action_access_cb,
+                .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ_ENC,
+                .val_handle = &s_call_action_val_handle,
+            },
             {0}, // terminator
         },
     },
@@ -215,6 +337,8 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
             s_consecutive_decode_failures = 0;
             s_negotiated_mtu = BLE_ATT_MTU_DFLT;
             reasm_reset();
+            s_conn_handle = event->connect.conn_handle;
+            s_call_action_subscribed = false;
             s_connected = true;
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
@@ -225,7 +349,14 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         ESP_LOGI(TAG, "central disconnected; reason=%d", event->disconnect.reason);
         drive_log_ble(DRIVE_LOG_BLE_DISCONNECTED, (int32_t)event->disconnect.reason);
         s_connected = false;
+        s_call_action_subscribed = false;
         start_advertising();
+        return 0;
+    case BLE_GAP_EVENT_SUBSCRIBE:
+        if (event->subscribe.attr_handle == s_call_action_val_handle) {
+            s_call_action_subscribed = event->subscribe.cur_notify != 0;
+            ESP_LOGI(TAG, "call action notifications %s", s_call_action_subscribed ? "on" : "off");
+        }
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
         start_advertising();
@@ -310,8 +441,9 @@ static void host_task(void *param) {
     nimble_port_freertos_deinit();
 }
 
-void ble_link_init(QueueHandle_t raw_packet_queue) {
+void ble_link_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queue) {
     s_raw_packet_queue = raw_packet_queue;
+    s_call_event_queue = call_event_queue;
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
