@@ -164,7 +164,8 @@ void print_usage(const char *exe) {
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
                  " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <hex>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
-                 "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
+                 "  --page         fixture to run: 'all' (default, full state cycle), 'idle' or\n"
+                 "                 'avatars' (the splash, a random preset in a random accent every 2s)\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
@@ -244,6 +245,7 @@ int main(int argc, char *argv[]) {
     uint32_t shot_at_ms = 0;
     const char *shot_path = nullptr;
     bool idle_page = false;
+    bool avatars_page = false;
     bool odometer_page = false;
     bool trip_page = false;
     bool fade_nav_entry = false;
@@ -266,6 +268,8 @@ int main(int argc, char *argv[]) {
                 odometer_page = true;
             } else if (std::strcmp(argv[i], "trip") == 0) {
                 trip_page = true;
+            } else if (std::strcmp(argv[i], "avatars") == 0) {
+                avatars_page = true;
             } else if (std::strcmp(argv[i], "all") != 0) {
                 std::fprintf(stderr, "sim_lvgl: unknown page '%s'\n", argv[i]);
                 print_usage(argv[0]);
@@ -412,6 +416,22 @@ int main(int argc, char *argv[]) {
     // A second SDL_PollEvent loop here would race with it and starve it of events (observed:
     // window opens but never repaints past the first frame).
     const uint32_t start_ms = SDL_GetTicks();
+    if (avatars_page) {
+        std::srand(static_cast<unsigned>(std::time(nullptr)));
+        for (uint32_t next_ms = 0;; SDL_Delay(5)) {
+            if (SDL_GetTicks() >= next_ms) {
+                // Fully saturated, fully bright hue: what a rider would pick as a theme colour.
+                const lv_color_t c = lv_color_hsv_to_rgb(std::rand() % 360, 100, 100);
+                terminal_settings_t s = *settings_get();
+                s.accent_rgb = (uint32_t)c.red << 16 | (uint32_t)c.green << 8 | c.blue;
+                s.avatar = static_cast<uint8_t>(1 + std::rand() % SETTINGS_AVATAR_PRESET_MAX);
+                settings_set(&s);
+                gui_app_init(); // back to the splash, which picks the new avatar up
+                next_ms = SDL_GetTicks() + 2000;
+            }
+            lv_timer_handler();
+        }
+    }
     for (;;) {
         uint32_t elapsed = SDL_GetTicks() - start_ms;
         terminal_view_state_t frame = trip_page     ? make_trip_fixture_frame(elapsed)
