@@ -110,6 +110,19 @@ class MainActivity : Activity() {
             finishSetup()
             return
         }
+        // Re-running associate() on every launch piled up duplicate associations for the same
+        // terminal (six seen on 2026-09-27), each adding its own CDM presence scan filter. Reuse
+        // the existing one and just kick RelayService straight at it.
+        val existing = existingTerminalAddress(deviceManager)
+        if (existing != null) {
+            Log.i("OpenApexMain", "already associated with $existing, skipping association")
+            startForegroundService(
+                Intent(this, RelayService::class.java)
+                    .putExtra(RelayService.EXTRA_DEVICE_ADDRESS, existing),
+            )
+            finishSetup()
+            return
+        }
         val deviceFilter = BluetoothLeDeviceFilter.Builder()
             .setScanFilter(
                 ScanFilter.Builder().setServiceUuid(ParcelUuid(RelayBleClient.SERVICE_UUID)).build(),
@@ -177,6 +190,21 @@ class MainActivity : Activity() {
             }
             finishSetup()
         }
+    }
+
+    /** Uppercase MAC of an existing association (dropping duplicates on API 33+), or null. */
+    @Suppress("DEPRECATION") // getAssociations() is the pre-33 API
+    private fun existingTerminalAddress(deviceManager: CompanionDeviceManager): String? {
+        if (Build.VERSION.SDK_INT < 33) return deviceManager.associations.firstOrNull()?.uppercase()
+        val associations = deviceManager.myAssociations.filter { it.deviceMacAddress != null }
+        associations.groupBy { it.deviceMacAddress }.values.forEach { sameMac ->
+            sameMac.sortedByDescending { it.id }.drop(1).forEach { dup ->
+                Log.i("OpenApexMain", "removing duplicate association id=${dup.id}")
+                deviceManager.disassociate(dup.id)
+            }
+        }
+        // MacAddress.toString() is lowercase; BluetoothAdapter.getRemoteDevice() needs uppercase.
+        return associations.maxByOrNull { it.id }?.deviceMacAddress?.toString()?.uppercase()
     }
 
     private fun finishSetup() {

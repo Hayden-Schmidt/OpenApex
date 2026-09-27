@@ -42,14 +42,26 @@ class RelayBleClient(private val context: Context) {
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // True while a background (autoConnect=true) request is parked in the controller waiting for
+    // the terminal to come back. A direct connect() for the same device may replace it.
+    private var backgroundPending = false
+
+    /**
+     * [background] = true parks the request in the controller's accept list (autoConnect=true):
+     * it connects whenever the terminal next advertises, needs no app-side scan and survives
+     * screen-off. Used for every reconnect to a known terminal -- the app's own filtered scan was
+     * found suspended by OxygenOS for hours with 0 results (2026-09-27 dumpsys), so scanning
+     * cannot be the reconnect path. [background] = false is a fast direct connect for
+     * user/CDM-initiated starts.
+     */
     @SuppressLint("MissingPermission")
-    fun connect(device: BluetoothDevice) {
+    fun connect(device: BluetoothDevice, background: Boolean = false) {
         // Multiple wake paths (RelayService's own scan, plus CDM's legacy onDeviceAppeared and
         // API 36 onDevicePresenceEvent callbacks, which can both fire for the same appearance)
         // can each call connect() for the same device within milliseconds. Without this guard,
         // every call tore down the in-flight/just-established GATT client and opened a new one,
         // so the connection never survived long enough for characteristic writes to succeed.
-        if (gatt != null && connectedAddress == device.address) {
+        if (gatt != null && connectedAddress == device.address && (background || !backgroundPending)) {
             Log.i(TAG, "connect: already connecting/connected to ${device.address}, skipping")
             return
         }
@@ -64,15 +76,13 @@ class RelayBleClient(private val context: Context) {
             device.createBond()
             return
         }
-        Log.i(TAG, "connecting to ${device.address}")
+        Log.i(TAG, "connecting to ${device.address} background=$background")
         gatt?.close()
         connectedAddress = device.address
-        // autoConnect=false: a DIRECT connection always performs a fresh ATT MTU exchange. With
-        // autoConnect=true the stack reuses cached link state across a terminal reboot, and the
-        // re-requested exchange comes back GATT_REQUEST_NOT_SUPPORTED, leaving the MTU unverifiable
-        // (2026-09-24 afternoon ride: three of four sessions). Nothing is lost by dropping the
-        // background auto-reconnect -- RelayService re-scans and reconnects itself on disconnect.
-        gatt = device.connectGatt(context, false, callback)
+        backgroundPending = background
+        // autoConnect=true was once avoided because its reused link state broke the MTU exchange
+        // (2026-09-24). write() now fragments to the default MTU, so that no longer matters.
+        gatt = device.connectGatt(context, background, callback, BluetoothDevice.TRANSPORT_LE)
     }
 
     @SuppressLint("MissingPermission")
@@ -181,12 +191,15 @@ class RelayBleClient(private val context: Context) {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             Log.i(TAG, "connection state change: status=$status newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                backgroundPending = false
+                saveAddress(context, g.device.address)
                 // write() fragments to a fixed size that fits the BLE-spec default MTU regardless
                 // of negotiation (see write() KDoc), so nothing here depends on an MTU exchange.
                 g.discoverServices()
             } else {
                 characteristic = null
                 connectedAddress = null
+                backgroundPending = false
                 // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
                 // set would stall pumpQueue() on every later connection: packets queue, none send.
                 synchronized(pendingFragments) { writeInFlight = false }
@@ -215,6 +228,17 @@ class RelayBleClient(private val context: Context) {
 
     companion object {
         private const val TAG = "RelayBleClient"
+        private const val PREFS = "relay_ble"
+        private const val KEY_ADDRESS = "terminal_address"
+
+        /** Last terminal this phone connected to; lets no-address starts reconnect without scanning. */
+        fun savedAddress(context: Context): String? =
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ADDRESS, null)
+
+        private fun saveAddress(context: Context, address: String) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_ADDRESS, address).apply()
+        }
 
         // Fixed OpenApex BLE identifiers — see docs/OpenApex_SPEC.md §5.3.
         val SERVICE_UUID: UUID = UUID.fromString("c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f")

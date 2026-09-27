@@ -138,19 +138,44 @@ class RelayService : Service() {
         Log.i(TAG, "onStartCommand: address=$address")
         val adapter = (getSystemService(BluetoothManager::class.java))?.adapter
         if (address != null) {
+            stopOwnScan()
             adapter?.getRemoteDevice(address)?.let { ble.connect(it) }
         } else {
             // No address (e.g. started from BootCompletedReceiver, not CompanionDeviceManager):
             // CDM cold-wake is unreliable on some OEMs (see docs/OpenApex_SPEC.md §13 item 9), so
-            // this service runs continuously from boot and scans for the terminal itself instead
-            // of waiting on a CDM presence callback that may never fire.
-            startOwnScan(adapter)
+            // this service runs continuously from boot and reconnects itself instead of waiting
+            // on a CDM presence callback that may never fire.
+            reconnect(adapter)
         }
         // A restart from MainActivity means the app is foregrounded, which is exactly the state
         // that lifts the API 34+ background location-FGS restriction — retake the GNSS attempt
         // now rather than waiting out the retry timer.
         tryStartGnss()
         return START_STICKY
+    }
+
+    /**
+     * Background connect to the saved terminal: the controller holds the request and connects
+     * when the terminal next advertises (e.g. after being powered back on), with no scan for the
+     * OS to suspend. Scanning is only the first-run fallback, before any terminal has connected.
+     */
+    private fun reconnect(adapter: BluetoothAdapter?) {
+        val saved = RelayBleClient.savedAddress(this)
+        if (saved != null && adapter != null) {
+            stopOwnScan()
+            ble.connect(adapter.getRemoteDevice(saved), background = true)
+        } else {
+            startOwnScan(adapter)
+        }
+    }
+
+    // A scan left running after a connection from another path kept `scanning` true forever, so
+    // every later disconnect hit "already scanning, skipping" and never reconnected (2026-09-27).
+    @SuppressLint("MissingPermission")
+    private fun stopOwnScan() {
+        if (!scanning) return
+        (getSystemService(BluetoothManager::class.java))?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        scanning = false
     }
 
     @SuppressLint("MissingPermission")
@@ -175,9 +200,7 @@ class RelayService : Service() {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             Log.i(TAG, "onScanResult: found ${result.device.address}")
-            val adapter = (getSystemService(BluetoothManager::class.java))?.adapter ?: return
-            adapter.bluetoothLeScanner?.stopScan(this)
-            scanning = false
+            stopOwnScan()
             ble.connect(result.device)
         }
 
@@ -193,10 +216,7 @@ class RelayService : Service() {
         RelayRecorder.stop()
         stopGnss()
         sensorManager.unregisterListener(motionListener)
-        if (scanning) {
-            @SuppressLint("MissingPermission")
-            (getSystemService(BluetoothManager::class.java))?.adapter?.bluetoothLeScanner?.stopScan(scanCallback)
-        }
+        stopOwnScan()
         ble.disconnect()
         RelayStateHolder.detach()
         super.onDestroy()
@@ -217,13 +237,14 @@ class RelayService : Service() {
             }
             is RelayStateEvent.BleConnected -> {
                 connected = true
+                stopOwnScan()
                 RelayRecorder.lifecycle("bleConnected")
                 tryStartGnss()
             }
             is RelayStateEvent.BleDisconnected -> {
                 connected = false
                 RelayRecorder.lifecycle("bleDisconnected", "status=${event.status}")
-                startOwnScan((getSystemService(BluetoothManager::class.java))?.adapter)
+                reconnect((getSystemService(BluetoothManager::class.java))?.adapter)
             }
         }
         publish()
