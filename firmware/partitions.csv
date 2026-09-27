@@ -9,7 +9,3 @@ nvs,      data, nvs,     0x9000,  0x5000,
 phy_init, data, phy,     0xe000,  0x1000,
 factory,  app,  factory, 0x10000, 1536K,
 logs,     data, 0x9A,    0x190000, 1M,
-# avatar (custom data subtype 0x9B, see main/avatar_store.h): the rider's uploaded boot-logo
-# mask. 64K covers the S3's 136px A8 mask; placed in the previously unallocated tail so no
-# existing partition moves and flashing this table keeps the BLE bond in nvs.
-avatar,   data, 0x9B,    0x290000, 64K,

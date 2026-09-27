@@ -28,7 +28,7 @@ static const ble_uuid128_t s_chr_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x02, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 
 // Settings (§5.4): read the full TLV, write a partial one. Device info: read-only capabilities the
-// phone needs before it can build a settings screen or rasterise an avatar. Avatar: chunked upload.
+// phone needs before it can build a settings screen or rasterise an avatar. Avatar: 80 B of A2 art.
 static const ble_uuid128_t s_settings_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x03, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 static const ble_uuid128_t s_info_uuid =
@@ -255,12 +255,7 @@ static int avatar_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     (void)conn_handle;
     (void)attr_handle;
     (void)arg;
-    uint8_t buf[BLE_FRAG_HEADER_BYTES + BLE_FRAG_CHUNK_BYTES];
-    uint16_t len = 0;
-    if (ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &len) != 0) {
-        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-    }
-    return avatar_store_ble_write(buf, len);
+    return avatar_store_ble_access(ctxt);
 }
 
 static const struct ble_gatt_svc_def s_gatt_svcs[] = {
@@ -292,10 +287,10 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ,
             },
             {
-                // Data chunks may go without response for throughput; begin/commit should not.
                 .uuid = &s_avatar_uuid.u,
                 .access_cb = avatar_access_cb,
-                .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_WRITE_ENC,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
+                         BLE_GATT_CHR_F_WRITE_ENC,
             },
             {0}, // terminator
         },

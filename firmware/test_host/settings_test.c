@@ -7,7 +7,7 @@
 
 // gcc -std=c11 -o settings_test firmware/test_host/settings_test.c firmware/main/settings.c
 
-// Golden fixture shared with docs/OpenApex_SPEC.md §5.4 and Android's SettingsTlvTest: the full
+// Golden fixture shared with docs/OpenApex_SPEC.md §5.5 and Android's SettingsTlvTest: the full
 // encoding of the factory defaults.
 static const uint8_t kDefaultsTlv[] = {
     0x01,                         // schema
@@ -72,12 +72,23 @@ static void test_rejects_leave_settings_untouched(void) {
     const uint8_t truncated[] = {0x01, 0x04, 0x01};
     const uint8_t bad_len[] = {0x01, 0x01, 0x02, 0xFF, 0xFF};
     const uint8_t out_of_range[] = {0x01, 0x04, 0x01, 0x01, 0x05, 0x01, 0x09};
+    const uint8_t avatar_gap[] = {0x01, 0x02, 0x01, 0x0B}; // past the presets, not custom
     assert(!settings_tlv_decode(bad_schema, sizeof(bad_schema), &s));
     assert(!settings_tlv_decode(truncated, sizeof(truncated), &s));
     assert(!settings_tlv_decode(bad_len, sizeof(bad_len), &s));
     assert(!settings_tlv_decode(out_of_range, sizeof(out_of_range), &s));
+    assert(!settings_tlv_decode(avatar_gap, sizeof(avatar_gap), &s));
     assert(!settings_tlv_decode(bad_schema, 0, &s));
     assert(settings_equal(&s, &before));
+}
+
+static void test_avatar_values(void) {
+    terminal_settings_t s;
+    settings_defaults(&s);
+    const uint8_t preset[] = {0x01, 0x02, 0x01, SETTINGS_AVATAR_PRESET_MAX};
+    const uint8_t custom[] = {0x01, 0x02, 0x01, SETTINGS_AVATAR_CUSTOM};
+    assert(settings_tlv_decode(preset, sizeof(preset), &s) && s.avatar == SETTINGS_AVATAR_PRESET_MAX);
+    assert(settings_tlv_decode(custom, sizeof(custom), &s) && s.avatar == SETTINGS_AVATAR_CUSTOM);
 }
 
 static void test_generation_bumps(void) {
@@ -95,6 +106,7 @@ int main(void) {
     test_partial_write_keeps_other_fields();
     test_unknown_tag_skipped();
     test_rejects_leave_settings_untouched();
+    test_avatar_values();
     test_generation_bumps();
     printf("settings_test: all passed\n");
     return 0;

@@ -252,22 +252,22 @@ seconds. This is explicitly excluded from Phase 1.
 ### 5.5 Terminal settings, device info and avatar
 
 Three further characteristics on the same service let the phone configure the terminal UI. All
-settings persist on the terminal (NVS namespace `settings`, and the `avatar` flash partition) and
-are loaded before the splash, so the rider's configuration shows on every boot with no phone in
-range. The default ATT MTU is 23, so the phone must keep every write at 20 bytes or less.
+settings and the uploaded avatar persist on the terminal (NVS namespace `settings`, keys `tlv` and
+`avatar`) and are loaded before the splash, so the rider's configuration shows on every boot with
+no phone in range. The default ATT MTU is 23, so settings writes stay at 20 bytes or less.
 
 | UUID | Properties | Purpose |
 |---|---|---|
 | `c9c6d0a0-0003-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE (both encrypted) | Settings TLV |
 | `c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f` | READ | Device info |
-| `c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f` | WRITE, WRITE_NO_RSP (encrypted) | Avatar upload |
+| `c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE (both encrypted) | Custom avatar |
 
 **Settings TLV.** `[schema=0x01]` followed by records of `[tag u8][len u8][value]`.
 
 | Tag | Len | Field | Values | Default |
 |---|---|---|---|---|
 | 0x01 | 3 | Accent colour | RGB888, big-endian | `00 C2 FF` |
-| 0x02 | 1 | Avatar | 0 built-in logo, 1 custom upload | 0 |
+| 0x02 | 1 | Avatar | 0 built-in logo, 1-10 preset character, 0xFF custom upload | 0 |
 | 0x03 | 1 | ETA format | 0 arrival time, 1 time left | 1 |
 | 0x04 | 1 | Clock | 0 24-hour, 1 12-hour (`H:MM`, no am/pm) | 0 |
 | 0x05 | 1 | Units | 0 metric, 1 imperial (distances) | 0 |
@@ -282,22 +282,23 @@ range. The default ATT MTU is 23, so the phone must keep every write at 20 bytes
 - The terminal applies a write live and saves it to flash after 1 s without further changes.
 
 **Device info.** `[info_ver=1][board_id][gfx_tier][settings_schema][caps][avatar_px u16 LE][fw version, ASCII]`.
-`board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means avatar upload is supported. `avatar_px` is
-the square avatar edge in pixels (70 on C3, 136 on S3).
+`board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means custom avatar upload is supported.
+`avatar_px` is the edge the 16x16 avatar is drawn at (64 on C3, 128 on S3), for previews.
 
-**Avatar upload.** The avatar is an A8 alpha mask of exactly `avatar_px` x `avatar_px`, one byte per
-pixel in row-major order, tinted with the accent colour when drawn. Operations:
+**Avatar art.** Avatars are colour-agnostic: 2 bits per pixel, which the terminal tints with the
+accent colour. Levels are 0 transparent (background, and holes such as eyes), 1 about 1/3 accent
+(outline, shadow), 2 about 2/3 (body) and 3 full accent (highlight). Pixels are row-major, four
+per byte, first pixel in the high bits. An avatar is 80 bytes: a 16x16 image (64 B) then an 8x8
+version of the same character (16 B) for small surfaces. The ten presets (crab, owl, dino,
+octopus, cat, chick, slime, bear, dragon, robot, in tag order) are built into the firmware from
+`design reference/Characters` by `tools/build_avatars.py`. The 16x16 is drawn at a whole-number
+scale.
 
-| Op | Payload | Meaning |
-|---|---|---|
-| 0x01 BEGIN | `[w u16 LE][h u16 LE][crc32 u32 LE]` | Erases the stored avatar and starts an upload. w and h must equal `avatar_px`. |
-| 0x02 DATA | `[offset u16 LE][up to 17 bytes]` | Writes mask bytes at `offset`. |
-| 0x03 COMMIT | none | Checks the CRC over the written mask and stores it. On a mismatch it rejects the upload. |
-| 0x04 CLEAR | none | Deletes the stored avatar. |
-
-The CRC is standard CRC-32 (zlib, `java.util.zip.CRC32`). The header is written last, so an
-interrupted upload leaves no avatar and the terminal falls back to the built-in logo. Setting the
-avatar tag to 1 with no valid upload also shows the logo.
+**Custom avatar.** A read returns the stored 80 bytes, or nothing when none is stored. A write of
+exactly 80 bytes replaces it and an empty write deletes it; any other length is rejected. The
+value is longer than one packet, so the phone sends it as an ATT long write (prepare/execute,
+Android's default write type does this); the terminal only sees the whole value, so an interrupted
+upload changes nothing. Selecting 0xFF with nothing stored shows the logo.
 
 ## 6. Hardware Profiles
 

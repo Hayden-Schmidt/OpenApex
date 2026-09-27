@@ -1,91 +1,25 @@
 #include "avatar_store.h"
 
-#include "board_profile.h"
-
 #include "esp_log.h"
-#include "esp_partition.h"
-#include "esp_rom_crc.h"
-#include "host/ble_att.h"
-#include <stdlib.h>
-#include <string.h>
+#include "host/ble_hs.h"
+#include "nvs.h"
 
 static const char *TAG = "avatar_store";
 
-#define AVATAR_PARTITION_SUBTYPE 0x9B
-#define AVATAR_MAGIC 0x5641414FU // "OAAV" little-endian
-#define AVATAR_DATA_OFFSET 16U
-#define AVATAR_SECTOR 4096U
+// Same namespace as settings_store.c: the avatar is one more rider setting, just too big for a TLV.
+#define AVATAR_NAMESPACE "settings"
+#define AVATAR_KEY "avatar"
 
-enum {
-    AVATAR_OP_BEGIN = 0x01,  // [op][w u16][h u16][crc32 u32]
-    AVATAR_OP_DATA = 0x02,   // [op][offset u16][bytes...]
-    AVATAR_OP_COMMIT = 0x03, // [op]
-    AVATAR_OP_CLEAR = 0x04,  // [op]
-};
-
-typedef struct {
-    uint32_t magic;
-    uint16_t w;
-    uint16_t h;
-    uint32_t size;
-    uint32_t crc32;
-} avatar_header_t;
-_Static_assert(sizeof(avatar_header_t) == AVATAR_DATA_OFFSET, "header must fill the data offset");
-
-// Upload state; touched only from the NimBLE host task.
-static bool s_uploading;
-static avatar_header_t s_pending;
 static volatile bool s_changed;
 
-static const esp_partition_t *partition(void) {
-    static const esp_partition_t *part;
-    if (part == NULL) {
-        part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, AVATAR_PARTITION_SUBTYPE, "avatar");
-    }
-    return part;
-}
-
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
-
-static uint32_t rd32(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-// Standard CRC-32 (zlib / java.util.zip.CRC32) of the stored mask, read back from flash in chunks
-// so verification needs no mask-sized buffer.
-static uint32_t flash_crc(const esp_partition_t *part, uint32_t size) {
-    uint8_t chunk[64];
-    uint32_t crc = 0;
-    for (uint32_t off = 0; off < size; off += sizeof(chunk)) {
-        const uint32_t n = size - off < sizeof(chunk) ? size - off : sizeof(chunk);
-        if (esp_partition_read(part, AVATAR_DATA_OFFSET + off, chunk, n) != ESP_OK) return ~crc;
-        crc = esp_rom_crc32_le(crc, chunk, n);
-    }
-    return crc;
-}
-
-uint8_t *avatar_store_read(uint16_t *w, uint16_t *h) {
-    const esp_partition_t *part = partition();
-    if (part == NULL) return NULL;
-    avatar_header_t hdr;
-    if (esp_partition_read(part, 0, &hdr, sizeof(hdr)) != ESP_OK || hdr.magic != AVATAR_MAGIC ||
-        hdr.w != BOARD_AVATAR_PX || hdr.h != BOARD_AVATAR_PX ||
-        hdr.size != (uint32_t)hdr.w * hdr.h) {
-        return NULL;
-    }
-    // Plain malloc: on the S3 CONFIG_SPIRAM_USE_MALLOC already sends an allocation this size to
-    // PSRAM; on the C3 it is 4.9 KB of internal heap.
-    uint8_t *buf = malloc(hdr.size);
-    if (buf == NULL) return NULL;
-    if (esp_partition_read(part, AVATAR_DATA_OFFSET, buf, hdr.size) != ESP_OK ||
-        esp_rom_crc32_le(0, buf, hdr.size) != hdr.crc32) {
-        ESP_LOGW(TAG, "stored avatar failed its CRC; using the logo");
-        free(buf);
-        return NULL;
-    }
-    *w = hdr.w;
-    *h = hdr.h;
-    return buf;
+// NVS is the only copy, so the GUI and BLE tasks never share a buffer.
+bool avatar_store_read(uint8_t out[AVATAR_STORE_BYTES]) {
+    nvs_handle_t handle;
+    if (nvs_open(AVATAR_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return false;
+    size_t len = AVATAR_STORE_BYTES;
+    const esp_err_t err = nvs_get_blob(handle, AVATAR_KEY, out, &len);
+    nvs_close(handle);
+    return err == ESP_OK && len == AVATAR_STORE_BYTES;
 }
 
 bool avatar_store_take_changed(void) {
@@ -94,60 +28,38 @@ bool avatar_store_take_changed(void) {
     return true;
 }
 
-int avatar_store_ble_write(const uint8_t *buf, uint16_t len) {
-    const esp_partition_t *part = partition();
-    if (part == NULL) return BLE_ATT_ERR_UNLIKELY;
-    if (len < 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+static int write(const uint8_t *buf, uint16_t len) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(AVATAR_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = len == 0 ? nvs_erase_key(handle, AVATAR_KEY) : nvs_set_blob(handle, AVATAR_KEY, buf, len);
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK; // clearing an empty store
+        if (err == ESP_OK) err = nvs_commit(handle);
+        nvs_close(handle);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "avatar write failed (%s)", esp_err_to_name(err));
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    s_changed = true;
+    ESP_LOGI(TAG, "avatar %s", len == 0 ? "cleared" : "saved");
+    return 0;
+}
 
-    switch (buf[0]) {
-    case AVATAR_OP_BEGIN: {
-        if (len != 9) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        const uint16_t w = rd16(&buf[1]);
-        const uint16_t h = rd16(&buf[3]);
-        // One size per board: the phone reads it from device info and rasterises to fit, so the
-        // terminal never scales.
-        if (w != BOARD_AVATAR_PX || h != BOARD_AVATAR_PX) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
-        const uint32_t size = (uint32_t)w * h;
-        const uint32_t span = (AVATAR_DATA_OFFSET + size + AVATAR_SECTOR - 1) & ~(AVATAR_SECTOR - 1);
-        if (span > part->size) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
-        // Erasing also invalidates the old header, so an abandoned upload leaves the logo, never a
-        // mix of two avatars.
-        if (esp_partition_erase_range(part, 0, span) != ESP_OK) return BLE_ATT_ERR_UNLIKELY;
-        s_pending = (avatar_header_t){AVATAR_MAGIC, w, h, size, rd32(&buf[5])};
-        s_uploading = true;
-        s_changed = true;
-        return 0;
+int avatar_store_ble_access(struct ble_gatt_access_ctxt *ctxt) {
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        uint8_t buf[AVATAR_STORE_BYTES];
+        if (!avatar_store_read(buf)) return 0;
+        return os_mbuf_append(ctxt->om, buf, sizeof(buf)) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
     }
-    case AVATAR_OP_DATA: {
-        if (!s_uploading) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
-        if (len < 4) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        const uint32_t off = rd16(&buf[1]);
-        const uint32_t n = len - 3U;
-        if (off + n > s_pending.size) return BLE_ATT_ERR_INVALID_OFFSET;
-        return esp_partition_write(part, AVATAR_DATA_OFFSET + off, &buf[3], n) == ESP_OK
-                   ? 0
-                   : BLE_ATT_ERR_UNLIKELY;
+    // Longer than the default MTU, so the phone sends it as a long write; NimBLE reassembles the
+    // prepared writes and hands over the whole value here, so a torn upload never lands.
+    uint8_t buf[AVATAR_STORE_BYTES];
+    uint16_t len = 0;
+    if (OS_MBUF_PKTLEN(ctxt->om) > sizeof(buf) ||
+        ble_hs_mbuf_to_flat(ctxt->om, buf, sizeof(buf), &len) != 0 ||
+        (len != 0 && len != AVATAR_STORE_BYTES)) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
     }
-    case AVATAR_OP_COMMIT:
-        if (!s_uploading) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
-        s_uploading = false;
-        if (flash_crc(part, s_pending.size) != s_pending.crc32) {
-            ESP_LOGW(TAG, "avatar upload CRC mismatch; discarded");
-            return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
-        }
-        if (esp_partition_write(part, 0, &s_pending, sizeof(s_pending)) != ESP_OK) {
-            return BLE_ATT_ERR_UNLIKELY;
-        }
-        ESP_LOGI(TAG, "avatar stored (%ux%u)", s_pending.w, s_pending.h);
-        s_changed = true;
-        return 0;
-    case AVATAR_OP_CLEAR:
-        if (len != 1) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-        s_uploading = false;
-        if (esp_partition_erase_range(part, 0, AVATAR_SECTOR) != ESP_OK) return BLE_ATT_ERR_UNLIKELY;
-        s_changed = true;
-        return 0;
-    default:
-        return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
-    }
+    return write(buf, len);
 }

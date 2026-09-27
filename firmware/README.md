@@ -69,8 +69,15 @@ fixture.
 ## UI settings
 
 The phone configures the accent colour, avatar, ETA format, clock, units and default dial ring over
-BLE (docs/OpenApex_SPEC.md §5.5). Settings are saved to NVS and the avatar to the `avatar`
-partition, so both apply from the splash on every boot with no phone connected.
+BLE (docs/OpenApex_SPEC.md §5.5). Settings and a custom avatar are saved to NVS, so both apply
+from the splash on every boot with no phone connected.
+
+The ten preset avatars are generated from `design reference/Characters`. Rebuild them after
+changing the art, and check the preview:
+
+```powershell
+python tools/build_avatars.py --preview avatars.png
+```
 
 Host test for the settings codec:
 
@@ -79,9 +86,9 @@ gcc -std=c11 -Ifirmware/main -o settings_test firmware/test_host/settings_test.c
 ./settings_test
 ```
 
-Preview settings in the simulator, using a TLV in hex and an optional raw A8 avatar mask of the
-board's avatar size (70x70 on C3, 136x136 on S3):
+Preview settings in the simulator using a TLV in hex. This shows the orange owl preset in imperial
+units; for a custom avatar pass `--settings 010201ff --avatar <160 hex digits>`:
 
 ```powershell
-program.exe --settings 010103ff8000020101050101 --avatar avatar70.a8
+program.exe --settings 010103ff8000020102050101
 ```

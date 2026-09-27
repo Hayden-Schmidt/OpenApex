@@ -3,21 +3,21 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The rider's avatar: an A8 alpha mask the size of the boot logo (BOARD_AVATAR_PX square), stored
-// in its own `avatar` flash partition (partitions.csv) and tinted with the accent colour at draw
-// time, exactly like the built-in logo. Survives reboots with no phone in range.
-//
-// Partition layout: a 16-byte header {magic, w, h, size, crc32} at offset 0, mask bytes from
-// offset 16. The header is written last on commit, so a power cut mid-upload leaves no valid
-// avatar rather than a half-written one.
+#include "host/ble_gatt.h"
 
-// Reads the stored avatar into a new heap buffer (PSRAM when the heap has it) the caller frees.
-// NULL when none is stored or it fails its CRC. *w/*h are set on success.
-uint8_t *avatar_store_read(uint16_t *w, uint16_t *h);
+// The rider's uploaded avatar (docs/OpenApex_SPEC.md §5.5): colour-agnostic A2 art, a 16x16 and an
+// 8x8 version back to back, tinted with the accent colour at draw time like the built-in presets.
+// 80 bytes, so it lives in NVS beside the settings and survives reboots with no phone in range.
 
-// True once per successful commit since the last call. gui_task polls this to reload.
+#define AVATAR_STORE_BYTES 80u
+
+// Copies the stored avatar into `out`. False when none is stored.
+bool avatar_store_read(uint8_t out[AVATAR_STORE_BYTES]);
+
+// True once per change (upload or clear) since the last call. gui_task polls this to reload.
 bool avatar_store_take_changed(void);
 
-// Handles one write to the avatar upload characteristic (docs/OpenApex_SPEC.md §5.5). Returns 0 or
-// a BLE ATT error code. Runs on the NimBLE host task.
-int avatar_store_ble_write(const uint8_t *buf, uint16_t len);
+// Access callback body for the avatar characteristic: a read returns the stored 80 bytes (empty
+// when none), a write of exactly 80 bytes replaces it and an empty write clears it. Runs on the
+// NimBLE host task; returns 0 or a BLE ATT error code.
+int avatar_store_ble_access(struct ble_gatt_access_ctxt *ctxt);

@@ -162,15 +162,17 @@ namespace {
 void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
-                 " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <file>]\n"
+                 " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <hex>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle) or 'idle'\n"
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
                  "  --settings     apply a settings TLV write as the phone would, in hex\n"
-                 "                 (docs/OpenApex_SPEC.md 5.4), e.g. 010103ff8000 = orange accent\n"
-                 "  --avatar       raw square A8 mask file (the avatar upload payload) for the splash\n",
+                 "                 (docs/OpenApex_SPEC.md 5.5), e.g. 010103ff8000 = orange accent,\n"
+                 "                 010201NN = preset NN (01..0a)\n"
+                 "  --avatar       custom avatar upload (80 bytes of A2 art) in hex; select it with\n"
+                 "                 --settings 010201ff\n",
                  exe);
 }
 
@@ -248,8 +250,8 @@ int main(int argc, char *argv[]) {
     bool single = false;
     bool paired = false;
     int positional = 0;
-    static uint8_t avatar[256 * 256];
-    uint16_t avatar_px = 0;
+    uint8_t avatar[GUI_AVATAR_BYTES];
+    bool have_avatar = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--page") == 0) {
@@ -307,14 +309,19 @@ int main(int argc, char *argv[]) {
             }
             settings_set(&s);
         } else if (std::strcmp(argv[i], "--avatar") == 0) {
-            FILE *f = i + 1 < argc ? std::fopen(argv[++i], "rb") : nullptr;
-            const size_t n = f != nullptr ? std::fread(avatar, 1, sizeof(avatar), f) : 0;
-            if (f != nullptr) std::fclose(f);
-            while (static_cast<size_t>(avatar_px + 1) * (avatar_px + 1) <= n) ++avatar_px;
-            if (avatar_px == 0 || static_cast<size_t>(avatar_px) * avatar_px != n) {
-                std::fprintf(stderr, "sim_lvgl: --avatar needs a square A8 file\n");
+            const char *hex = i + 1 < argc ? argv[++i] : "";
+            size_t n = 0;
+            while (hex[0] != '\0' && hex[1] != '\0' && n < sizeof(avatar)) {
+                const char pair[3] = {hex[0], hex[1], '\0'};
+                avatar[n++] = static_cast<uint8_t>(std::strtoul(pair, nullptr, 16));
+                hex += 2;
+            }
+            if (n != sizeof(avatar) || hex[0] != '\0') {
+                std::fprintf(stderr, "sim_lvgl: --avatar needs exactly %d bytes of hex\n",
+                             GUI_AVATAR_BYTES);
                 return 1;
             }
+            have_avatar = true;
         } else if (std::strcmp(argv[i], "--single") == 0) {
             single = true;
         } else if (std::strcmp(argv[i], "--paired") == 0) {
@@ -389,7 +396,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (avatar_px != 0) gui_app_set_avatar(avatar, avatar_px, avatar_px);
+    if (have_avatar) gui_app_set_avatar(avatar);
     gui_app_init();
     // The odometer is a rider-selected page rather than a view_state_t, so it is reached through
     // the page-override seam, not by feeding a different state.

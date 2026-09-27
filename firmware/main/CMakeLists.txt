@@ -6,7 +6,6 @@ idf_component_register(
     # production build only the (already-linked) component dependency.
     # nvs_flash: heading_store.c persists the learned mount offset/heading across power cycles
     # (docs/Heading_Sensor_Fusion_Plan.md) in the same NVS partition ble_link.c uses for BLE bonding.
-    # esp_partition also backs avatar_store.c (the rider avatar's own partition); nvs_flash also
-    # settings_store.c.
+    # nvs_flash also backs settings_store.c and avatar_store.c.
     REQUIRES bt gui esp_lcd esp_driver_spi esp_driver_gpio esp_driver_i2c esp_lcd_gc9a01 esp_partition nvs_flash
 )

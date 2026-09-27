@@ -27,9 +27,12 @@ enum {
     SETTINGS_TAG_DIAL_OUTER = 0x06, // len 1: gui_dial_outer_t
 };
 
+// Avatar values: the logo, a built-in character (1..SETTINGS_AVATAR_PRESET_MAX, gui/avatars_data.h)
+// or the rider's upload.
 typedef enum {
-    SETTINGS_AVATAR_LOGO = 0,   // built-in OpenApex logo
-    SETTINGS_AVATAR_CUSTOM = 1, // uploaded mask (avatar_store.c); falls back to the logo if none
+    SETTINGS_AVATAR_LOGO = 0,          // built-in OpenApex logo
+    SETTINGS_AVATAR_PRESET_MAX = 10,   // presets are 1..10
+    SETTINGS_AVATAR_CUSTOM = 0xFF,     // uploaded art (avatar_store.c); falls back to the logo if none
 } settings_avatar_t;
 
 typedef enum {

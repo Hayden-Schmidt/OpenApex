@@ -20,7 +20,7 @@ void settings_defaults(terminal_settings_t *out) { *out = kDefaults; }
 
 // Highest valid value of each one-byte tag, indexed by tag; 0 marks a tag that is not one byte.
 static const uint8_t kByteTagMax[] = {
-    [SETTINGS_TAG_AVATAR] = SETTINGS_AVATAR_CUSTOM,
+    [SETTINGS_TAG_AVATAR] = SETTINGS_AVATAR_CUSTOM, // plus the gap check below
     [SETTINGS_TAG_ETA_FORMAT] = PIPELINE_ETA_TIME_LEFT,
     [SETTINGS_TAG_CLOCK_12H] = 1,
     [SETTINGS_TAG_UNITS] = SETTINGS_UNITS_IMPERIAL,
@@ -46,6 +46,10 @@ bool settings_tlv_decode(const uint8_t *buf, size_t len, terminal_settings_t *in
         }
         if (tag >= sizeof(kByteTagMax) || kByteTagMax[tag] == 0) continue; // unknown: skip
         if (n != 1 || v[0] > kByteTagMax[tag]) return false;
+        if (tag == SETTINGS_TAG_AVATAR && v[0] > SETTINGS_AVATAR_PRESET_MAX &&
+            v[0] != SETTINGS_AVATAR_CUSTOM) {
+            return false;
+        }
         switch (tag) {
         case SETTINGS_TAG_AVATAR: s.avatar = v[0]; break;
         case SETTINGS_TAG_ETA_FORMAT: s.eta_format = v[0]; break;

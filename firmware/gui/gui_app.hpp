@@ -58,11 +58,16 @@ typedef enum {
 void gui_app_set_nav_entry(gui_nav_entry_t entry);
 gui_nav_entry_t gui_app_nav_entry(void);
 
-// The rider's avatar (firmware/main/avatar_store.h): a w x h A8 mask shown in place of the boot
-// logo when settings select it, tinted with the accent like the logo. NULL clears it. The GUI only
-// borrows `a8`: the caller keeps it alive until the next call. Call before gui_app_init() to have
-// it on the first frame; later calls take effect immediately.
-void gui_app_set_avatar(const uint8_t *a8, uint16_t w, uint16_t h);
+// The rider's uploaded avatar (firmware/main/avatar_store.h): GUI_AVATAR_BYTES of A2 art, 16x16
+// then 8x8, shown in place of the boot logo when settings select it and tinted with the accent.
+// Copied, so the caller's buffer may go. NULL clears it. Call before gui_app_init() to have it on
+// the first frame; later calls take effect immediately.
+#define GUI_AVATAR_BYTES 80
+void gui_app_set_avatar(const uint8_t *a2);
+
+// 8x8 A2 art (16 bytes) of the selected avatar, or NULL when the logo is selected. Not drawn yet;
+// here for small surfaces.
+const uint8_t *gui_avatar_small(void);
 
 #ifdef __cplusplus
 }
@@ -82,6 +87,6 @@ const GuiTheme &gui_theme(void);
 // so a colour change from the phone restyles every page with one lv_obj_report_style_change().
 lv_style_t *gui_accent_style(void);
 
-// Image source for the boot logo: the rider's avatar when selected and stored, else ICON_LOGO.
+// Image source for the boot logo: the selected preset or uploaded avatar, else ICON_LOGO.
 const void *gui_logo_src(void);
 #endif

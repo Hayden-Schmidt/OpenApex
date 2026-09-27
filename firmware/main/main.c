@@ -21,7 +21,6 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
-#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "openapex";
@@ -126,12 +125,10 @@ static void gui_task(void *argument) {
     display_driver_init();
     touch_driver_init();
 
-    // The avatar is read here rather than in app_main so its buffer is owned by the one task that
-    // hands it to LVGL. Settings are already loaded (app_main), so gui_app_init draws the splash in
+    // The avatar is read here, on the one task that hands it to LVGL. Settings are already loaded (app_main), so gui_app_init draws the splash in
     // the rider's colour with their avatar from the very first frame, phone or no phone.
-    uint16_t avatar_w = 0, avatar_h = 0;
-    uint8_t *avatar = avatar_store_read(&avatar_w, &avatar_h);
-    gui_app_set_avatar(avatar, avatar_w, avatar_h);
+    uint8_t avatar[AVATAR_STORE_BYTES];
+    gui_app_set_avatar(avatar_store_read(avatar) ? avatar : NULL);
     gui_app_init();
 
     // Paint the boot screen fully, *then* light the panel. lv_refr_now blocks until every pending
@@ -146,11 +143,7 @@ static void gui_task(void *argument) {
         terminal_view_state_t frame;
         view_state_snapshot(&frame);
         if (avatar_store_take_changed()) {
-            // Swap before freeing: LVGL must never be left pointing at released memory.
-            uint8_t *next = avatar_store_read(&avatar_w, &avatar_h);
-            gui_app_set_avatar(next, avatar_w, avatar_h);
-            free(avatar);
-            avatar = next;
+            gui_app_set_avatar(avatar_store_read(avatar) ? avatar : NULL);
         }
         gui_app_update(&frame);
         // Sleep exactly until LVGL's next timer is due, not a fixed 16ms: a fixed poll beats against

@@ -1,6 +1,7 @@
 #include "gui_app.hpp"
 
 #include "arrived_screen.hpp"
+#include "avatars_data.h"
 #include "basic_theme.hpp"
 #include "board_profile.h"
 #include "dial_screen.hpp"
@@ -12,6 +13,8 @@
 
 // lv_image_cache_drop: not re-exported by lvgl.h in v9.
 #include "src/misc/cache/lv_cache.h"
+
+#include <cstring>
 
 #if BOARD_HAS_SPLASH
 #include "splash_screen.hpp"
@@ -61,8 +64,45 @@ SplashScreen &splash_screen(void) {
 uint32_t s_applied_generation = UINT32_MAX;
 uint8_t s_applied_dial_outer = GUI_DIAL_OUTER_COMPASS;
 
+// The avatar on show, expanded from 2-bit art (avatars_data.h, or the rider's upload) to an A8 mask
+// at an integer scale so the pixels stay crisp; tinted with the accent like the logo.
+constexpr int kAvatarArtPx = 16;
+constexpr int kAvatarScale = BOARD_AVATAR_PX / kAvatarArtPx;
+static_assert(kAvatarScale * kAvatarArtPx == BOARD_AVATAR_PX, "avatar must be a whole multiple");
+uint8_t s_avatar_a8[BOARD_AVATAR_PX * BOARD_AVATAR_PX];
 lv_image_dsc_t s_avatar;
-bool s_have_avatar = false;
+const uint8_t *s_avatar_shown = nullptr; // art currently expanded into s_avatar_a8
+uint8_t s_custom[GUI_AVATAR_BYTES];
+bool s_have_custom = false;
+
+void expand_avatar(const uint8_t *a2) {
+    static const uint8_t kAlpha[4] = {0, 85, 170, 255};
+    for (int y = 0; y < BOARD_AVATAR_PX; ++y) {
+        const int row = y / kAvatarScale * kAvatarArtPx;
+        for (int x = 0; x < BOARD_AVATAR_PX; ++x) {
+            const int i = row + x / kAvatarScale;
+            s_avatar_a8[y * BOARD_AVATAR_PX + x] = kAlpha[(a2[i / 4] >> (6 - 2 * (i % 4))) & 3];
+        }
+    }
+    // The descriptor is reused, so drop LVGL's cached decode of the old pixels.
+    if (s_avatar_shown != nullptr) lv_image_cache_drop(&s_avatar);
+    s_avatar = {};
+    s_avatar.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_avatar.header.cf = LV_COLOR_FORMAT_A8;
+    s_avatar.header.w = BOARD_AVATAR_PX;
+    s_avatar.header.h = BOARD_AVATAR_PX;
+    s_avatar.header.stride = BOARD_AVATAR_PX;
+    s_avatar.data_size = sizeof(s_avatar_a8);
+    s_avatar.data = s_avatar_a8;
+}
+
+// The selected 80-byte art, or nullptr for the logo (also when "custom" has nothing uploaded).
+const uint8_t *selected_avatar(void) {
+    const uint8_t v = settings_get()->avatar;
+    if (v == SETTINGS_AVATAR_CUSTOM) return s_have_custom ? s_custom : nullptr;
+    if (v >= 1 && v <= AVATAR_PRESET_COUNT) return kAvatarPresets[v - 1];
+    return nullptr;
+}
 
 gui_page_override_t s_page_override = GUI_PAGE_AUTO;
 gui_nav_entry_t s_nav_entry = GUI_NAV_ENTRY_ELEMENTS;
@@ -151,24 +191,24 @@ lv_style_t *gui_accent_style(void) {
 }
 
 const void *gui_logo_src(void) {
-    if (s_have_avatar && settings_get()->avatar == SETTINGS_AVATAR_CUSTOM) return &s_avatar;
-    return icon_image(ICON_LOGO);
+    const uint8_t *art = selected_avatar();
+    if (art == nullptr) return icon_image(ICON_LOGO);
+    if (art != s_avatar_shown) {
+        expand_avatar(art);
+        s_avatar_shown = art;
+    }
+    return &s_avatar;
 }
 
-void gui_app_set_avatar(const uint8_t *a8, uint16_t w, uint16_t h) {
-    // The descriptor is reused across uploads, so drop LVGL's cached decode of the old pixels.
-    if (s_have_avatar) lv_image_cache_drop(&s_avatar);
-    s_have_avatar = a8 != nullptr;
-    if (s_have_avatar) {
-        s_avatar = {};
-        s_avatar.header.magic = LV_IMAGE_HEADER_MAGIC;
-        s_avatar.header.cf = LV_COLOR_FORMAT_A8;
-        s_avatar.header.w = w;
-        s_avatar.header.h = h;
-        s_avatar.header.stride = w;
-        s_avatar.data_size = static_cast<uint32_t>(w) * h;
-        s_avatar.data = a8;
-    }
+const uint8_t *gui_avatar_small(void) {
+    const uint8_t *art = selected_avatar();
+    return art != nullptr ? art + GUI_AVATAR_BYTES - 16 : nullptr;
+}
+
+void gui_app_set_avatar(const uint8_t *a2) {
+    s_have_custom = a2 != nullptr;
+    if (s_have_custom) memcpy(s_custom, a2, sizeof(s_custom));
+    if (s_avatar_shown == s_custom) s_avatar_shown = nullptr; // same buffer, new pixels
     if (s_active != nullptr) refresh_logo();
 }
 

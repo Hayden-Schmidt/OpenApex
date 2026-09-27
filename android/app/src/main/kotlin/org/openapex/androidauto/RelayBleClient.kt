@@ -188,14 +188,19 @@ class RelayBleClient(private val context: Context) {
         writeAll(SETTINGS_UUID, SettingsTlv.encodeWrites(settings), done)
 
     /**
-     * Uploads an A8 avatar mask of [DeviceInfo.avatarPx] square. Show it by writing settings with
-     * customAvatar = true. The terminal rejects the commit if the CRC doesn't match.
+     * Stores custom avatar art ([AvatarArt]) on the terminal. Show it by writing settings with
+     * avatar = [TerminalSettings.AVATAR_CUSTOM]. One 80-byte write, which Android sends as an ATT
+     * long write, so the terminal gets all of it or none.
      */
-    fun uploadAvatar(mask: ByteArray, px: Int, done: (Boolean) -> Unit = {}) =
-        writeAll(AVATAR_UUID, AvatarUpload.frames(mask, px), done)
+    fun uploadAvatar(art: AvatarArt, done: (Boolean) -> Unit = {}) =
+        writeAll(AVATAR_UUID, listOf(art.bytes), done)
+
+    /** Reads the stored custom avatar; [done] gets null if none is stored or the read failed. */
+    fun readAvatar(done: (AvatarArt?) -> Unit) =
+        enqueue(ControlOp.Read(AVATAR_UUID) { done(it?.let(AvatarArt::fromBytes)) })
 
     fun clearAvatar(done: (Boolean) -> Unit = {}) =
-        writeAll(AVATAR_UUID, listOf(AvatarUpload.clearFrame()), done)
+        writeAll(AVATAR_UUID, listOf(ByteArray(0)), done)
 
     // With-response writes in order; the first failure drops the rest of this batch.
     private fun writeAll(uuid: UUID, frames: List<ByteArray>, done: (Boolean) -> Unit) {

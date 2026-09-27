@@ -1,19 +1,25 @@
 package org.openapex.androidauto
 
-import java.util.zip.CRC32
-
 /**
  * Terminal UI settings, mirroring firmware/main/settings.h. Wire format and defaults are
  * docs/OpenApex_SPEC.md §5.5; [SettingsTlv.DEFAULTS_FIXTURE] is the spec's golden fixture.
  */
 data class TerminalSettings(
     val accentRgb: Int = 0x00C2FF,
-    val customAvatar: Boolean = false,
+    /** [AVATAR_LOGO], a preset 1..[AVATAR_PRESETS] or [AVATAR_CUSTOM]. */
+    val avatar: Int = AVATAR_LOGO,
     val etaTimeLeft: Boolean = true,
     val clock12h: Boolean = false,
     val imperial: Boolean = false,
     val dialOuterTrip: Boolean = false,
-)
+) {
+    companion object {
+        const val AVATAR_LOGO = 0
+        /** Presets in order: crab, owl, dino, octopus, cat, chick, slime, bear, dragon, robot. */
+        const val AVATAR_PRESETS = 10
+        const val AVATAR_CUSTOM = 0xFF
+    }
+}
 
 object SettingsTlv {
     const val SCHEMA = 0x01
@@ -34,7 +40,7 @@ object SettingsTlv {
 
     private fun records(s: TerminalSettings): List<ByteArray> = listOf(
         bytes(TAG_ACCENT, 3, (s.accentRgb shr 16) and 0xFF, (s.accentRgb shr 8) and 0xFF, s.accentRgb and 0xFF),
-        bytes(TAG_AVATAR, 1, s.customAvatar.bit()),
+        bytes(TAG_AVATAR, 1, s.avatar),
         bytes(TAG_ETA_FORMAT, 1, s.etaTimeLeft.bit()),
         bytes(TAG_CLOCK_12H, 1, s.clock12h.bit()),
         bytes(TAG_UNITS, 1, s.imperial.bit()),
@@ -81,10 +87,16 @@ object SettingsTlv {
                 continue
             }
             if (tag !in TAG_AVATAR..TAG_DIAL_OUTER) continue // unknown: skip, like the terminal
-            if (n != 1 || buf[v].u() > 1) return null
-            val on = buf[v].u() == 1
+            if (n != 1) return null
+            val b = buf[v].u()
+            if (tag == TAG_AVATAR) {
+                if (b > TerminalSettings.AVATAR_PRESETS && b != TerminalSettings.AVATAR_CUSTOM) return null
+                s = s.copy(avatar = b)
+                continue
+            }
+            if (b > 1) return null
+            val on = b == 1
             s = when (tag) {
-                TAG_AVATAR -> s.copy(customAvatar = on)
                 TAG_ETA_FORMAT -> s.copy(etaTimeLeft = on)
                 TAG_CLOCK_12H -> s.copy(clock12h = on)
                 TAG_UNITS -> s.copy(imperial = on)
@@ -125,34 +137,39 @@ data class DeviceInfo(
     }
 }
 
-/** Frames for the avatar upload characteristic (spec §5.5), each at most 20 bytes. */
-object AvatarUpload {
-    private const val OP_BEGIN = 0x01
-    private const val OP_DATA = 0x02
-    private const val OP_COMMIT = 0x03
-    private const val OP_CLEAR = 0x04
-    const val DATA_CHUNK_BYTES = 17
-
-    /** [mask] is an A8 alpha mask, [px] x [px] row-major, px from [DeviceInfo.avatarPx]. */
-    fun frames(mask: ByteArray, px: Int): List<ByteArray> {
-        require(mask.size == px * px) { "mask must be ${px}x$px A8" }
-        val crc = CRC32().apply { update(mask) }.value
-        val out = mutableListOf(
-            bytes(OP_BEGIN, px and 0xFF, px shr 8, px and 0xFF, px shr 8,
-                (crc and 0xFF).toInt(), ((crc shr 8) and 0xFF).toInt(),
-                ((crc shr 16) and 0xFF).toInt(), ((crc shr 24) and 0xFF).toInt()),
-        )
-        var off = 0
-        while (off < mask.size) {
-            val n = minOf(DATA_CHUNK_BYTES, mask.size - off)
-            out += bytes(OP_DATA, off and 0xFF, off shr 8) + mask.copyOfRange(off, off + n)
-            off += n
-        }
-        out += bytes(OP_COMMIT)
-        return out
+/**
+ * Colour-agnostic avatar art (spec §5.5): a 16x16 and an 8x8 image of 2-bit levels, 0 transparent
+ * to 3 full accent, which the terminal tints with the accent colour. [bytes] is the 80-byte wire
+ * and storage form.
+ */
+class AvatarArt private constructor(val bytes: ByteArray) {
+    /** Level 0..3 at ([x], [y]) of the 16x16 image, or of the 8x8 one when [small]. */
+    fun level(x: Int, y: Int, small: Boolean = false): Int {
+        val (edge, base) = if (small) SMALL to LARGE * LARGE / 4 else LARGE to 0
+        val i = y * edge + x
+        return (bytes[base + i / 4].u() shr (6 - 2 * (i % 4))) and 3
     }
 
-    fun clearFrame(): ByteArray = bytes(OP_CLEAR)
+    override fun equals(other: Any?) = other is AvatarArt && bytes.contentEquals(other.bytes)
+    override fun hashCode() = bytes.contentHashCode()
+
+    companion object {
+        const val LARGE = 16
+        const val SMALL = 8
+        const val BYTES = (LARGE * LARGE + SMALL * SMALL) / 4
+
+        fun fromBytes(buf: ByteArray): AvatarArt? = if (buf.size == BYTES) AvatarArt(buf.copyOf()) else null
+
+        /** [large] is 16x16 and [small] 8x8 levels, row-major, each 0..3. */
+        fun fromLevels(large: IntArray, small: IntArray): AvatarArt {
+            require(large.size == LARGE * LARGE && small.size == SMALL * SMALL) { "need 16x16 and 8x8" }
+            require((large + small).all { it in 0..3 }) { "levels are 0..3" }
+            val all = large + small
+            return AvatarArt(ByteArray(BYTES) { b ->
+                ((all[4 * b] shl 6) or (all[4 * b + 1] shl 4) or (all[4 * b + 2] shl 2) or all[4 * b + 3]).toByte()
+            })
+        }
+    }
 }
 
 private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
