@@ -1,5 +1,6 @@
 package org.openapex.mesh
 
+import org.openapex.ble.TerminalCharacteristic
 import org.openapex.protocol.Friend
 import org.openapex.protocol.RiderMesh
 import org.openapex.store.RiderMeshStore
@@ -21,16 +22,16 @@ class RiderMeshSync(
 ) {
     /** Call once the terminal's services are discovered. */
     fun onConnected() {
-        link.writeAll(MeshCharacteristic.IDENTITY, listOf(store.identity().encode())) { ok ->
+        link.writeAll(TerminalCharacteristic.IDENTITY, listOf(store.identity().encode())) { ok ->
             link.log("identity push ok=$ok")
         }
         readTerminalFriends(0, mutableListOf())
     }
 
     private fun readTerminalFriends(index: Int, acc: MutableList<Friend>) {
-        link.writeAll(MeshCharacteristic.FRIENDS, listOf(RiderMesh.cursor(index))) { ok ->
+        link.writeAll(TerminalCharacteristic.FRIENDS, listOf(RiderMesh.cursor(index))) { ok ->
             if (!ok) return@writeAll // old firmware or link gone; next connect retries
-            link.read(MeshCharacteristic.FRIENDS) { rec ->
+            link.read(TerminalCharacteristic.FRIENDS) { rec ->
                 val f = rec?.takeIf { it.isNotEmpty() }?.let(Friend::decode)
                 if (f != null && index < RiderMesh.FRIEND_CAP) {
                     acc += f
@@ -48,12 +49,12 @@ class RiderMeshSync(
         store.setFriends(merged)
         link.log("friends sync: terminal=${terminal.size} merged=${merged.size}")
         pushFriends(merged)
-        link.subscribe(MeshCharacteristic.FRIENDS)
+        link.subscribe(TerminalCharacteristic.FRIENDS)
     }
 
     /** Pushes the phone's friend list again, e.g. after the rider removes one in the app. */
     fun pushFriends(list: List<Friend> = store.friends()) = link.writeAll(
-        MeshCharacteristic.FRIENDS, listOf(RiderMesh.clear()) + list.map(RiderMesh::upsert),
+        TerminalCharacteristic.FRIENDS, listOf(RiderMesh.clear()) + list.map(RiderMesh::upsert),
     ) { ok -> link.log("friends push ok=$ok") }
 
     /** A friendship completed on the terminal: `[op=UPSERT][record]`. */

@@ -1,5 +1,6 @@
 package org.openapex.mesh
 
+import org.openapex.ble.TerminalCharacteristic
 import org.openapex.protocol.Friend
 import org.openapex.protocol.RiderIdentity
 import org.openapex.protocol.RiderMesh
@@ -28,31 +29,31 @@ private class FakeStore(var list: List<Friend> = emptyList()) : RiderMeshStore {
  * and records every write so the test can assert what was pushed back.
  */
 private class FakeLink(private val held: List<Friend>) : MeshTransport {
-    val writes = mutableListOf<Pair<MeshCharacteristic, ByteArray>>()
-    val subscribed = mutableListOf<MeshCharacteristic>()
+    val writes = mutableListOf<Pair<TerminalCharacteristic, ByteArray>>()
+    val subscribed = mutableListOf<TerminalCharacteristic>()
     val logs = mutableListOf<String>()
     var writeFails = false
     private var cursor = -1
 
-    override fun writeAll(char: MeshCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit) {
+    override fun writeAll(char: TerminalCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit) {
         if (writeFails) { done(false); return }
         frames.forEach { f ->
             writes += char to f
-            if (char == MeshCharacteristic.FRIENDS && f.size == 2 && f[0].toInt() == RiderMesh.OP_CURSOR) {
+            if (char == TerminalCharacteristic.FRIENDS && f.size == 2 && f[0].toInt() == RiderMesh.OP_CURSOR) {
                 cursor = f[1].toInt()
             }
         }
         done(true)
     }
 
-    override fun read(char: MeshCharacteristic, done: (ByteArray?) -> Unit) =
+    override fun read(char: TerminalCharacteristic, done: (ByteArray?) -> Unit) =
         done(held.getOrNull(cursor)?.encode() ?: ByteArray(0))
 
-    override fun subscribe(char: MeshCharacteristic) { subscribed += char }
+    override fun subscribe(char: TerminalCharacteristic) { subscribed += char }
     override fun log(message: String) { logs += message }
 
     fun pushedFriends(): List<String> = writes
-        .filter { it.first == MeshCharacteristic.FRIENDS && it.second[0].toInt() == RiderMesh.OP_UPSERT }
+        .filter { it.first == TerminalCharacteristic.FRIENDS && it.second[0].toInt() == RiderMesh.OP_UPSERT }
         .mapNotNull { Friend.decode(it.second.copyOfRange(1, it.second.size))?.name }
 }
 
@@ -64,19 +65,19 @@ class RiderMeshSyncTest {
         val link = FakeLink(listOf(friend(2, "Terminal")))
         RiderMeshSync(store, link).onConnected()
 
-        assertEquals(1, link.writes.count { it.first == MeshCharacteristic.IDENTITY })
+        assertEquals(1, link.writes.count { it.first == TerminalCharacteristic.IDENTITY })
         // Cursor 0 and 1: the second read returns empty, which is the terminal saying that is all.
         assertEquals(listOf(0, 1), link.writes.filter {
-            it.first == MeshCharacteristic.FRIENDS && it.second[0].toInt() == RiderMesh.OP_CURSOR
+            it.first == TerminalCharacteristic.FRIENDS && it.second[0].toInt() == RiderMesh.OP_CURSOR
         }.map { it.second[1].toInt() })
 
         assertEquals(listOf("Phone", "Terminal"), store.list.map { it.name })
         assertEquals(store.list.map { it.name }, link.pushedFriends())
         // The push must clear first, or the terminal keeps friends the phone has since removed.
         // Scoped to FRIENDS: an identity record also starts with a 1, which is OP_UPSERT's value.
-        val friendOps = link.writes.filter { it.first == MeshCharacteristic.FRIENDS }.map { it.second[0].toInt() }
+        val friendOps = link.writes.filter { it.first == TerminalCharacteristic.FRIENDS }.map { it.second[0].toInt() }
         assertTrue(friendOps.indexOf(RiderMesh.OP_CLEAR) in 0 until friendOps.indexOf(RiderMesh.OP_UPSERT))
-        assertEquals(listOf(MeshCharacteristic.FRIENDS), link.subscribed)
+        assertEquals(listOf(TerminalCharacteristic.FRIENDS), link.subscribed)
     }
 
     @Test

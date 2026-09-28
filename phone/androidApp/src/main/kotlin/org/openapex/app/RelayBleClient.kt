@@ -1,6 +1,8 @@
 package org.openapex.app
 
-import org.openapex.mesh.MeshCharacteristic
+import org.openapex.ble.ControlOp
+import org.openapex.ble.ControlQueue
+import org.openapex.ble.TerminalCharacteristic
 import org.openapex.mesh.MeshTransport
 import org.openapex.mesh.RiderMeshSync
 import org.openapex.protocol.*
@@ -53,10 +55,15 @@ class RelayBleClient(private val context: Context) {
     // why every access below is inside queueLock.
     private val frames = FragmentQueue()
 
-    // Guards frames, controlOps and writeInFlight together: they are one queue with one
-    // in-flight slot and are never consistent apart. An explicit object rather than the
-    // FragmentQueue itself, because a local named frames -- writeAll() has a parameter by that
-    // name -- silently shadowed it and locked the wrong thing.
+    // Guards frames, controlOps and writeInFlight together: they are one queue with one in-flight
+    // slot and are never consistent apart. An explicit object rather than the FragmentQueue
+    // itself, because a local named frames -- writeAll() had a parameter by that name -- silently
+    // shadowed it and locked the wrong thing.
+    //
+    // Held across the control completions as well, not just the queue mutation. Neither queue is
+    // thread-safe and GATT callbacks arrive on a binder thread while the pump runs on the main
+    // looper. A completion callback that queues more work re-enters this lock on its own thread,
+    // which synchronized allows.
     private val queueLock = Any()
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -64,13 +71,7 @@ class RelayBleClient(private val context: Context) {
     // Settings / device-info / avatar operations (spec §5.6). Android allows one GATT operation in
     // flight, so these share writeInFlight with the nav fragments and go ahead of them in
     // pumpQueue(): they are rare and user-driven, while a delayed nav packet is superseded anyway.
-    private sealed class ControlOp {
-        class Write(val uuid: UUID, val value: ByteArray, val done: (Boolean) -> Unit) : ControlOp()
-        class Read(val uuid: UUID, val done: (ByteArray?) -> Unit) : ControlOp()
-        class Subscribe(val uuid: UUID) : ControlOp()
-    }
-    private val controlOps = ArrayDeque<ControlOp>()
-    private var controlInFlight: ControlOp? = null
+    private val controlOps = ControlQueue()
 
     // True while a background (autoConnect=true) request is parked in the controller waiting for
     // the terminal to come back. A direct connect() for the same device may replace it.
@@ -190,15 +191,15 @@ class RelayBleClient(private val context: Context) {
 
     /** Reads the terminal's settings; [done] gets null if not connected or unreadable. */
     fun readSettings(done: (TerminalSettings?) -> Unit) =
-        enqueue(ControlOp.Read(SETTINGS_UUID) { done(it?.let { b -> SettingsTlv.decode(b) }) })
+        read(TerminalCharacteristic.SETTINGS) { done(it?.let { b -> SettingsTlv.decode(b) }) }
 
     /** Reads the device-info characteristic, which says the board and avatar size. */
     fun readDeviceInfo(done: (DeviceInfo?) -> Unit) =
-        enqueue(ControlOp.Read(DEVICE_INFO_UUID) { done(it?.let(DeviceInfo::parse)) })
+        read(TerminalCharacteristic.DEVICE_INFO) { done(it?.let(DeviceInfo::parse)) }
 
     /** Writes every setting, split into MTU-sized partial writes. [done] is false if any failed. */
     fun writeSettings(settings: TerminalSettings, done: (Boolean) -> Unit = {}) =
-        writeAll(SETTINGS_UUID, SettingsTlv.encodeWrites(settings), done)
+        writeAll(TerminalCharacteristic.SETTINGS, SettingsTlv.encodeWrites(settings), done)
 
     /**
      * Stores custom avatar art ([AvatarArt]) on the terminal. Show it by writing settings with
@@ -206,46 +207,39 @@ class RelayBleClient(private val context: Context) {
      * long write, so the terminal gets all of it or none.
      */
     fun uploadAvatar(art: AvatarArt, done: (Boolean) -> Unit = {}) =
-        writeAll(AVATAR_UUID, listOf(art.bytes), done)
+        writeAll(TerminalCharacteristic.AVATAR, listOf(art.bytes), done)
 
     /** Reads the stored custom avatar; [done] gets null if none is stored or the read failed. */
     fun readAvatar(done: (AvatarArt?) -> Unit) =
-        enqueue(ControlOp.Read(AVATAR_UUID) { done(it?.let(AvatarArt::fromBytes)) })
+        read(TerminalCharacteristic.AVATAR) { done(it?.let(AvatarArt::fromBytes)) }
 
     fun clearAvatar(done: (Boolean) -> Unit = {}) =
-        writeAll(AVATAR_UUID, listOf(ByteArray(0)), done)
+        writeAll(TerminalCharacteristic.AVATAR, listOf(ByteArray(0)), done)
 
-    // With-response writes in order; the first failure drops the rest of this batch.
-    private fun writeAll(uuid: UUID, frames: List<ByteArray>, done: (Boolean) -> Unit) {
+    // Ordering, batch-failure collapsing and completion live in ControlQueue (commonMain). What
+    // is left here is the not-connected short circuit, which is the one thing the queue cannot
+    // know: it has no link to ask.
+    private fun writeAll(char: TerminalCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit) {
         if (characteristic == null) {
             done(false)
             return
         }
-        var failed = false
-        val batch = frames.mapIndexed { i, frame ->
-            ControlOp.Write(uuid, frame) { ok ->
-                if (failed) return@Write
-                if (!ok) failed = true
-                if (!ok || i == frames.lastIndex) done(ok)
-            }
-        }
-        synchronized(queueLock) { controlOps.addAll(batch) }
+        synchronized(queueLock) { controlOps.writeAll(char, frames, done) }
         pumpQueue()
     }
 
-    private fun enqueue(op: ControlOp.Read) {
+    private fun read(char: TerminalCharacteristic, done: (ByteArray?) -> Unit) {
         if (characteristic == null) {
-            op.done(null)
+            done(null)
             return
         }
-        synchronized(queueLock) { controlOps.addLast(op) }
+        synchronized(queueLock) { controlOps.read(char, done) }
         pumpQueue()
     }
 
-    private fun failOp(op: ControlOp) = when (op) {
-        is ControlOp.Write -> op.done(false)
-        is ControlOp.Read -> op.done(null)
-        is ControlOp.Subscribe -> Unit
+    private fun subscribe(char: TerminalCharacteristic) {
+        synchronized(queueLock) { controlOps.subscribe(char) }
+        pumpQueue()
     }
 
     // Rider mesh sync (spec 5.7) lives in commonMain: the cursor walk over the terminal's friend
@@ -260,24 +254,27 @@ class RelayBleClient(private val context: Context) {
             override fun setFriends(list: List<Friend>) = RiderStore.setFriends(context, list)
         },
         link = object : MeshTransport {
-            override fun writeAll(char: MeshCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit) =
-                this@RelayBleClient.writeAll(uuidOf(char), frames, done)
+            override fun writeAll(char: TerminalCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit) =
+                this@RelayBleClient.writeAll(char, frames, done)
 
-            override fun read(char: MeshCharacteristic, done: (ByteArray?) -> Unit) =
-                enqueue(ControlOp.Read(uuidOf(char), done))
+            override fun read(char: TerminalCharacteristic, done: (ByteArray?) -> Unit) =
+                this@RelayBleClient.read(char, done)
 
-            override fun subscribe(char: MeshCharacteristic) {
-                synchronized(queueLock) { controlOps.addLast(ControlOp.Subscribe(uuidOf(char))) }
-                pumpQueue()
-            }
+            override fun subscribe(char: TerminalCharacteristic) = this@RelayBleClient.subscribe(char)
 
             override fun log(message: String) { Log.i(TAG, message) }
         },
     )
 
-    private fun uuidOf(char: MeshCharacteristic): UUID = when (char) {
-        MeshCharacteristic.IDENTITY -> IDENTITY_UUID
-        MeshCharacteristic.FRIENDS -> FRIENDS_UUID
+    private fun uuidOf(char: TerminalCharacteristic): UUID = when (char) {
+        TerminalCharacteristic.NAV -> CHAR_UUID
+        TerminalCharacteristic.CALL_EVENT -> CALL_EVENT_UUID
+        TerminalCharacteristic.CALL_ACTION -> CALL_ACTION_UUID
+        TerminalCharacteristic.SETTINGS -> SETTINGS_UUID
+        TerminalCharacteristic.DEVICE_INFO -> DEVICE_INFO_UUID
+        TerminalCharacteristic.AVATAR -> AVATAR_UUID
+        TerminalCharacteristic.IDENTITY -> IDENTITY_UUID
+        TerminalCharacteristic.FRIENDS -> FRIENDS_UUID
     }
 
     /** Pushes the phone's friend list again, e.g. after the rider removes one in the app. */
@@ -291,17 +288,12 @@ class RelayBleClient(private val context: Context) {
     @SuppressLint("MissingPermission")
     @Suppress("DEPRECATION") // read/writeCharacteristic(char, ...) overloads need API 33; minSdk is 26
     private fun pumpControl(g: BluetoothGatt): Boolean {
-        val op = controlOps.firstOrNull() ?: return false
-        val uuid = when (op) {
-            is ControlOp.Write -> op.uuid
-            is ControlOp.Read -> op.uuid
-            is ControlOp.Subscribe -> op.uuid
-        }
-        val char = g.getService(SERVICE_UUID)?.getCharacteristic(uuid)
+        val op = controlOps.peek() ?: return false
+        val char = g.getService(SERVICE_UUID)?.getCharacteristic(uuidOf(op.char))
         if (char == null) {
-            // Firmware older than spec §5.6.
-            controlOps.removeFirst()
-            mainHandler.post { failOp(op) }
+            // Firmware older than spec §5.6. Posted rather than called here: failHead() runs the
+            // caller's callback, and that must not happen while holding queueLock.
+            mainHandler.post { synchronized(queueLock) { controlOps.failHead() } }
             mainHandler.post { pumpQueue() }
             return true
         }
@@ -316,8 +308,7 @@ class RelayBleClient(private val context: Context) {
         }
         if (started) {
             writeInFlight = true
-            controlInFlight = op
-            controlOps.removeFirst()
+            controlOps.markStarted()
         } else {
             mainHandler.postDelayed({ pumpQueue() }, FRAG_RETRY_DELAY_MS)
         }
@@ -416,14 +407,10 @@ class RelayBleClient(private val context: Context) {
                 backgroundPending = false
                 // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
                 // set would stall pumpQueue() on every later connection: packets queue, none send.
-                val dropped = synchronized(queueLock) {
+                synchronized(queueLock) {
                     writeInFlight = false
-                    val ops = listOfNotNull(controlInFlight) + controlOps
-                    controlInFlight = null
-                    controlOps.clear()
-                    ops
+                    controlOps.failAll()
                 }
-                dropped.forEach { failOp(it) }
                 RelayStateHolder.noteBleDisconnected(status)
             }
         }
@@ -460,7 +447,9 @@ class RelayBleClient(private val context: Context) {
             Log.i(TAG, "descriptor write ${descriptor.characteristic.uuid} status=$status")
             synchronized(queueLock) {
                 writeInFlight = false
-                controlInFlight = null
+                // A CCCD write the queue did not issue (the call-action subscribe on connect)
+                // lands here too; complete() ignores it when nothing is in flight.
+                controlOps.complete(status == BluetoothGatt.GATT_SUCCESS)
             }
             pumpQueue()
         }
@@ -483,11 +472,10 @@ class RelayBleClient(private val context: Context) {
             char: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            val op = synchronized(queueLock) {
+            synchronized(queueLock) {
                 writeInFlight = false
-                controlInFlight.also { controlInFlight = null }
+                controlOps.complete(status == BluetoothGatt.GATT_SUCCESS)
             }
-            (op as? ControlOp.Write)?.done?.invoke(status == BluetoothGatt.GATT_SUCCESS)
             pumpQueue()
         }
 
@@ -499,11 +487,10 @@ class RelayBleClient(private val context: Context) {
             status: Int,
         ) {
             val value = char.value
-            val op = synchronized(queueLock) {
+            synchronized(queueLock) {
                 writeInFlight = false
-                controlInFlight.also { controlInFlight = null }
+                controlOps.complete(status == BluetoothGatt.GATT_SUCCESS, value)
             }
-            (op as? ControlOp.Read)?.done?.invoke(if (status == BluetoothGatt.GATT_SUCCESS) value else null)
             pumpQueue()
         }
     }
