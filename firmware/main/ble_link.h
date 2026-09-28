@@ -34,3 +34,7 @@ uint16_t ble_link_negotiated_mtu(void);
 // Tells the phone to answer call_id (CALL_ACTION notify, call_packet.h). False when the link is
 // down or the phone has not subscribed; the ring then simply plays out on the phone.
 bool ble_link_send_call_accept(uint16_t call_id);
+
+// Friends-characteristic notify ([op][record], §5.7), sent when a friendship completes or a friend's
+// look changes. False when the link is down or the phone has not subscribed.
+bool ble_link_send_friend(const uint8_t *buf, uint16_t len);

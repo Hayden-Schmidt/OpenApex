@@ -1,19 +1,19 @@
 #include "gui_app.hpp"
 
 #include "arrived_screen.hpp"
+#include "avatar_art.hpp"
 #include "avatars_data.h"
 #include "basic_theme.hpp"
 #include "board_profile.h"
 #include "call_screen.hpp"
+#include "friend_markers.hpp"
+#include "friend_screen.hpp"
 #include "dial_screen.hpp"
 #include "icons.hpp"
 #include "idle_screen.hpp"
 #include "odometer_screen.hpp"
 #include "rich_theme.hpp"
 #include "settings.h"
-
-// lv_image_cache_drop: not re-exported by lvgl.h in v9.
-#include "src/misc/cache/lv_cache.h"
 
 #include <cstring>
 
@@ -70,8 +70,6 @@ uint8_t s_applied_dial_outer = GUI_DIAL_OUTER_COMPASS;
 // 2-bit art in the accent alone. Both land in one RGB565A8 buffer: colour plane, then alpha plane.
 constexpr int kAvatarScale = BOARD_AVATAR_PX / AVATAR_ART_PX;
 static_assert(kAvatarScale * AVATAR_ART_PX == BOARD_AVATAR_PX, "avatar must be a whole multiple");
-constexpr int kCustomArtPx = 16;
-constexpr int kCustomScale = BOARD_AVATAR_PX / kCustomArtPx;
 constexpr int kAvatarPixels = BOARD_AVATAR_PX * BOARD_AVATAR_PX;
 uint8_t s_avatar_buf[kAvatarPixels * 3];
 lv_image_dsc_t s_avatar;
@@ -79,60 +77,6 @@ const void *s_avatar_shown = nullptr; // art currently drawn into s_avatar_buf
 lv_color_t s_avatar_accent;           // and the accent it was drawn with
 uint8_t s_custom[GUI_AVATAR_BYTES];
 bool s_have_custom = false;
-
-void put_avatar_px(int x, int y, lv_color_t c, uint8_t alpha) {
-    const int i = y * BOARD_AVATAR_PX + x;
-    const uint16_t c16 = lv_color_to_u16(c);
-    s_avatar_buf[i * 2] = c16 & 0xFF;
-    s_avatar_buf[i * 2 + 1] = c16 >> 8;
-    s_avatar_buf[kAvatarPixels * 2 + i] = alpha;
-}
-
-// Main colour: the accent's hue at the preset's saturation and brightness (scaled by the accent's
-// own). Other themed colours: the main colour turned by dh, saturation and brightness scaled by x/64.
-lv_color_t resolve_palette(const avatar_preset_t &p, const avatar_pal_t &e, lv_color_hsv_t accent) {
-    if (!e.themed) return lv_color_make(e.a, e.b, e.c);
-    const int s = accent.s * p.main_s / 255 * e.b / 64;
-    const int v = accent.v * p.main_v / 255 * e.c / 64;
-    const int h = (accent.h + static_cast<int8_t>(e.a) + 360) % 360;
-    return lv_color_hsv_to_rgb(h, s > 100 ? 100 : s, v > 100 ? 100 : v);
-}
-
-void draw_preset(const avatar_preset_t &p, lv_color_t accent) {
-    const lv_color_hsv_t hsv = lv_color_to_hsv(accent);
-    lv_color_t pal[AVATAR_PALETTE_MAX];
-    for (int i = 0; i < p.palette_len; ++i) pal[i] = resolve_palette(p, p.palette[i], hsv);
-    for (int y = 0; y < BOARD_AVATAR_PX; ++y) {
-        for (int x = 0; x < BOARD_AVATAR_PX; ++x) {
-            const int i = y / kAvatarScale * AVATAR_ART_PX + x / kAvatarScale;
-            const int n = (p.art[i / 2] >> (i % 2 ? 0 : 4)) & 0xF;
-            put_avatar_px(x, y, n ? pal[n - 1] : lv_color_black(), n ? 255 : 0);
-        }
-    }
-}
-
-void draw_custom(const uint8_t *a2, lv_color_t accent) {
-    static const uint8_t kAlpha[4] = {0, 85, 170, 255};
-    for (int y = 0; y < BOARD_AVATAR_PX; ++y) {
-        for (int x = 0; x < BOARD_AVATAR_PX; ++x) {
-            const int i = y / kCustomScale * kCustomArtPx + x / kCustomScale;
-            put_avatar_px(x, y, accent, kAlpha[(a2[i / 4] >> (6 - 2 * (i % 4))) & 3]);
-        }
-    }
-}
-
-void describe_avatar(void) {
-    // The descriptor is reused, so drop LVGL's cached decode of the old pixels.
-    if (s_avatar_shown != nullptr) lv_image_cache_drop(&s_avatar);
-    s_avatar = {};
-    s_avatar.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s_avatar.header.cf = LV_COLOR_FORMAT_RGB565A8;
-    s_avatar.header.w = BOARD_AVATAR_PX;
-    s_avatar.header.h = BOARD_AVATAR_PX;
-    s_avatar.header.stride = BOARD_AVATAR_PX * 2;
-    s_avatar.data_size = sizeof(s_avatar_buf);
-    s_avatar.data = s_avatar_buf;
-}
 
 // The selected art: an avatar_preset_t or the 80-byte upload. The default character stands in for
 // anything else, including "custom" with nothing uploaded.
@@ -149,6 +93,11 @@ gui_nav_entry_t s_nav_entry = GUI_NAV_ENTRY_ELEMENTS;
 IdleScreen &idle_screen(void) {
     static IdleScreen idle;
     return idle;
+}
+
+FriendScreen &friend_screen(void) {
+    static FriendScreen friends;
+    return friends;
 }
 
 CallScreen &call_screen(void) {
@@ -186,7 +135,7 @@ void on_leave_done(void *ctx) {
 // moment routing asks, because a late turn instruction is worse than a clipped animation. A ringing
 // phone skips the hold too -- it only rings for so long.
 bool may_leave(const Screen *next) {
-    if (s_active != &idle_screen() || next == &call_screen()) return true;
+    if (s_active != &idle_screen() || next == &call_screen() || next == &friend_screen()) return true;
     if (!s_active->entered()) return false;
     if (!s_entered_seen) {
         s_entered_seen = true;
@@ -239,9 +188,9 @@ const void *gui_logo_src(void) {
     const void *art = selected_avatar();
     const lv_color_t accent = s_theme.palette();
     if (art != s_avatar_shown || !lv_color_eq(accent, s_avatar_accent)) {
-        if (art == s_custom) draw_custom(s_custom, accent);
-        else draw_preset(*static_cast<const avatar_preset_t *>(art), accent);
-        describe_avatar();
+        avatar_art_draw(s_avatar_buf, BOARD_AVATAR_PX, settings_get()->avatar,
+                        s_have_custom ? s_custom : nullptr, accent);
+        avatar_art_describe(&s_avatar, s_avatar_buf, BOARD_AVATAR_PX, BOARD_AVATAR_PX);
         s_avatar_shown = art;
         s_avatar_accent = accent;
     }
@@ -266,6 +215,8 @@ void gui_app_set_dial_outer(gui_dial_outer_t outer) {
 void gui_app_set_nav_entry(gui_nav_entry_t entry) { s_nav_entry = entry; }
 
 void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb) { call_screen().set_accept_handler(cb); }
+
+void gui_app_set_friend_accept_handler(gui_friend_accept_cb_t cb) { friend_screen().set_accept_handler(cb); }
 
 gui_nav_entry_t gui_app_nav_entry(void) { return s_nav_entry; }
 
@@ -299,9 +250,11 @@ void gui_app_update(const terminal_view_state_t *state) {
     // runs every frame, leaving or not, so nothing is ever frozen behind a tween.
     // A call, ringing or answered, outranks every page, including a live maneuver: the rider
     // chose to take calls on the terminal, and the nav page is back the moment it clears.
+    // A friend prompt comes next: mesh_core only raises one while the gate says the rider can look.
     Screen *next = (state->call_ringing || state->call_active)
                        ? static_cast<Screen *>(&call_screen())
-                       : screen_for_state(state->state);
+                   : state->friend_prompt != MESH_PROMPT_NONE ? static_cast<Screen *>(&friend_screen())
+                                                               : screen_for_state(state->state);
 #if BOARD_HAS_SPLASH
     // Boot always passes through idle, even when navigation is already running on the phone: the
     // phone-connect entry plays out and idle's hold floor applies before the nav page takes over.
@@ -320,5 +273,6 @@ void gui_app_update(const terminal_view_state_t *state) {
         }
         s_active->leave(on_leave_done, nullptr);
     }
+    if (friend_markers_update(*state)) lv_obj_invalidate(s_active->root());
     s_active->update(*state);
 }

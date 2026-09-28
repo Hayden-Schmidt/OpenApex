@@ -77,7 +77,7 @@ fixture if you know which code produced it.
 adb pull /sdcard/Android/data/org.openapex.androidauto/files/drivelogs/
 
 # Terminal side (ESP32-C3 native USB port, VID 303A)
-python -m esptool --port COM30 --baud 921600 read-flash 0x190000 0x100000 esp_log.bin
+python -m esptool --port COM30 --baud 921600 read-flash 0x210000 0x100000 esp_log.bin
 
 # Did the link actually work? Check this FIRST — a truncating link means no usable capture.
 python tools/decode_drive.py esp_log.bin --link

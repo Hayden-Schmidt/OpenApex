@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "call_packet.h"
+#include "mesh.h"
 #include "nav_model.h"
 
 // Render state the GUI consumes. The GUI reads this and only this â€” it never touches BLE, UART,
@@ -14,6 +15,9 @@ typedef enum {
     VIEW_STALE,      // last-known maneuver, de-emphasized (link/GNSS fresh-less)
     VIEW_ARRIVED,    // completion glyph
 } view_state_t;
+
+// Friends drawn on the compass at most; more in range than this is not a real ride.
+#define VIEW_FRIENDS_MAX 8
 
 typedef struct {
     view_state_t state;
@@ -50,4 +54,13 @@ typedef struct {
     uint16_t call_id;              // echo back in the accept (gui_app_set_call_accept_handler)
     char caller[CALL_CALLER_LEN];  // contact name, folded to ASCII; empty for an unknown caller
     char call_number[CALL_NUMBER_LEN];  // may be empty (withheld)
+
+    // --- Rider mesh (mesh.h, docs/OpenApex_SPEC.md §5.7). The prompt ranks below a call and above
+    // navigation; mesh_core already holds it back while the prompt gate is closed.
+    mesh_prompt_state_t friend_prompt;             // MESH_PROMPT_NONE = no page
+    uint8_t friend_prompt_id[MESH_RIDER_ID_LEN];  // echo back in the accept
+    mesh_look_t friend_peer;                       // the other rider
+    mesh_look_t friend_self;                       // us, as they see us
+    mesh_friend_marker_t friends[VIEW_FRIENDS_MAX];  // in range with a fresh fix, true bearings
+    uint8_t friend_count;
 } terminal_view_state_t;

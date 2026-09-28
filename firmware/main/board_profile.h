@@ -55,6 +55,10 @@
 // Drawn avatar edge: 32px preset art at 3x (16px upload at 6x), 1.5x the 70px boot logo box.
 #define BOARD_AVATAR_PX 96
 
+// Rider mesh radios (mesh_transport.h): BLE only. Wi-Fi for ESP-NOW needs ~35 KB of heap the
+// display and NimBLE already use.
+#define BOARD_MESH_ESPNOW 0
+
 // Touch: CST816/CST816D over I2C (touch variant only). Compiles out when BOARD_HAS_TOUCH == 0.
 #define BOARD_TOUCH_PIN_SDA 4
 #define BOARD_TOUCH_PIN_SCL 5
@@ -89,6 +93,9 @@
 
 // Drawn avatar edge: 32px preset art at 6x (16px upload at 12x), 1.5x the 136px boot logo box.
 #define BOARD_AVATAR_PX 192
+
+// Rider mesh radios: BLE (the baseline every terminal speaks) plus ESP-NOW for S3-to-S3 range.
+#define BOARD_MESH_ESPNOW 1
 
 #else
 #error "No board profile selected. Define BOARD_PROFILE_PROTOTYPE_C3_GC9A01 or BOARD_PROFILE_S3_AMOLED_175 (or add a new profile)."

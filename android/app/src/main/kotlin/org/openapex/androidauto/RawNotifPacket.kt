@@ -36,8 +36,11 @@ import java.nio.charset.StandardCharsets
  * | 158    | 1    | segment_count    | uint8, 0..8 progress-bar segments below |
  * | 159    | 40   | segments         | 8x {uint16 LE end_permille, uint8 r, g, b} |
  * | 199    | 1    | reserved         | 0                                      |
+ * | 200    | 4    | lat_e7           | int32 LE, degrees x 1e7, 0x7FFFFFFF = unknown |
+ * | 204    | 4    | lon_e7           | int32 LE, degrees x 1e7, 0x7FFFFFFF = unknown |
+ * | 208    | 2    | h_accuracy_m     | uint16 LE, 0xFFFF = unknown            |
  * --------------------------------------------------------------------------------------------
- * Total: 200 bytes. One BLE notification, fixed-size fragmented/reassembled regardless of the
+ * Total: 210 bytes. One BLE notification, fixed-size fragmented/reassembled regardless of the
  * negotiated MTU (see BleLink's fragmentation, ESP32 side ble_link.c).
  *
  * accel_mg/gyro_mdps are raw phone motion samples for terminal-side diagnostics/future use only —
@@ -66,9 +69,12 @@ import java.nio.charset.StandardCharsets
  * plus the segment's raw RGB. Turning a colour into a traffic level is the terminal's job, like
  * every other classification. Segments past the 8th are dropped; the terminal treats the rest of
  * the route as "no data".
+ *
+ * lat_e7/lon_e7/h_accuracy_m (v5) are the phone's fix, which the terminal shares with friends'
+ * terminals over the rider mesh (spec §5.7). Never used for navigation on the terminal.
  */
-const val RAW_NOTIF_PACKET_SIZE = 200
-const val RAW_NOTIF_VERSION = 4
+const val RAW_NOTIF_PACKET_SIZE = 210
+const val RAW_NOTIF_VERSION = 5
 const val MAX_PROGRESS_SEGMENTS = 8
 
 private const val DIST_STR_BYTES = 16
@@ -79,6 +85,7 @@ private const val U16_UNKNOWN = 0xFFFF
 private const val U8_UNKNOWN = 0xFF
 private const val U32_UNKNOWN = -1 // encodes as 0xFFFFFFFF
 private const val I16_UNKNOWN = 0x7FFF
+private const val I32_UNKNOWN = 0x7FFFFFFF
 
 /** Raw Maps notification extras, verbatim. Null = field absent from the notification. */
 data class RawNavNotification(
@@ -107,6 +114,10 @@ data class GnssTelemetry(
     val bearingAccuracyDeg: Float? = null,
     val yawDeg: Float? = null,
     val yawRateDps: Float? = null,
+    // v5: the fix itself, for the rider mesh. Null = no fix.
+    val latitudeDeg: Double? = null,
+    val longitudeDeg: Double? = null,
+    val accuracyM: Float? = null,
 )
 
 /**
@@ -153,6 +164,11 @@ fun packRawNotifPacket(
     putU32(p, 152, nowEpochMs?.takeIf { it >= 0 }?.let { (it / 1000L).toInt() } ?: U32_UNKNOWN)
     putI16(p, 156, tzOffsetMin?.coerceIn(-0x7FFE, 0x7FFE) ?: I16_UNKNOWN)
     putSegments(p, 158, nav.segments)
+
+    val hasFix = gnss.latitudeDeg != null && gnss.longitudeDeg != null
+    putU32(p, 200, if (hasFix) Math.round(gnss.latitudeDeg!! * 1e7).toInt() else I32_UNKNOWN)
+    putU32(p, 204, if (hasFix) Math.round(gnss.longitudeDeg!! * 1e7).toInt() else I32_UNKNOWN)
+    putU16(p, 208, gnss.accuracyM?.let { Math.round(it).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
     return p
 }
 

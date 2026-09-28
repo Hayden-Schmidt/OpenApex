@@ -4,6 +4,7 @@
 #include "avatar_store.h"
 #include "board_profile.h"
 #include "drive_log.h"
+#include "mesh.h"
 #include "packet.h"
 #include "settings.h"
 
@@ -42,6 +43,11 @@ static const ble_uuid128_t s_info_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x06, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 static const ble_uuid128_t s_avatar_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x07, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+// Rider mesh (§5.7): the phone's rider identity, and the friend list with its completion notify.
+static const ble_uuid128_t s_identity_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x08, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
+static const ble_uuid128_t s_friends_uuid =
+    BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x09, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 
 #define DEVICE_INFO_VERSION 1u
 #define DEVICE_INFO_CAP_AVATAR 0x01u
@@ -61,8 +67,11 @@ static uint16_t s_call_action_val_handle;
 // task, read by ble_link_send_call_accept() from countdown_task; aligned single-word stores.
 static volatile uint16_t s_conn_handle;
 static volatile bool s_call_action_subscribed;
+static uint16_t s_friends_val_handle;
+static volatile bool s_friends_subscribed;
 static uint8_t s_own_addr_type;
 
+#define PHONE_ADV_INSTANCE 0
 static void start_advertising(void);
 
 // Consecutive failed decodes on the current link. Reset by any successful decode.
@@ -365,6 +374,31 @@ static int avatar_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     return avatar_store_ble_access(ctxt);
 }
 
+static int identity_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                              struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    return mesh_identity_ble_access(ctxt);
+}
+
+static int friends_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                             struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+    return mesh_friends_ble_access(ctxt);
+}
+
+bool ble_link_send_friend(const uint8_t *buf, uint16_t len) {
+    if (!s_connected || !s_friends_subscribed) return false;
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(buf, len);
+    if (om == NULL) return false;
+    const int rc = ble_gatts_notify_custom(s_conn_handle, s_friends_val_handle, om);
+    ESP_LOGI(TAG, "friend notify rc=%d", rc);
+    return rc == 0;
+}
+
 static const struct ble_gatt_svc_def s_gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -413,6 +447,20 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
                          BLE_GATT_CHR_F_WRITE_ENC,
             },
+            {
+                // Holds the rider key, so bonded-only both ways.
+                .uuid = &s_identity_uuid.u,
+                .access_cb = identity_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
+                         BLE_GATT_CHR_F_WRITE_ENC,
+            },
+            {
+                .uuid = &s_friends_uuid.u,
+                .access_cb = friends_access_cb,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
+                         BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_friends_val_handle,
+            },
             {0}, // terminator
         },
     },
@@ -433,6 +481,7 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
             reasm_reset();
             s_conn_handle = event->connect.conn_handle;
             s_call_action_subscribed = false;
+            s_friends_subscribed = false;
             s_connected = true;
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
@@ -444,12 +493,16 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         drive_log_ble(DRIVE_LOG_BLE_DISCONNECTED, (int32_t)event->disconnect.reason);
         s_connected = false;
         s_call_action_subscribed = false;
+        s_friends_subscribed = false;
         start_advertising();
         return 0;
     case BLE_GAP_EVENT_SUBSCRIBE:
         if (event->subscribe.attr_handle == s_call_action_val_handle) {
             s_call_action_subscribed = event->subscribe.cur_notify != 0;
             ESP_LOGI(TAG, "call action notifications %s", s_call_action_subscribed ? "on" : "off");
+        }
+        if (event->subscribe.attr_handle == s_friends_val_handle) {
+            s_friends_subscribed = event->subscribe.cur_notify != 0;
         }
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -498,24 +551,46 @@ static void start_advertising(void) {
     fields.name = (const uint8_t *)"OpenApex";
     fields.name_len = 8;
     fields.name_is_complete = 1;
-    int rc = ble_gap_adv_set_fields(&fields);
-    if (rc != 0) {
-        ESP_LOGW(TAG, "ble_gap_adv_set_fields failed; rc=%d", rc);
-        return;
-    }
 
-    struct ble_gap_adv_params adv_params;
+    // Extended-advertising API (the rider mesh owns instance 1, mesh_transport_ble.c), but a
+    // legacy connectable PDU on 1M, so the phone sees exactly the advert it always has.
+    struct ble_gap_ext_adv_params adv_params;
     memset(&adv_params, 0, sizeof(adv_params));
-    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
-    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    adv_params.connectable = 1;
+    adv_params.scannable = 1;
+    adv_params.legacy_pdu = 1;
+    adv_params.own_addr_type = s_own_addr_type;
+    adv_params.primary_phy = BLE_HCI_LE_PHY_1M;
+    adv_params.secondary_phy = BLE_HCI_LE_PHY_1M;
+    adv_params.sid = PHONE_ADV_INSTANCE;
     // Fast advertising interval (20-40ms) rather than the NimBLE default (~1.28s): Android's
     // low-power background scan (used by CompanionDeviceManager observer mode) samples the air
     // infrequently, so a slow advertiser can be missed for multiple scan windows in a row.
     adv_params.itvl_min = 32; // 32 * 0.625ms = 20ms
     adv_params.itvl_max = 64; // 64 * 0.625ms = 40ms
-    rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER, &adv_params, gap_event_cb, NULL);
+    int rc = ble_gap_ext_adv_configure(PHONE_ADV_INSTANCE, &adv_params, NULL, gap_event_cb, NULL);
     if (rc != 0) {
-        ESP_LOGW(TAG, "ble_gap_adv_start failed; rc=%d", rc);
+        ESP_LOGW(TAG, "ble_gap_ext_adv_configure failed; rc=%d", rc);
+        return;
+    }
+    struct os_mbuf *data = os_msys_get_pkthdr(BLE_HS_ADV_MAX_SZ, 0);
+    if (data == NULL) {
+        ESP_LOGW(TAG, "no mbuf for advertising data");
+        return;
+    }
+    rc = ble_hs_adv_set_fields_mbuf(&fields, data);
+    if (rc == 0) {
+        rc = ble_gap_ext_adv_set_data(PHONE_ADV_INSTANCE, data); // consumes data
+    } else {
+        os_mbuf_free_chain(data);
+    }
+    if (rc != 0) {
+        ESP_LOGW(TAG, "advertising data failed; rc=%d", rc);
+        return;
+    }
+    rc = ble_gap_ext_adv_start(PHONE_ADV_INSTANCE, 0, 0);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "ble_gap_ext_adv_start failed; rc=%d", rc);
     }
 }
 

@@ -17,13 +17,18 @@ static const uint8_t kDefaultsTlv[] = {
     0x04, 0x01, 0x00,             // clock: 24h
     0x05, 0x01, 0x00,             // units: metric
     0x06, 0x01, 0x00,             // dial outer: compass
+    0x07, 0x01, 0x01,             // friends on compass: shown
+    0x08, 0x01, 0x00,             // friend marker: character
+    0x09, 0x01, 0x01,             // rider mesh: on
 };
 
 // Field-wise: struct padding is not guaranteed to survive a copy, so memcmp would be flaky.
 static int settings_equal(const terminal_settings_t *a, const terminal_settings_t *b) {
     return a->accent_rgb == b->accent_rgb && a->avatar == b->avatar &&
            a->eta_format == b->eta_format && a->clock_12h == b->clock_12h &&
-           a->units == b->units && a->dial_outer == b->dial_outer;
+           a->units == b->units && a->dial_outer == b->dial_outer &&
+           a->friends_on_compass == b->friends_on_compass && a->friend_marker == b->friend_marker &&
+           a->mesh_enabled == b->mesh_enabled;
 }
 
 static void test_defaults_golden(void) {
@@ -38,7 +43,7 @@ static void test_defaults_golden(void) {
 
 static void test_round_trip(void) {
     terminal_settings_t a = {0x123456, SETTINGS_AVATAR_CUSTOM, PIPELINE_ETA_ARRIVAL, 1,
-                             SETTINGS_UNITS_IMPERIAL, 1};
+                             SETTINGS_UNITS_IMPERIAL, 1, 0, SETTINGS_FRIEND_MARKER_DOT, 0};
     uint8_t buf[SETTINGS_TLV_MAX_LEN];
     size_t n = settings_tlv_encode(&a, buf, sizeof(buf));
     terminal_settings_t b;

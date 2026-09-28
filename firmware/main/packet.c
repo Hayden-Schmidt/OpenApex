@@ -72,5 +72,8 @@ bool packet_decode(const uint8_t *data, size_t len, raw_notif_t *out) {
         out->segments[i].g = s[3];
         out->segments[i].b = s[4];
     }
+    out->lat_e7 = (int32_t)read_u32(&data[200]);
+    out->lon_e7 = (int32_t)read_u32(&data[204]);
+    out->h_accuracy_m = read_u16(&data[208]);
     return true;
 }

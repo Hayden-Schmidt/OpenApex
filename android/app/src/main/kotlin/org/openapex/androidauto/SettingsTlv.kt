@@ -12,6 +12,12 @@ data class TerminalSettings(
     val clock12h: Boolean = false,
     val imperial: Boolean = false,
     val dialOuterTrip: Boolean = false,
+    /** Rider mesh (spec §5.7): friends in range drawn on the compass. */
+    val friendsOnCompass: Boolean = true,
+    /** Friend marker: their character (false) or a dot in their colour (true). */
+    val friendMarkerDot: Boolean = false,
+    /** Rider mesh radio; off makes the terminal silent to other riders. */
+    val meshEnabled: Boolean = true,
 ) {
     companion object {
         const val AVATAR_DEFAULT = 0
@@ -29,13 +35,17 @@ object SettingsTlv {
     const val TAG_CLOCK_12H = 0x04
     const val TAG_UNITS = 0x05
     const val TAG_DIAL_OUTER = 0x06
+    const val TAG_FRIENDS_ON_COMPASS = 0x07
+    const val TAG_FRIEND_MARKER = 0x08
+    const val TAG_MESH_ENABLED = 0x09
 
     /** Largest single write: payload of the BLE-spec default 23-byte ATT MTU. */
     const val MAX_WRITE_BYTES = 20
 
     val DEFAULTS_FIXTURE: ByteArray = bytes(
-        0x01, 0x01, 0x03, 0x00, 0xC2, 0xFF, 0x02, 0x01, 0x00, 0x03, 0x01, 0x01,
-        0x04, 0x01, 0x00, 0x05, 0x01, 0x00, 0x06, 0x01, 0x00,
+        0x01, 0x01, 0x03, 0x00, 0xFF, 0xE8, 0x02, 0x01, 0x00, 0x03, 0x01, 0x01,
+        0x04, 0x01, 0x00, 0x05, 0x01, 0x00, 0x06, 0x01, 0x00, 0x07, 0x01, 0x01,
+        0x08, 0x01, 0x00, 0x09, 0x01, 0x01,
     )
 
     private fun records(s: TerminalSettings): List<ByteArray> = listOf(
@@ -45,6 +55,9 @@ object SettingsTlv {
         bytes(TAG_CLOCK_12H, 1, s.clock12h.bit()),
         bytes(TAG_UNITS, 1, s.imperial.bit()),
         bytes(TAG_DIAL_OUTER, 1, s.dialOuterTrip.bit()),
+        bytes(TAG_FRIENDS_ON_COMPASS, 1, s.friendsOnCompass.bit()),
+        bytes(TAG_FRIEND_MARKER, 1, s.friendMarkerDot.bit()),
+        bytes(TAG_MESH_ENABLED, 1, s.meshEnabled.bit()),
     )
 
     /** Full config, as the terminal returns it from a read. */
@@ -86,7 +99,7 @@ object SettingsTlv {
                 s = s.copy(accentRgb = (buf[v].u() shl 16) or (buf[v + 1].u() shl 8) or buf[v + 2].u())
                 continue
             }
-            if (tag !in TAG_AVATAR..TAG_DIAL_OUTER) continue // unknown: skip, like the terminal
+            if (tag !in TAG_AVATAR..TAG_MESH_ENABLED) continue // unknown: skip, like the terminal
             if (n != 1) return null
             val b = buf[v].u()
             if (tag == TAG_AVATAR) {
@@ -100,7 +113,10 @@ object SettingsTlv {
                 TAG_ETA_FORMAT -> s.copy(etaTimeLeft = on)
                 TAG_CLOCK_12H -> s.copy(clock12h = on)
                 TAG_UNITS -> s.copy(imperial = on)
-                else -> s.copy(dialOuterTrip = on)
+                TAG_DIAL_OUTER -> s.copy(dialOuterTrip = on)
+                TAG_FRIENDS_ON_COMPASS -> s.copy(friendsOnCompass = on)
+                TAG_FRIEND_MARKER -> s.copy(friendMarkerDot = on)
+                else -> s.copy(meshEnabled = on)
             }
         }
         return s

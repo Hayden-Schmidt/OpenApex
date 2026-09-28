@@ -146,6 +146,18 @@ static void test_decode_motion_samples(void) {
     assert(raw.gyro_mdps[0] == RAW_I16_UNKNOWN);
 }
 
+static void test_decode_fix_v5(void) {
+    uint8_t p[RAW_NOTIF_PACKET_SIZE];
+    build_packet(p, "Continue straight", NULL, NULL, -1, -1, RAW_U16_UNKNOWN, RAW_U16_UNKNOWN, RAW_U8_UNKNOWN, true);
+    // lat -33.8688 -> -338688000 = 0xEBD00800, lon 151.2093 -> 1512093000 = 0x5A20B548, acc 7 m.
+    const uint8_t fix[] = {0x00, 0x08, 0xD0, 0xEB, 0x48, 0xB5, 0x20, 0x5A, 0x07, 0x00};
+    memcpy(&p[200], fix, sizeof(fix));
+
+    raw_notif_t raw;
+    assert(packet_decode(p, sizeof(p), &raw));
+    assert(raw.lat_e7 == -338688000 && raw.lon_e7 == 1512093000 && raw.h_accuracy_m == 7);
+}
+
 static void test_normalize_roundabout_and_sharp(void) {
     uint8_t p[RAW_NOTIF_PACKET_SIZE];
     raw_notif_t raw;
@@ -569,6 +581,7 @@ int main(void) {
     test_normalize_arrived();
     test_normalize_unknown_uses_sentinels();
     test_decode_motion_samples();
+    test_decode_fix_v5();
     test_normalize_roundabout_and_sharp();
     test_normalize_roundabout_direction_from_angle();
     test_text_outranks_angle();

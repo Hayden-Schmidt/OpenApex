@@ -41,10 +41,6 @@ constexpr float kDurationFontRef = 15.0f;
 // Active Ring: r 117.5, 5px stroke, so its outer edge is the panel edge.
 constexpr float kRingW = 5.0f;
 
-// The hold to accept matches the nav page's hold-to-swap: the input device's long-press time
-// (touch_driver.c, lv_indev_set_long_press_time).
-constexpr uint32_t kHoldMs = 2000;
-
 // Idle page timings (idle_screen.cpp), so both pages move alike.
 constexpr uint32_t kTweenMs = 1000;
 constexpr uint32_t kBubbleInMs = 470;
@@ -128,20 +124,11 @@ CallScreen::CallScreen() {
     lv_obj_set_style_text_font(number_label_, montserrat_at_most(px(kNumberFontRef)), 0);
     lv_label_set_text(number_label_, "");
 
-    // An lv_arc with only its indicator styled: no background track, no knob.
-    ring_ = lv_arc_create(root_);
-    lv_obj_remove_style_all(ring_);
-    lv_obj_set_size(ring_, width_, width_);
-    lv_obj_set_pos(ring_, 0, 0);
-    lv_arc_set_rotation(ring_, 270);  // 0 deg at twelve o'clock, sweeping clockwise
-    lv_arc_set_bg_angles(ring_, 0, 360);
-    lv_obj_set_style_arc_width(ring_, px(kRingW), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(ring_, accent, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_opa(ring_, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(ring_, true, LV_PART_INDICATOR);
+    ring_.create(root_, width_, px(kRingW));
+    ring_.set_color(accent);
 
     // Presses belong to the page, as on the nav page: a clickable child would take them.
-    for (lv_obj_t *obj : {reveal_, bubble_, ring_}) {
+    for (lv_obj_t *obj : {reveal_, bubble_}) {
         lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
     }
 
@@ -175,12 +162,6 @@ void CallScreen::set_duration_in(void *var, int32_t value) {
     self->apply_layout();
 }
 
-void CallScreen::set_ring_t(void *var, int32_t value) {
-    auto *self = static_cast<CallScreen *>(var);
-    self->ring_t_ = value;
-    self->apply_layout();
-}
-
 CallScreen *CallScreen::from_anim(lv_anim_t *a) { return static_cast<CallScreen *>(a->var); }
 
 // As IdleScreen::tween: duration scales with the distance left, so a reversal from part-way takes
@@ -199,13 +180,6 @@ void CallScreen::tween(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32
     lv_anim_start(&a);
 }
 
-// The anim runs the hold's *time* linearly and apply_layout() eases the sweep from it, so letting
-// go retraces exactly the curve the hold drew rather than starting a fresh S from wherever it was.
-void CallScreen::run_ring(int32_t to, lv_anim_completed_cb_t completed) {
-    lv_anim_delete(this, set_ring_t);
-    tween(set_ring_t, ring_t_, to, kHoldMs, completed, lv_anim_path_linear);
-}
-
 void CallScreen::on_press(lv_event_t *e) {
     auto *self = static_cast<CallScreen *>(lv_event_get_user_data(e));
     if (self->leaving_) return;
@@ -218,20 +192,20 @@ void CallScreen::start_hold() {
     if (!pressed_ || !landed_ || leaving_ || !ringing_ || answered_ || accept_cb_ == nullptr) {
         return;
     }
-    run_ring(1000, [](lv_anim_t *a) {
-        CallScreen *s = from_anim(a);
-        if (!s->pressed_ || s->ring_t_ < 1000 || s->answered_) return;
+    ring_.run(1000, [](void *ctx) {
+        auto *s = static_cast<CallScreen *>(ctx);
+        if (!s->pressed_ || s->answered_) return;
         s->accepted_ = true;
         s->accept_cb_(s->call_id_);
         s->show_answered();
-    });
+    }, this);
 }
 
 void CallScreen::on_release(lv_event_t *e) {
     auto *self = static_cast<CallScreen *>(lv_event_get_user_data(e));
     if (!self->pressed_) return;
     self->pressed_ = false;
-    if (!self->accepted_ && !self->answered_ && !self->leaving_) self->run_ring(0);
+    if (!self->accepted_ && !self->answered_ && !self->leaving_) self->ring_.run(0);
 }
 
 // Accepted here (full ring) or answered on the phone: the ring fills if it had not, the phone glyph
@@ -239,7 +213,7 @@ void CallScreen::on_release(lv_event_t *e) {
 void CallScreen::show_answered() {
     if (answered_) return;
     answered_ = true;
-    if (ring_t_ < 1000) run_ring(1000);
+    if (ring_.t() < 1000) ring_.run(1000);
     lv_anim_delete(this, set_phone_in);
     tween(set_phone_in, phone_in_, 0, kGlyphInMs, [](lv_anim_t *a) {
         CallScreen *s = from_anim(a);
@@ -258,7 +232,7 @@ void CallScreen::enter() {
     phone_in_ = 0;
     duration_in_ = 0;
     progress_ = 0;
-    ring_t_ = 0;
+    ring_.reset();
     apply_layout();
     tween(set_bubble_in, 0, 1000, kBubbleInMs, [](lv_anim_t *a) {
         CallScreen *self = from_anim(a);
@@ -285,8 +259,8 @@ void CallScreen::leave(LeaveDone done, void *ctx) {
     pressed_ = false;
     done_ = done;
     done_ctx_ = ctx;
-    run_ring(0, [](lv_anim_t *a) {
-        CallScreen *self = from_anim(a);
+    ring_.run(0, [](void *ctx) {
+        auto *self = static_cast<CallScreen *>(ctx);
         self->collapse_left_ = 3;
         const lv_anim_completed_cb_t collapsed = [](lv_anim_t *a2) {
             CallScreen *s = from_anim(a2);
@@ -300,7 +274,7 @@ void CallScreen::leave(LeaveDone done, void *ctx) {
         self->tween(set_progress, self->progress_, 0, kTweenMs, collapsed);
         self->tween(set_phone_in, self->phone_in_, 0, kTweenMs, collapsed);
         self->tween(set_duration_in, self->duration_in_, 0, kTweenMs, collapsed);
-    });
+    }, this);
 }
 
 void CallScreen::apply_layout() {
@@ -336,11 +310,6 @@ void CallScreen::apply_layout() {
                   glyph_cy(kPhoneCyRest, phone_in_) - lv_obj_get_height(phone_icon_) / 2);
     place_centred(duration_label_, width_,
                   glyph_cy(kDurationCyRest, duration_in_) - lv_obj_get_height(duration_label_) / 2);
-
-    const int32_t sweep = static_cast<int32_t>(
-        std::lround(360.0f * ease_in_out_cubic(static_cast<float>(ring_t_) / 1000.0f)));
-    lv_obj_set_hidden(ring_, sweep <= 0);
-    if (sweep > 0) lv_arc_set_angles(ring_, 0, sweep);
 }
 
 void CallScreen::set_caller(const char *caller, const char *number) {
@@ -390,7 +359,7 @@ void CallScreen::update(const terminal_view_state_t &state) {
             tween(set_duration_in, duration_in_, 0, kGlyphInMs, nullptr);
             tween(set_phone_in, phone_in_, 1000, kGlyphInMs, nullptr);
         }
-        if (landed_) run_ring(0);
+        if (landed_) ring_.run(0);
     }
     ringing_ = state.call_ringing;
     active_ = state.call_active;

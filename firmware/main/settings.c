@@ -11,6 +11,9 @@ static const terminal_settings_t kDefaults = {
     .clock_12h = 0,
     .units = SETTINGS_UNITS_METRIC,
     .dial_outer = 0, // GUI_DIAL_OUTER_COMPASS
+    .friends_on_compass = 1,
+    .friend_marker = SETTINGS_FRIEND_MARKER_CHARACTER,
+    .mesh_enabled = 1,
 };
 static terminal_settings_t s_current;
 static bool s_current_init;
@@ -25,6 +28,9 @@ static const uint8_t kByteTagMax[] = {
     [SETTINGS_TAG_CLOCK_12H] = 1,
     [SETTINGS_TAG_UNITS] = SETTINGS_UNITS_IMPERIAL,
     [SETTINGS_TAG_DIAL_OUTER] = 1,
+    [SETTINGS_TAG_FRIENDS_ON_COMPASS] = 1,
+    [SETTINGS_TAG_FRIEND_MARKER] = SETTINGS_FRIEND_MARKER_DOT,
+    [SETTINGS_TAG_MESH_ENABLED] = 1,
 };
 
 bool settings_tlv_decode(const uint8_t *buf, size_t len, terminal_settings_t *inout) {
@@ -56,6 +62,9 @@ bool settings_tlv_decode(const uint8_t *buf, size_t len, terminal_settings_t *in
         case SETTINGS_TAG_CLOCK_12H: s.clock_12h = v[0]; break;
         case SETTINGS_TAG_UNITS: s.units = v[0]; break;
         case SETTINGS_TAG_DIAL_OUTER: s.dial_outer = v[0]; break;
+        case SETTINGS_TAG_FRIENDS_ON_COMPASS: s.friends_on_compass = v[0]; break;
+        case SETTINGS_TAG_FRIEND_MARKER: s.friend_marker = v[0]; break;
+        case SETTINGS_TAG_MESH_ENABLED: s.mesh_enabled = v[0]; break;
         }
     }
     *inout = s;
@@ -75,6 +84,9 @@ size_t settings_tlv_encode(const terminal_settings_t *s, uint8_t *buf, size_t ca
         {SETTINGS_TAG_AVATAR, s->avatar},       {SETTINGS_TAG_ETA_FORMAT, s->eta_format},
         {SETTINGS_TAG_CLOCK_12H, s->clock_12h}, {SETTINGS_TAG_UNITS, s->units},
         {SETTINGS_TAG_DIAL_OUTER, s->dial_outer},
+        {SETTINGS_TAG_FRIENDS_ON_COMPASS, s->friends_on_compass},
+        {SETTINGS_TAG_FRIEND_MARKER, s->friend_marker},
+        {SETTINGS_TAG_MESH_ENABLED, s->mesh_enabled},
     };
     for (size_t k = 0; k < sizeof(bytes) / sizeof(bytes[0]); k++) {
         buf[i++] = bytes[k][0];

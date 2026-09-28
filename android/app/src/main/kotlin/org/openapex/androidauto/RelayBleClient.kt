@@ -56,6 +56,7 @@ class RelayBleClient(private val context: Context) {
     private sealed class ControlOp {
         class Write(val uuid: UUID, val value: ByteArray, val done: (Boolean) -> Unit) : ControlOp()
         class Read(val uuid: UUID, val done: (ByteArray?) -> Unit) : ControlOp()
+        class Subscribe(val uuid: UUID) : ControlOp()
     }
     private val controlOps = ArrayDeque<ControlOp>()
     private var controlInFlight: ControlOp? = null
@@ -63,6 +64,9 @@ class RelayBleClient(private val context: Context) {
     // True while a background (autoConnect=true) request is parked in the controller waiting for
     // the terminal to come back. A direct connect() for the same device may replace it.
     private var backgroundPending = false
+
+    // Set once this connection has dropped Android's GATT cache (onServicesDiscovered).
+    private var cacheRefreshed = false
 
     /**
      * [background] = true parks the request in the controller's accept list (autoConnect=true):
@@ -265,6 +269,59 @@ class RelayBleClient(private val context: Context) {
     private fun failOp(op: ControlOp) = when (op) {
         is ControlOp.Write -> op.done(false)
         is ControlOp.Read -> op.done(null)
+        is ControlOp.Subscribe -> Unit
+    }
+
+    /**
+     * Rider mesh sync on connect (spec §5.7): push this rider's identity, read the terminal's
+     * friends (it may have made some with no phone connected), merge them into ours, write the
+     * merged list back, then subscribe so friendships made later reach us too.
+     */
+    private fun syncRiderMesh() {
+        writeAll(IDENTITY_UUID, listOf(RiderStore.identity(context).encode())) { ok ->
+            Log.i(TAG, "identity push ok=$ok")
+        }
+        readTerminalFriends(0, mutableListOf())
+    }
+
+    private fun readTerminalFriends(index: Int, acc: MutableList<Friend>) {
+        writeAll(FRIENDS_UUID, listOf(RiderMesh.cursor(index))) { ok ->
+            if (!ok) return@writeAll // old firmware or link gone; next connect retries
+            enqueue(ControlOp.Read(FRIENDS_UUID) { rec ->
+                val f = rec?.takeIf { it.isNotEmpty() }?.let(Friend::decode)
+                if (f != null && index < RiderMesh.FRIEND_CAP) {
+                    acc += f
+                    readTerminalFriends(index + 1, acc)
+                } else if (rec != null) {
+                    pushFriends(acc)
+                }
+            })
+        }
+    }
+
+    private fun pushFriends(terminal: List<Friend>) {
+        val merged = RiderMesh.merge(RiderStore.friends(context), terminal)
+        RiderStore.setFriends(context, merged)
+        Log.i(TAG, "friends sync: terminal=${terminal.size} merged=${merged.size}")
+        writeAll(FRIENDS_UUID, listOf(RiderMesh.clear()) + merged.map(RiderMesh::upsert)) { ok ->
+            Log.i(TAG, "friends push ok=$ok")
+        }
+        synchronized(pendingFragments) { controlOps.addLast(ControlOp.Subscribe(FRIENDS_UUID)) }
+        pumpQueue()
+    }
+
+    /** Pushes the phone's friend list again, e.g. after the rider removes one in the app. */
+    fun pushFriends() = writeAll(
+        FRIENDS_UUID, listOf(RiderMesh.clear()) + RiderStore.friends(context).map(RiderMesh::upsert),
+    ) { ok -> Log.i(TAG, "friends push ok=$ok") }
+
+    // A friendship completed on the terminal: `[op=UPSERT][record]`.
+    private fun onFriendNotify(char: BluetoothGattCharacteristic, value: ByteArray?) {
+        if (char.uuid != FRIENDS_UUID || value == null || value.isEmpty()) return
+        if (value[0].toInt() != RiderMesh.OP_UPSERT) return
+        val f = Friend.decode(value.copyOfRange(1, value.size)) ?: return
+        Log.i(TAG, "terminal added friend ${f.name}")
+        RiderStore.setFriends(context, RiderMesh.merge(RiderStore.friends(context), listOf(f)))
     }
 
     // Starts the next control op, if any. Returns true when one was pending, so nav waits.
@@ -275,6 +332,7 @@ class RelayBleClient(private val context: Context) {
         val uuid = when (op) {
             is ControlOp.Write -> op.uuid
             is ControlOp.Read -> op.uuid
+            is ControlOp.Subscribe -> op.uuid
         }
         val char = g.getService(SERVICE_UUID)?.getCharacteristic(uuid)
         if (char == null) {
@@ -291,6 +349,7 @@ class RelayBleClient(private val context: Context) {
                 g.writeCharacteristic(char)
             }
             is ControlOp.Read -> g.readCharacteristic(char)
+            is ControlOp.Subscribe -> subscribe(g, char)
         }
         if (started) {
             writeInFlight = true
@@ -350,6 +409,11 @@ class RelayBleClient(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun subscribeCallAction(g: BluetoothGatt): Boolean {
         val char = g.getService(SERVICE_UUID)?.getCharacteristic(CALL_ACTION_UUID) ?: return false
+        return subscribe(g, char)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun subscribe(g: BluetoothGatt, char: BluetoothGattCharacteristic): Boolean {
         if (!g.setCharacteristicNotification(char, true)) return false
         val cccd = char.getDescriptor(CCCD_UUID) ?: return false
         val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
@@ -377,6 +441,7 @@ class RelayBleClient(private val context: Context) {
             Log.i(TAG, "connection state change: status=$status newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 backgroundPending = false
+                cacheRefreshed = false
                 saveAddress(context, g.device.address)
                 // write() fragments to a fixed size that fits the BLE-spec default MTU regardless
                 // of negotiation (see write() KDoc), so nothing here depends on an MTU exchange.
@@ -402,6 +467,18 @@ class RelayBleClient(private val context: Context) {
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             val service = g.getService(SERVICE_UUID)
+            // Android caches a bonded device's GATT table and the terminal sends no Service
+            // Changed, so after a firmware update adds characteristics the phone keeps seeing the
+            // old table (2026-09-28: call and identity missing). Drop the cache and rediscover,
+            // once per connection.
+            if (service != null && service.getCharacteristic(FRIENDS_UUID) == null && !cacheRefreshed) {
+                cacheRefreshed = true
+                val refreshed = runCatching {
+                    g.javaClass.getMethod("refresh").invoke(g) as Boolean
+                }.getOrDefault(false)
+                Log.i(TAG, "stale GATT cache, refresh=$refreshed")
+                if (refreshed && g.discoverServices()) return
+            }
             characteristic = service?.getCharacteristic(CHAR_UUID)
             callEventChar = service?.getCharacteristic(CALL_EVENT_UUID)
             Log.i(TAG, "services discovered: status=$status characteristicFound=${characteristic != null} " +
@@ -412,24 +489,30 @@ class RelayBleClient(private val context: Context) {
                 Log.i(TAG, "call action subscribe started=$subscribing")
                 synchronized(pendingFragments) { writeInFlight = subscribing }
                 RelayStateHolder.noteBleConnected()
+                syncRiderMesh()
             }
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             Log.i(TAG, "descriptor write ${descriptor.characteristic.uuid} status=$status")
-            synchronized(pendingFragments) { writeInFlight = false }
+            synchronized(pendingFragments) {
+                writeInFlight = false
+                controlInFlight = null
+            }
             pumpQueue()
         }
 
         // API 33+ delivers the value here; the deprecated overload below is only called before 33.
         override fun onCharacteristicChanged(g: BluetoothGatt, char: BluetoothGattCharacteristic, value: ByteArray) {
             onCallAction(char, value)
+            onFriendNotify(char, value)
         }
 
         @Deprecated("Pre-API 33 path")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, char: BluetoothGattCharacteristic) {
             onCallAction(char, char.value)
+            onFriendNotify(char, char.value)
         }
 
         override fun onCharacteristicWrite(
@@ -489,6 +572,10 @@ class RelayBleClient(private val context: Context) {
         val SETTINGS_UUID: UUID = UUID.fromString("c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f")
         val DEVICE_INFO_UUID: UUID = UUID.fromString("c9c6d0a0-0006-4f0a-9c8e-2f6b1a2d3e4f")
         val AVATAR_UUID: UUID = UUID.fromString("c9c6d0a0-0007-4f0a-9c8e-2f6b1a2d3e4f")
+
+        // Rider mesh identity and friends — docs/OpenApex_SPEC.md §5.7.
+        val IDENTITY_UUID: UUID = UUID.fromString("c9c6d0a0-0008-4f0a-9c8e-2f6b1a2d3e4f")
+        val FRIENDS_UUID: UUID = UUID.fromString("c9c6d0a0-0009-4f0a-9c8e-2f6b1a2d3e4f")
 
         /** Packet id (1) + fragment index (1) + fragment count (1) ahead of each chunk's payload. */
         private const val FRAG_HEADER_BYTES = 3

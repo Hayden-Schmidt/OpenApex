@@ -16,13 +16,13 @@ class SettingsTlvTest {
 
     @Test
     fun `round trips non-default settings`() {
-        val s = TerminalSettings(0xFF8000, TerminalSettings.AVATAR_CUSTOM, false, true, true, true)
+        val s = TerminalSettings(0xFF8000, TerminalSettings.AVATAR_CUSTOM, false, true, true, true, false, true, false)
         assertEquals(s, SettingsTlv.decode(SettingsTlv.encode(s)))
     }
 
     @Test
     fun `split writes fit the default MTU and apply to the full config`() {
-        val s = TerminalSettings(0x123456, 2, false, true, true, true)
+        val s = TerminalSettings(0x123456, 2, false, true, true, true, false, true, false)
         val writes = SettingsTlv.encodeWrites(s)
         assertTrue(writes.all { it.size <= SettingsTlv.MAX_WRITE_BYTES && it[0].toInt() == SettingsTlv.SCHEMA })
         val applied = writes.fold(TerminalSettings()) { acc, w -> SettingsTlv.decode(w, acc)!! }

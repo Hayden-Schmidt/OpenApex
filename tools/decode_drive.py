@@ -5,7 +5,7 @@ The terminal writes fixed 128-byte records into a dedicated flash partition whil
 firmware/main/drive_log.h). Pull the partition over USB after the drive -- no laptop needed in the
 vehicle:
 
-    esptool.py --port COM30 read_flash 0x190000 0x100000 esp_log.bin
+    esptool.py --port COM30 read_flash 0x210000 0x100000 esp_log.bin
     python tools/decode_drive.py esp_log.bin
     python tools/decode_drive.py esp_log.bin --phone relay-*.jsonl
 

@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "friend_markers.hpp"
+
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
@@ -181,6 +183,7 @@ void CompassRing::draw(lv_layer_t *layer, const lv_area_t &coords, float scale) 
     }
 
     if (!north_known_) return;
+    friend_markers_draw(layer, cx, cy, half, north_heading_rad_, scale);
     // The nav page draws the route heading-up: the bike's forward direction is pinned to the top of
     // the screen, so the world -- north included -- rotates the OPPOSITE way to the heading. Hence
     // the negation. Without it the marker sweeps at exactly the right rate in exactly the wrong

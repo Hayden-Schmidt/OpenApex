@@ -12,7 +12,7 @@
 // Records what the terminal received, parsed and displayed to a dedicated flash partition, so a
 // drive can be taken with no laptop attached and the whole session pulled afterwards over USB:
 //
-//   esptool.py --port COM30 read_flash 0x190000 0x100000 esp_log.bin
+//   esptool.py --port COM30 read_flash 0x210000 0x100000 esp_log.bin
 //   python tools/decode_drive.py esp_log.bin
 //
 // The three record tiers (RAW / MODEL / VIEW) exist because the interesting bugs live *between*

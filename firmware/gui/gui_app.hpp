@@ -64,6 +64,11 @@ gui_nav_entry_t gui_app_nav_entry(void);
 typedef void (*gui_call_accept_cb_t)(uint16_t call_id);
 void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb);
 
+// Called on gui_task when the rider fills the ring on the friend prompt, with the view state's
+// friend_prompt_id. As with calls, main.c hands it to the mesh task; the GUI never touches a radio.
+typedef void (*gui_friend_accept_cb_t)(const uint8_t *rider_id);
+void gui_app_set_friend_accept_handler(gui_friend_accept_cb_t cb);
+
 // The rider's uploaded avatar (firmware/main/avatar_store.h): GUI_AVATAR_BYTES of A2 art, 16x16
 // then 8x8 (the 8x8 is not drawn yet), shown in place of the boot logo in the accent.
 // Copied, so the caller's buffer may go. NULL clears it. Call before gui_app_init() to have it on

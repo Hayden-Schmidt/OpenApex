@@ -25,6 +25,9 @@ enum {
     SETTINGS_TAG_CLOCK_12H = 0x04,  // len 1: 0 = 24h, 1 = 12h
     SETTINGS_TAG_UNITS = 0x05,      // len 1: settings_units_t
     SETTINGS_TAG_DIAL_OUTER = 0x06, // len 1: gui_dial_outer_t
+    SETTINGS_TAG_FRIENDS_ON_COMPASS = 0x07, // len 1: 0 hidden, 1 shown (rider mesh, §5.7)
+    SETTINGS_TAG_FRIEND_MARKER = 0x08,      // len 1: settings_friend_marker_t
+    SETTINGS_TAG_MESH_ENABLED = 0x09,       // len 1: 0 radio silent, 1 on
 };
 
 // Avatar values: the default character, a built-in character (1..SETTINGS_AVATAR_PRESET_MAX,
@@ -43,6 +46,11 @@ typedef enum {
     SETTINGS_UNITS_IMPERIAL = 1,
 } settings_units_t;
 
+typedef enum {
+    SETTINGS_FRIEND_MARKER_CHARACTER = 0, // the friend's 8x8 character in their accent
+    SETTINGS_FRIEND_MARKER_DOT = 1,       // a dot in their accent
+} settings_friend_marker_t;
+
 typedef struct {
     uint32_t accent_rgb; // 0xRRGGBB; every accent use in the GUI and the avatar tint
     uint8_t avatar;      // settings_avatar_t
@@ -50,10 +58,13 @@ typedef struct {
     uint8_t clock_12h;
     uint8_t units;       // settings_units_t
     uint8_t dial_outer;  // gui_dial_outer_t -- the page's start-up ring; touch-hold still swaps it
+    uint8_t friends_on_compass;
+    uint8_t friend_marker; // settings_friend_marker_t
+    uint8_t mesh_enabled;
 } terminal_settings_t;
 
 // Longest encoding settings_tlv_encode() produces: schema byte + every tag.
-#define SETTINGS_TLV_MAX_LEN (1u + (2u + 3u) + 5u * (2u + 1u))
+#define SETTINGS_TLV_MAX_LEN (1u + (2u + 3u) + 8u * (2u + 1u))
 
 void settings_defaults(terminal_settings_t *out);
 

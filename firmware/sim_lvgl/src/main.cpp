@@ -162,7 +162,7 @@ namespace {
 void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
-                 " [--call <caller>] [--press <from_ms> <to_ms>] [--shot <ms> <file.png>]\n"
+                 " [--call <caller>] [--friend] [--press <from_ms> <to_ms>] [--shot <ms> <file.png>]\n"
                  " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <hex>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle), 'idle' or\n"
@@ -170,6 +170,7 @@ void print_usage(const char *exe) {
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --call         call from <caller> (\"\" = unknown) over the fixture, every 20s: rings\n"
                  "                 7s, answered for 8s (sooner if the 2s hold accepts), then ends\n"
+                 "  --friend       a friend prompt 1.5s in, two friends on the compass\n"
                  "  --press        hold the panel centre over [from_ms, to_ms) of fixture time\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
@@ -265,6 +266,40 @@ void apply_call_fixture(terminal_view_state_t *frame, const char *caller, uint32
     }
 }
 
+// --friend: a rider offers friendship; accepting waits a beat for them, then both are friends. Two
+// friends ride nearby throughout, for the compass markers.
+uint32_t s_friend_accepted_ms = 0;
+
+void on_sim_friend_accept(const uint8_t *) {
+    std::printf("sim_lvgl: accept friend\n");
+    s_friend_accepted_ms = s_elapsed_ms;
+}
+
+mesh_look_t sim_look(uint8_t avatar, uint32_t accent, const char *name) {
+    mesh_look_t l = {};
+    l.avatar = avatar;
+    l.accent_rgb = accent;
+    std::snprintf(l.name, sizeof(l.name), "%s", name);
+    return l;
+}
+
+void apply_friend_fixture(terminal_view_state_t *frame, uint32_t elapsed) {
+    frame->friend_count = 2;
+    frame->friends[0] = {sim_look(1, 0xFF6A00, "Sam"), 40.0f, 120.0f};
+    frame->friends[1] = {sim_look(2, 0x3FA9F5, "Jo"), 200.0f, 300.0f};
+    if (elapsed < 1500) return;
+    std::memset(frame->friend_prompt_id, 0xA5, sizeof(frame->friend_prompt_id));
+    frame->friend_peer = sim_look(3, 0xE0409A, "Alex");
+    frame->friend_self = sim_look(settings_get()->avatar, settings_get()->accent_rgb, "Me");
+    if (s_friend_accepted_ms == 0) {
+        frame->friend_prompt = MESH_PROMPT_OFFER;
+    } else if (elapsed < s_friend_accepted_ms + 1500) {
+        frame->friend_prompt = MESH_PROMPT_WAITING;
+    } else if (elapsed < s_friend_accepted_ms + 1500 + MESH_PROMPT_DONE_MS) {
+        frame->friend_prompt = MESH_PROMPT_DONE;
+    }
+}
+
 // --press: a scripted finger on the panel centre, so the hold can be screenshotted.
 uint32_t s_press_from_ms = 0;
 uint32_t s_press_to_ms = 0;
@@ -300,6 +335,7 @@ int main(int argc, char *argv[]) {
     bool fade_nav_entry = false;
     bool single = false;
     const char *call_caller = nullptr;
+    bool friend_prompt = false;
     bool paired = false;
     int positional = 0;
     uint8_t avatar[GUI_AVATAR_BYTES];
@@ -352,6 +388,8 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             call_caller = argv[++i];
+        } else if (std::strcmp(argv[i], "--friend") == 0) {
+            friend_prompt = true;
         } else if (std::strcmp(argv[i], "--press") == 0) {
             if (i + 2 >= argc) {
                 print_usage(argv[0]);
@@ -472,6 +510,7 @@ int main(int argc, char *argv[]) {
     if (trip_page) gui_app_set_dial_outer(GUI_DIAL_OUTER_TRIP_ARC);
     if (fade_nav_entry) gui_app_set_nav_entry(GUI_NAV_ENTRY_FADE);
     if (call_caller != nullptr) gui_app_set_call_accept_handler(on_sim_call_accept);
+    if (friend_prompt) gui_app_set_friend_accept_handler(on_sim_friend_accept);
     if (s_press_to_ms > s_press_from_ms) {
         lv_indev_t *press = lv_indev_create();
         lv_indev_set_type(press, LV_INDEV_TYPE_POINTER);
@@ -509,6 +548,7 @@ int main(int argc, char *argv[]) {
                                       : idle_page     ? make_idle_fixture_frame(elapsed)
                                                       : make_fixture_frame(elapsed);
         s_elapsed_ms = elapsed;
+        if (friend_prompt) apply_friend_fixture(&frame, elapsed);
         if (call_caller != nullptr) apply_call_fixture(&frame, call_caller, elapsed);
         gui_app_update(&frame);
 

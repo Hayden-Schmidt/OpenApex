@@ -24,8 +24,11 @@
 // v4 adds the phone's wall clock (epoch_s at 152, tz_offset_min at 156) -- the C3 has no RTC -- and
 // Google Maps' progress-bar segments (count at 158, 8x {u16 end_permille, u8 r, g, b} from 159):
 // the traffic colouring along the whole route, raw RGB, classified by normalize.c.
-#define RAW_NOTIF_PACKET_SIZE 200U
-#define RAW_NOTIF_VERSION 4U
+//
+// v5 adds the phone's fix (lat_e7 at 200, lon_e7 at 204, h_accuracy_m at 208), shared with friends'
+// terminals over the rider mesh (docs/OpenApex_SPEC.md §5.7). Never used for navigation here.
+#define RAW_NOTIF_PACKET_SIZE 210U
+#define RAW_NOTIF_VERSION 5U
 #define RAW_MAX_SEGMENTS 8U
 
 // Field buffer sizes.
@@ -38,6 +41,7 @@
 #define RAW_U16_UNKNOWN 0xFFFFU
 #define RAW_U32_UNKNOWN 0xFFFFFFFFU
 #define RAW_I16_UNKNOWN 0x7FFF
+#define RAW_I32_UNKNOWN 0x7FFFFFFF
 
 typedef struct {
     uint32_t sequence;
@@ -74,6 +78,10 @@ typedef struct {
         uint16_t end_permille;
         uint8_t r, g, b;
     } segments[RAW_MAX_SEGMENTS];
+    // Phone fix (v5), degrees x 1e7. RAW_I32_UNKNOWN in either = no recent fix.
+    int32_t lat_e7;
+    int32_t lon_e7;
+    uint16_t h_accuracy_m; // RAW_U16_UNKNOWN = unknown
 } raw_notif_t;
 
 // Decodes a raw packet into out. Returns false on wrong version or short length (malformed

@@ -77,6 +77,12 @@ Each gets golden byte fixtures shared by commonTest and the firmware native test
   4. **Firmware update:** pick/download image, progress ring, resume.
   5. **App settings / permissions:** guided setup (notification access, background location, battery exemptions per OEM).
   6. **Diagnostics:** packet log, recorder control.
+- **Rider mesh UI** (SPEC §5.7; deferred from the mesh build, protocol and sync already done in `RiderMesh.kt` / `RiderStore.kt` / `RelayBleClient.kt`). Goes in **Terminal settings** plus a new **Friends** screen:
+  - **Rider name** field: short/first name, at most 12 UTF-8 bytes (cut on a character boundary, `RiderMesh.nameBytes`). Saved with `RiderStore.setName`; the terminal gets it on the next connect (the identity push).
+  - **Toggles** (settings TLV, `TerminalSettings`): friends on compass (0x07, default on), friend marker character/dot (0x08, default character), mesh enabled (0x09, default on, labelled as the privacy kill switch: off means the terminal is silent to other riders). Written with `RelayBleClient.writeSettings`.
+  - **Friends list:** each friend's character in their accent (preset or custom 8x8 art), name, and remove. Remove calls `RiderStore.removeFriend` then `RelayBleClient.pushFriends()`; unfriending is phone-only, and the other rider keeps us until they remove us. Cap 16; show the count.
+  - The list refreshes when the terminal notifies a new friendship (friends made on the terminal appear without user action).
+  - No friend-adding UI on the phone: friending happens only on the terminal's hold ring.
 - **Animations:** `AnimatedContent` for state changes, shared-element transitions for device card to detail, Canvas for the progress ring and the live round-display preview.
 - **Round-display preview:** a Canvas component rendering the terminal state from the same `AppState`. It's a mirror of the terminal, not a second renderer of truth.
 - Native embeds (SwiftUI/UIKit) only where the iOS feel clearly matters. None are planned for v1.

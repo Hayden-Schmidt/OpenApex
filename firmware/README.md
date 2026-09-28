@@ -42,8 +42,8 @@ pio run -d firmware -e prototype_c3_devlog -t upload
 After the drive, pull both sides and decode:
 
 ```powershell
-# Terminal: 1 MB `logs` partition at 0x190000 (see partitions.csv)
-esptool read_flash 0x190000 0x100000 esp_log.bin
+# Terminal: 1 MB `logs` partition at 0x210000 (see partitions.csv)
+esptool read_flash 0x210000 0x100000 esp_log.bin
 
 # Phone
 adb pull /sdcard/Android/data/org.openapex.androidauto/files/drivelogs/

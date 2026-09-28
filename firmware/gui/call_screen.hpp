@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gui_app.hpp"
+#include "hold_ring.hpp"
 #include "screen.hpp"
 
 // design reference/6. Calling/OpenApex Call Screens.svg.
@@ -27,13 +28,12 @@ public:
     void set_accept_handler(gui_call_accept_cb_t cb);
 
 private:
-    // Positions every widget from progress_, bubble_in_, phone_in_, duration_in_ and ring_t_.
+    // Positions every widget from progress_, bubble_in_, phone_in_ and duration_in_.
     void apply_layout();
     static void set_progress(void *var, int32_t value);
     static void set_bubble_in(void *var, int32_t value);
     static void set_phone_in(void *var, int32_t value);
     static void set_duration_in(void *var, int32_t value);
-    static void set_ring_t(void *var, int32_t value);
     static CallScreen *from_anim(lv_anim_t *a);
     void tween(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t full_ms,
                lv_anim_completed_cb_t completed,
@@ -42,8 +42,6 @@ private:
     static void on_press(lv_event_t *e);
     static void on_release(lv_event_t *e);
     void start_hold();
-    // Runs the ring toward full (held) or empty (let go); retraces the same curve either way.
-    void run_ring(int32_t to, lv_anim_completed_cb_t completed = nullptr);
     // Phone glyph tucks under the bubble, then the duration drops out. Once per call.
     void show_answered();
     void set_caller(const char *caller, const char *number);
@@ -60,13 +58,12 @@ private:
     lv_obj_t *number_label_ = nullptr;    // inside bubble_
     lv_obj_t *phone_icon_ = nullptr;
     lv_obj_t *duration_label_ = nullptr;
-    lv_obj_t *ring_ = nullptr;
+    HoldRing ring_;
 
     int32_t progress_ = 0;     // 0..1000, bubble high .. caller risen, bubble dropped
     int32_t bubble_in_ = 0;    // 0..1000, bubble below the panel .. at rest
     int32_t phone_in_ = 0;     // 0..1000, glyph behind the bubble .. at rest
     int32_t duration_in_ = 0;  // 0..1000, duration behind the bubble .. at rest
-    int32_t ring_t_ = 0;       // 0..1000 hold *time*, linear; the drawn sweep is eased from it
     bool landed_ = false;      // entry finished
     bool leaving_ = false;
     bool pressed_ = false;

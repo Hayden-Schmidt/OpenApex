@@ -54,6 +54,7 @@ class RelayService : Service() {
     private var speedKmh: Float? = null
     private var headingDeg: Int? = null
     private var bearingAccuracyDeg: Float? = null
+    private var location: Location? = null
     private var fixValid = false
     private var nav: RawNavNotification? = null
     private var listening = false
@@ -262,6 +263,8 @@ class RelayService : Service() {
         // empty maneuver instead, and let the terminal decide what to show (a packet with no title,
         // no distance and no progress normalizes to VIEW_IDLE, which is the compass view).
         val currentNav = nav ?: EMPTY_NAV
+        // Only a recent fix goes out: the terminal shares it with friends as "where I am now".
+        val fix = location?.takeIf { android.os.SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos < 5_000_000_000L }
         val telemetry = GnssTelemetry(
             speedKmh = speedKmh,
             headingDeg = headingDeg,
@@ -270,6 +273,9 @@ class RelayService : Service() {
             bearingAccuracyDeg = bearingAccuracyDeg,
             yawDeg = lastYawDeg,
             yawRateDps = lastYawRateDps,
+            latitudeDeg = fix?.latitude,
+            longitudeDeg = fix?.longitude,
+            accuracyM = fix?.takeIf { it.hasAccuracy() }?.accuracy,
         )
         val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
         val seq = sequence.incrementAndGet()
@@ -406,6 +412,7 @@ class RelayService : Service() {
             override fun onLocationResult(result: LocationResult) {
                 val loc: Location? = result.lastLocation
                 if (loc != null) {
+                    location = loc
                     speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
                     headingDeg = if (loc.hasBearing()) loc.bearing.toInt().mod(360) else null
                     fixValid = loc.hasSpeed() || loc.hasBearing()
