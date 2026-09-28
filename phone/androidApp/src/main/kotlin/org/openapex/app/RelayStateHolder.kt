@@ -1,5 +1,6 @@
-package org.openapex.androidauto
+package org.openapex.app
 
+import org.openapex.protocol.*
 /**
  * Process-wide bridge between the listener service and GNSS/BLE (RelayService). Sources emit
  * [RelayStateEvent]s; [RelayService] is the single observer that repacks and publishes.

@@ -43,7 +43,8 @@ unresolved and is the subject of this write-up.
 - OnePlus 15, OxygenOS (Android 16 / API level 36 at test time)
 - `targetSdkVersion=35` in the built APK (app not yet targeting 36; irrelevant to the API-36
   CDM-method-signature check performed in §5, which tests the *device's* OS, not the app's target)
-- Package under test: `org.openapex.androidauto`
+- Package under test: `org.openapex.androidauto` (the applicationId; the Kotlin package is
+  `org.openapex.app`, which is why the component names below are spelled out in full)
 - Relevant components:
   - `MainActivity.kt` — builds the CDM `AssociationRequest`, calls
     `startObservingDevicePresence` (SDK-version-gated between the legacy
@@ -80,7 +81,7 @@ adb shell cmd companiondevice disassociate 0 <pkg> <mac>            # remove one
 adb shell cmd companiondevice notify-device-disappeared <ASSOC_ID>  # force presence state to false
 adb shell cmd companiondevice notify-device-appeared <ASSOC_ID>     # simulate a presence event
 adb shell am force-stop org.openapex.androidauto
-adb shell am broadcast -n org.openapex.androidauto/.BootCompletedReceiver \
+adb shell am broadcast -n org.openapex.androidauto/org.openapex.app.BootCompletedReceiver \
     -a android.intent.action.BOOT_COMPLETED                        # simulate boot without reboot
 adb logcat -d -s OpenApexBootReceiver:I RelayService:I RelayService:W OpenApexCompanion:I
 adb shell cmd appops get org.openapex.androidauto

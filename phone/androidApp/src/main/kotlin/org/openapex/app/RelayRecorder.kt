@@ -1,5 +1,6 @@
-package org.openapex.androidauto
+package org.openapex.app
 
+import org.openapex.protocol.*
 import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread

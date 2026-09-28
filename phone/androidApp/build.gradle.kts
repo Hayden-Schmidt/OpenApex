@@ -4,10 +4,14 @@ plugins {
 }
 
 android {
-    namespace = "org.openapex.androidauto"
+    namespace = "org.openapex.app"
     compileSdk = 36
 
     defaultConfig {
+        // Deliberately NOT renamed with the namespace. applicationId is the installed app's
+        // identity: changing it makes this a different app, so the test phone would need an
+        // uninstall and lose its pairing, settings and rider identity. Rename it when a
+        // reinstall is acceptable, not as a side effect of moving source files.
         applicationId = "org.openapex.androidauto"
         minSdk = 26
         targetSdk = 35

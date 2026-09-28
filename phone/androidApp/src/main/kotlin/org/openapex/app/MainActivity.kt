@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.app
 
 import android.app.Activity
 import android.bluetooth.le.ScanFilter

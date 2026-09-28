@@ -37,7 +37,11 @@ phone/
   androidApp/        Activity + manifest only
   iosApp/            Xcode project, thin SwiftUI host for ComposeUIViewController, Info.plist background modes
 ```
-Migration: `android/` becomes `phone/androidApp` plus `androidMain`. Delete the `OpenApexCarAppService` stub and the `androidx.car.app` dependency. Rename the package `org.openapex.androidauto` to `org.openapex.app`.
+Migration (done): `android/` became `phone/androidApp`, the `OpenApexCarAppService` stub and the
+`androidx.car.app` dependency are gone, and the Kotlin package is now `org.openapex.app` for the
+Android host and `org.openapex.protocol` for the shared wire formats. The **applicationId stays
+`org.openapex.androidauto`** on purpose: it is the installed app's identity, and changing it
+forces an uninstall that costs the test phone its pairing, settings and rider identity.
 
 ## 4. Platform boundaries (shared interfaces)
 ```kotlin

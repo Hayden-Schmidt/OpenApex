@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.protocol
 
 /**
  * Terminal UI settings, mirroring firmware/main/settings.h. Wire format and defaults are

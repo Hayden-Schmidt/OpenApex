@@ -1,5 +1,6 @@
-package org.openapex.androidauto
+package org.openapex.app
 
+import org.openapex.protocol.*
 import android.content.Intent
 import android.os.Bundle
 import android.service.notification.NotificationListenerService

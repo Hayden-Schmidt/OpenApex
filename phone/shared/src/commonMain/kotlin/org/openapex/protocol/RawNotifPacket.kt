@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.protocol
 
 import kotlin.math.PI
 import kotlin.math.roundToInt

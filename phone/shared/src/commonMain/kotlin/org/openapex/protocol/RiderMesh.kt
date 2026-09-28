@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.protocol
 
 /**
  * Rider mesh wire formats for the identity (0x0008) and friends (0x0009) characteristics,

@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.protocol
 
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals

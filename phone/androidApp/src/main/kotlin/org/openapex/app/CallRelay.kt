@@ -1,5 +1,6 @@
-package org.openapex.androidauto
+package org.openapex.app
 
+import org.openapex.protocol.*
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.ActivityOptions

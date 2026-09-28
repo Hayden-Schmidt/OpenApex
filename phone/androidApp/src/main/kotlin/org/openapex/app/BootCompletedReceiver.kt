@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.app
 
 import android.content.BroadcastReceiver
 import android.content.Context

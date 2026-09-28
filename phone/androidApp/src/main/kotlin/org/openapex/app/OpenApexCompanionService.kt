@@ -1,4 +1,4 @@
-package org.openapex.androidauto
+package org.openapex.app
 
 import android.companion.CompanionDeviceManager
 import android.companion.CompanionDeviceService
