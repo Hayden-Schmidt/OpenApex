@@ -33,9 +33,6 @@ class RelayBleClient(private val context: Context) {
     private var connectedAddress: String? = null
     private var bondReceiver: BroadcastReceiver? = null
 
-    // Wraps 0-255, matching the firmware's uint8_t packet id (ble_link.c). Identifies which
-    // fragments belong to the same RawNotifPacket on the reassembling side.
-    private var nextPacketId = 0
 
     // gatt.writeCharacteristic() queues into a shallow controller-side buffer even for
     // WRITE_TYPE_NO_RESPONSE; firing all 9 fragments synchronously overflowed it and
@@ -46,8 +43,11 @@ class RelayBleClient(private val context: Context) {
     //
     // Call-event fragments share the same queue (one GATT operation at a time, whatever the
     // target) but jump ahead of nav fragments: a ring must not wait behind a nav packet.
-    private class Frame(val call: Boolean, val bytes: ByteArray)
-    private val pendingFragments = ArrayDeque<Frame>()
+    // What to send next and in what order lives in commonMain (FragmentQueue): it is the half
+    // iOS needs unchanged, and the half worth testing without a phone. This class owns only the
+    // GATT calls and the one-operation-in-flight rule. FragmentQueue is not thread-safe, which is
+    // why every access below is inside the same lock that already guarded the deque.
+    private val frames = FragmentQueue()
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -162,17 +162,8 @@ class RelayBleClient(private val context: Context) {
      * ble_link.c. A dropped fragment costs one packet, superseded by the next publish (~3Hz).
      */
     fun write(packet: ByteArray) {
-        val packetId = nextPacketId
-        nextPacketId = (nextPacketId + 1) and 0xFF
-        val frames = fragment(packet, packetId, FRAG_COUNT).map { Frame(call = false, bytes = it) }
-        synchronized(pendingFragments) {
-            // A newer publish (~3Hz) supersedes whatever of the previous packet hasn't gone out
-            // yet; the reassembler on the terminal keys off packet_id so a partial old packet is
-            // harmless, not corrupting. Queued call fragments are kept.
-            pendingFragments.removeAll { !it.call }
-            pendingFragments.addAll(frames)
-        }
-        Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$FRAG_COUNT queued")
+        val packetId = synchronized(frames) { frames.offerNav(packet) }
+        Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$NAV_FRAG_COUNT queued")
         pumpQueue()
     }
 
@@ -182,35 +173,9 @@ class RelayBleClient(private val context: Context) {
      * ring refresh (CallRelay) re-sends once the link is back.
      */
     fun writeCall(packet: ByteArray) {
-        val packetId = nextPacketId
-        nextPacketId = (nextPacketId + 1) and 0xFF
-        val frames = fragment(packet, packetId, CALL_FRAG_COUNT).map { Frame(call = true, bytes = it) }
-        synchronized(pendingFragments) {
-            // Only the newest call event matters (a CLEAR supersedes a queued RING).
-            pendingFragments.removeAll { it.call }
-            val firstNav = pendingFragments.indexOfFirst { !it.call }.let { if (it < 0) pendingFragments.size else it }
-            pendingFragments.addAll(firstNav, frames)
-        }
+        val packetId = synchronized(frames) { frames.offerCall(packet) }
         Log.i(TAG, "writeCall: packet=$packetId frags=$CALL_FRAG_COUNT queued")
         pumpQueue()
-    }
-
-    private fun fragment(packet: ByteArray, packetId: Int, fragCount: Int): List<ByteArray> {
-        val frames = mutableListOf<ByteArray>()
-        var offset = 0
-        var fragIndex = 0
-        while (offset < packet.size) {
-            val chunkLen = minOf(FRAG_CHUNK_BYTES, packet.size - offset)
-            val frame = ByteArray(FRAG_HEADER_BYTES + chunkLen)
-            frame[0] = packetId.toByte()
-            frame[1] = fragIndex.toByte()
-            frame[2] = fragCount.toByte()
-            System.arraycopy(packet, offset, frame, FRAG_HEADER_BYTES, chunkLen)
-            frames += frame
-            offset += chunkLen
-            fragIndex++
-        }
-        return frames
     }
 
     /** Reads the terminal's settings; [done] gets null if not connected or unreadable. */
@@ -254,7 +219,7 @@ class RelayBleClient(private val context: Context) {
                 if (!ok || i == frames.lastIndex) done(ok)
             }
         }
-        synchronized(pendingFragments) { controlOps.addAll(batch) }
+        synchronized(frames) { controlOps.addAll(batch) }
         pumpQueue()
     }
 
@@ -263,7 +228,7 @@ class RelayBleClient(private val context: Context) {
             op.done(null)
             return
         }
-        synchronized(pendingFragments) { controlOps.addLast(op) }
+        synchronized(frames) { controlOps.addLast(op) }
         pumpQueue()
     }
 
@@ -307,7 +272,7 @@ class RelayBleClient(private val context: Context) {
         writeAll(FRIENDS_UUID, listOf(RiderMesh.clear()) + merged.map(RiderMesh::upsert)) { ok ->
             Log.i(TAG, "friends push ok=$ok")
         }
-        synchronized(pendingFragments) { controlOps.addLast(ControlOp.Subscribe(FRIENDS_UUID)) }
+        synchronized(frames) { controlOps.addLast(ControlOp.Subscribe(FRIENDS_UUID)) }
         pumpQueue()
     }
 
@@ -365,21 +330,21 @@ class RelayBleClient(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun pumpQueue() {
         val g = gatt ?: return
-        synchronized(pendingFragments) {
+        synchronized(frames) {
             if (writeInFlight) return
             if (pumpControl(g)) return
-            val frame = pendingFragments.firstOrNull() ?: return
+            val frame = frames.peek() ?: return
             val char = (if (frame.call) callEventChar else characteristic) ?: run {
                 // Old firmware without the call characteristic: drop call frames, keep nav going.
                 if (frame.call) {
-                    pendingFragments.removeFirst()
+                    frames.removeFirst()
                     mainHandler.post { pumpQueue() }
                 }
                 return
             }
             if (writeNoResponse(g, char, frame.bytes)) {
                 writeInFlight = true
-                pendingFragments.removeFirst()
+                frames.removeFirst()
             } else {
                 // Controller-side write buffer is momentarily full; retry shortly instead of
                 // dropping the fragment outright.
@@ -454,7 +419,7 @@ class RelayBleClient(private val context: Context) {
                 backgroundPending = false
                 // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
                 // set would stall pumpQueue() on every later connection: packets queue, none send.
-                val dropped = synchronized(pendingFragments) {
+                val dropped = synchronized(frames) {
                     writeInFlight = false
                     val ops = listOfNotNull(controlInFlight) + controlOps
                     controlInFlight = null
@@ -488,7 +453,7 @@ class RelayBleClient(private val context: Context) {
                 // Held through the CCCD write when there is one; onDescriptorWrite releases it.
                 val subscribing = subscribeCallAction(g)
                 Log.i(TAG, "call action subscribe started=$subscribing")
-                synchronized(pendingFragments) { writeInFlight = subscribing }
+                synchronized(frames) { writeInFlight = subscribing }
                 RelayStateHolder.noteBleConnected()
                 syncRiderMesh()
             }
@@ -496,7 +461,7 @@ class RelayBleClient(private val context: Context) {
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             Log.i(TAG, "descriptor write ${descriptor.characteristic.uuid} status=$status")
-            synchronized(pendingFragments) {
+            synchronized(frames) {
                 writeInFlight = false
                 controlInFlight = null
             }
@@ -521,7 +486,7 @@ class RelayBleClient(private val context: Context) {
             char: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            val op = synchronized(pendingFragments) {
+            val op = synchronized(frames) {
                 writeInFlight = false
                 controlInFlight.also { controlInFlight = null }
             }
@@ -537,7 +502,7 @@ class RelayBleClient(private val context: Context) {
             status: Int,
         ) {
             val value = char.value
-            val op = synchronized(pendingFragments) {
+            val op = synchronized(frames) {
                 writeInFlight = false
                 controlInFlight.also { controlInFlight = null }
             }
@@ -578,20 +543,8 @@ class RelayBleClient(private val context: Context) {
         val IDENTITY_UUID: UUID = UUID.fromString("c9c6d0a0-0008-4f0a-9c8e-2f6b1a2d3e4f")
         val FRIENDS_UUID: UUID = UUID.fromString("c9c6d0a0-0009-4f0a-9c8e-2f6b1a2d3e4f")
 
-        /** Packet id (1) + fragment index (1) + fragment count (1) ahead of each chunk's payload. */
-        private const val FRAG_HEADER_BYTES = 3
-
-        /** Payload bytes per fragment. FRAG_HEADER_BYTES + this must fit MTU 23 - 3 = 20. Mirrors ble_link.c. */
-        private const val FRAG_CHUNK_BYTES = 17
-
-        private const val FRAG_WRITE_BYTES = FRAG_HEADER_BYTES + FRAG_CHUNK_BYTES
-        private val FRAG_COUNT = (RAW_NOTIF_PACKET_SIZE + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES
-        private val CALL_FRAG_COUNT = (CALL_EVENT_PACKET_SIZE + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES
-
+        // Fragment sizes and counts are in commonMain (Fragmentation.kt), with the check that
+        // they fit the default ATT MTU.
         private const val FRAG_RETRY_DELAY_MS = 15L
-
-        init {
-            check(FRAG_WRITE_BYTES <= 20) { "fragment write must fit the default 23-byte ATT MTU" }
-        }
     }
 }
