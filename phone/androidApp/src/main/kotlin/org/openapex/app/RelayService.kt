@@ -1,6 +1,7 @@
 package org.openapex.app
 
 import org.openapex.ble.DeviceId
+import org.openapex.telemetry.TelemetryAggregator
 import org.openapex.protocol.*
 import android.Manifest
 import android.annotation.SuppressLint
@@ -31,6 +32,7 @@ import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import java.util.concurrent.atomic.AtomicInteger
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -39,7 +41,6 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.TimeZone
 
 /**
@@ -54,17 +55,13 @@ class RelayService : Service() {
     private lateinit var fused: FusedLocationProviderClient
     private lateinit var sensorManager: SensorManager
     private var locationCallback: LocationCallback? = null
-    private var speedKmh: Float? = null
-    private var headingDeg: Int? = null
-    private var bearingAccuracyDeg: Float? = null
-    private var location: Location? = null
-    private var fixValid = false
-    private var nav: RawNavNotification? = null
+    // Everything the terminal is sent, merged and packed in commonMain. The service's job is to
+    // keep it fed from Android's sources; deciding what a packet contains is not Android-specific.
+    private val telemetry = TelemetryAggregator()
     private var listening = false
     private var connected = false
     private var scanning = false
     private var gnssStarted = false
-    private val sequence = AtomicInteger(0)
     private val handler by lazy { android.os.Handler(Looper.getMainLooper()) }
     private val gnssRetry = Runnable { tryStartGnss() }
 
@@ -73,33 +70,31 @@ class RelayService : Service() {
     // streams are indistinguishable. See the instanceId note in RelayRecorder.telemetry().
     private val instanceId = instanceCounter.incrementAndGet()
 
-    // Latest raw motion samples. Diagnostic/future-use passthrough only — never classified here;
-    // see RawNotifPacket.kt KDoc and docs/OpenApex_SPEC.md §2.4.
-    private var lastAccel: FloatArray? = null
-    private var lastGyro: FloatArray? = null
+    // Diagnostic/future-use passthrough only — never classified here; see RawNotifPacket.kt KDoc
+    // and docs/OpenApex_SPEC.md §2.4.
+    // Latest raw motion samples and heading-fusion inputs live on the aggregator, which is what
+    // packs them; pitch and roll are recorded only and have nowhere else to be.
 
     // Raw heading-fusion inputs, recorded but NOT yet used to drive the display. The fusion filter
     // itself is planned for the terminal, not here -- see docs/Heading_Sensor_Fusion_Plan.md. These
     // exist so the filter can be developed and tuned against recorded rides instead of by guessing.
-    private var lastYawDeg: Float? = null       // phone yaw from TYPE_ROTATION_VECTOR, tilt-compensated
     private var lastPitchDeg: Float? = null
     private var lastRollDeg: Float? = null
-    private var lastYawRateDps: Float? = null   // gyro Z, the axis the compass actually turns on
     private var lastOrientationLogMs = 0L
     private val rotationMatrix = FloatArray(9)
     private val orientation = FloatArray(3)
     private val motionListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             when (event.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> lastAccel = event.values.copyOf()
+                Sensor.TYPE_ACCELEROMETER -> telemetry.accelMs2 = event.values.copyOf()
                 Sensor.TYPE_GYROSCOPE -> {
-                    lastGyro = event.values.copyOf()
-                    lastYawRateDps = Math.toDegrees(event.values[2].toDouble()).toFloat()
+                    telemetry.gyroRadS = event.values.copyOf()
+                    telemetry.yawRateDps = Math.toDegrees(event.values[2].toDouble()).toFloat()
                 }
                 Sensor.TYPE_ROTATION_VECTOR -> {
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     SensorManager.getOrientation(rotationMatrix, orientation)
-                    lastYawDeg = Math.toDegrees(orientation[0].toDouble()).toFloat().mod(360f)
+                    telemetry.yawDeg = Math.toDegrees(orientation[0].toDouble()).toFloat().mod(360f)
                     lastPitchDeg = Math.toDegrees(orientation[1].toDouble()).toFloat()
                     lastRollDeg = Math.toDegrees(orientation[2].toDouble()).toFloat()
                     // Throttled to ~10Hz: fast enough to resolve jacket flap (a few Hz), slow
@@ -108,7 +103,7 @@ class RelayService : Service() {
                     if (now - lastOrientationLogMs >= ORIENTATION_LOG_MS) {
                         lastOrientationLogMs = now
                         RelayRecorder.orientation(
-                            lastYawDeg ?: 0f, lastPitchDeg ?: 0f, lastRollDeg ?: 0f, lastYawRateDps,
+                            telemetry.yawDeg ?: 0f, lastPitchDeg ?: 0f, lastRollDeg ?: 0f, telemetry.yawRateDps,
                         )
                     }
                 }
@@ -235,7 +230,7 @@ class RelayService : Service() {
                 ble.writeCall(event.packet)
                 return
             }
-            is RelayStateEvent.NavUpdated -> nav = event.nav
+            is RelayStateEvent.NavUpdated -> telemetry.nav = event.nav
             is RelayStateEvent.ListenerConnected -> {
                 listening = true
                 RelayRecorder.lifecycle("listenerConnected")
@@ -260,39 +255,20 @@ class RelayService : Service() {
     }
 
     private fun publish() {
-        // No active navigation is NOT a reason to stop transmitting. The terminal is a compass and
-        // speed display first and a nav display second: gating the whole packet on `nav` meant the
-        // compass died whenever Maps wasn't routing, which is most riding. Send telemetry with an
-        // empty maneuver instead, and let the terminal decide what to show (a packet with no title,
-        // no distance and no progress normalizes to VIEW_IDLE, which is the compass view).
-        val currentNav = nav ?: EMPTY_NAV
-        // Only a recent fix goes out: the terminal shares it with friends as "where I am now".
-        val fix = location?.takeIf { android.os.SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos < 5_000_000_000L }
-        val telemetry = GnssTelemetry(
-            speedKmh = speedKmh,
-            headingDeg = headingDeg,
-            fixValid = fixValid,
-            batteryPercent = batteryPercent(),
-            bearingAccuracyDeg = bearingAccuracyDeg,
-            yawDeg = lastYawDeg,
-            yawRateDps = lastYawRateDps,
-            latitudeDeg = fix?.latitude,
-            longitudeDeg = fix?.longitude,
-            accuracyM = fix?.takeIf { it.hasAccuracy() }?.accuracy,
-        )
-        val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
-        val seq = sequence.incrementAndGet()
-        // The clock is supplied here rather than defaulted inside the packer: commonMain has no
-        // ambient time, and on iOS the terminal takes the clock from CTS instead.
+        // Android's clock and monotonic timer, because commonMain has neither; on iOS the terminal
+        // takes its time from CTS instead.
         val nowMs = System.currentTimeMillis()
-        val packet = packRawNotifPacket(
-            seq, currentNav, telemetry, motion,
+        telemetry.batteryPercent = batteryPercent()
+        val published = telemetry.publish(
             nowEpochMs = nowMs,
             tzOffsetMin = TimeZone.getDefault().getOffset(nowMs) / 60_000,
+            monotonicMs = android.os.SystemClock.elapsedRealtime(),
         )
+        val seq = published.sequence
+        val packet = published.bytes
         Log.i(TAG, "publish: connected=$connected packetLen=${packet.size}")
-        // Recorded before the write, and regardless of `connected`: a packet the phone built but
-        // could not send is exactly the case the ESP-side log cannot show on its own.
+        // Recorded before the write and regardless of `connected`: a packet the phone built but
+        // could not send is exactly the case an ESP-side log cannot show on its own.
         RelayRecorder.packet(seq, packet, connected)
         if (connected) {
             ble.write(packet)
@@ -422,32 +398,39 @@ class RelayService : Service() {
             override fun onLocationResult(result: LocationResult) {
                 val loc: Location? = result.lastLocation
                 if (loc != null) {
-                    location = loc
-                    speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
-                    headingDeg = if (loc.hasBearing()) loc.bearing.toInt().mod(360) else null
-                    fixValid = loc.hasSpeed() || loc.hasBearing()
-                    bearingAccuracyDeg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                    telemetry.speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null
+                    telemetry.headingDeg = if (loc.hasBearing()) loc.bearing.toInt().mod(360) else null
+                    telemetry.fixValid = loc.hasSpeed() || loc.hasBearing()
+                    telemetry.bearingAccuracyDeg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                         loc.hasBearingAccuracy()) loc.bearingAccuracyDegrees else null
+                    telemetry.fix = TelemetryAggregator.Fix(
+                        latitudeDeg = loc.latitude,
+                        longitudeDeg = loc.longitude,
+                        accuracyM = if (loc.hasAccuracy()) loc.accuracy else null,
+                        // elapsedRealtimeNanos is when the fix was taken, not when it arrived, so
+                        // the staleness rule measures the position's age rather than the delivery.
+                        monotonicMs = loc.elapsedRealtimeNanos / 1_000_000,
+                    )
                     // Log the RAW inputs separately, never pre-fused: the terminal-side filter
                     // needs GPS course and phone yaw as distinct quantities in distinct frames.
                     RelayRecorder.telemetry(
-                        speedKmh = speedKmh,
-                        headingDeg = headingDeg,
-                        fixValid = fixValid,
+                        speedKmh = telemetry.speedKmh,
+                        headingDeg = telemetry.headingDeg,
+                        fixValid = telemetry.fixValid,
                         batteryPercent = batteryPercent(),
                         bearingDeg = if (loc.hasBearing()) loc.bearing else null,
-                        bearingAccuracyDeg = bearingAccuracyDeg,
+                        bearingAccuracyDeg = telemetry.bearingAccuracyDeg,
                         speedAccuracyMps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                             loc.hasSpeedAccuracy()) loc.speedAccuracyMetersPerSecond else null,
                         accuracyM = if (loc.hasAccuracy()) loc.accuracy else null,
                         hasBearing = loc.hasBearing(),
                         hasSpeed = loc.hasSpeed(),
-                        yawDeg = lastYawDeg,
+                        yawDeg = telemetry.yawDeg,
                         pitchDeg = lastPitchDeg,
                         rollDeg = lastRollDeg,
-                        yawRateDps = lastYawRateDps,
-                        accel = lastAccel,
-                        gyro = lastGyro,
+                        yawRateDps = telemetry.yawRateDps,
+                        accel = telemetry.accelMs2,
+                        gyro = telemetry.gyroRadS,
                         latDeg = loc.latitude,
                         lonDeg = loc.longitude,
                         altitudeM = if (loc.hasAltitude()) loc.altitude else null,
@@ -515,19 +498,6 @@ class RelayService : Service() {
         /** Process-wide, so a second instance gets a different id than the one it overlapped with. */
         private val instanceCounter = AtomicInteger(0)
 
-        /**
-         * Stand-in maneuver for "riding, but not navigating". Every field null so the terminal's
-         * normalizer sees no title, no distance and no progress and settles on its idle/compass
-         * view -- no fabricated zeros, matching the sentinel discipline in RawNotifPacket.
-         */
-        private val EMPTY_NAV = RawNavNotification(
-            title = null,
-            etaText = null,
-            distanceText = null,
-            progress = null,
-            progressMax = null,
-            iconRotationDeg = null,
-        )
         const val EXTRA_DEVICE_ADDRESS = "org.openapex.androidauto.extra.DEVICE_ADDRESS"
         // Retry cadence for the location-FGS promotion. Long enough not to churn, short enough
         // that GNSS is live well inside a drive if the exemption arrives late.
