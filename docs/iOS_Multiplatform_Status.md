@@ -85,11 +85,24 @@ Two things that only a reinstall could show:
   `BLUETOOTH_CONNECT` is granted and Android throws. Survivable for a developer who grants
   permissions out of band; wrong for anyone else.
 
-Remaining, reordered from the plan: `SecureStore` must come **before** the mesh sync state
-machine, because `syncRiderMesh` calls `RiderStore.identity(context)` directly and cannot move
-until that is behind an interface. Then the control-op queue and a characteristic enum, the
-`TerminalLink` interface with `DeviceId` replacing the saved MAC, `TelemetryAggregator` out of
-`RelayService`, and v6 plus `telemetryOnly()`.
+Also done: the rider store behind `SecureStore` + `RiderStoreCore`, and the rider-mesh sync state
+machine as `RiderMeshSync` on `MeshTransport` + `RiderMeshStore`. `:shared:jvmTest` is now 45
+tests. Both verified on the OnePlus, in place: a full sync -- `identity push ok=true`,
+`friends sync: terminal=1 merged=1`, `friends push ok=true`, FRIENDS subscribed -- so the list was
+read off the terminal, merged, stored in the new format and pushed back. The rider identity
+survived the storage change, which is the one value that cannot be regenerated without orphaning
+every friendship.
+
+Fixed along the way: `RelayBleClient.writeAll` locked its own `frames` parameter instead of the
+`FragmentQueue` field of the same name, leaving `controlOps` mutated outside the lock that guards
+it everywhere else. Pre-existing. The queue now has an explicit lock object.
+
+Remaining: the control-op queue and a characteristic enum, the `TerminalLink` interface with
+`DeviceId` replacing the saved MAC, `TelemetryAggregator` out of `RelayService`, and v6 plus
+`telemetryOnly()`.
+
+**Open question at the `DeviceId` step:** whether replacing the stored MAC needs a migration path
+or whether a re-pair is acceptable.
 
 The Android app today: single Gradle module, ~3.3k LOC, **no coroutines anywhere** (everything is
 a main-looper `Handler`), no Compose, no DI. Four files are already pure Kotlin and move verbatim:
