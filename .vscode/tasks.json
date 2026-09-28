@@ -5,7 +5,7 @@
       "label": "Android Auto: assembleDebug",
       "type": "shell",
       "command": "${workspaceFolder}/gradlew.bat",
-      "args": ["-p", "android", "assembleDebug"],
+      "args": ["-p", "phone", ":androidApp:assembleDebug"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": "build",
       "problemMatcher": []

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "OpenApexAndroid"
-include(":app")
+rootProject.name = "OpenApex"
+include(":androidApp")

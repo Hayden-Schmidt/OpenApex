@@ -2,7 +2,8 @@
 
 ## Repository layout
 
-- `android/`: minimal Android Auto host-facing app module.
+- `phone/`: the companion app. `androidApp/` is the Android host; shared multiplatform code
+  lands in `shared/` as the iOS work proceeds (docs/Phone_App_Architecture.md §3).
 - `firmware/`: ESP-IDF C3 terminal skeleton and profile-independent countdown module.
 - `simulator/`: hardware-free browser display and PlatformIO native harness.
 - `scripts/`: setup and host-test helpers.
@@ -21,23 +22,25 @@
 - Android Studio is optional; VS Code plus the Android SDK is sufficient for command-line builds.
 
 Install the SDK into `%LOCALAPPDATA%\Android\Sdk`, set `ANDROID_HOME` and
-`ANDROID_SDK_ROOT`, and create `android/local.properties` if Gradle cannot discover the SDK:
+`ANDROID_SDK_ROOT`, and create `phone/local.properties` if Gradle cannot discover the SDK:
 
 ```properties
 sdk.dir=C:\\Users\\<user>\\AppData\\Local\\Android\\Sdk
 ```
 
-`android/local.properties` is ignored and must not be committed.
+`phone/local.properties` is ignored and must not be committed.
 
-Build the Android Auto module from the repository root:
+Build the app from the repository root:
 
 ```powershell
-.\gradlew.bat -p android assembleDebug
+.\phone\gradlew.bat -p phone :androidApp:assembleDebug
+.\phone\gradlew.bat -p phone :androidApp:testDebugUnitTest
 ```
 
-The Android Auto shell uses `androidx.car.app:app:1.7.0`, a `CarAppService`, a navigation-category
-service declaration, and a minimal `PaneTemplate`. Notification ingestion, GNSS normalization, and
-BLE publishing are the next implementation slice.
+The Android Auto shell is gone: it was a `CarAppService` rendering one static `PaneTemplate` with
+no link to the relay, and it cost `androidx.car.app` plus a navigation-category service
+declaration for that. Android Auto and CarPlay are deferred, not cancelled -- see
+docs/iOS_Multiplatform_Status.md.
 
 ### ESP-IDF
 
@@ -116,7 +119,7 @@ asset-generation, packet-fixture, or firmware tooling that uses Python.
 
 ## VS Code tasks
 
-- `Android Auto: assembleDebug`
+- `Android: assembleDebug`
 - `Firmware: host countdown test`
 - `Firmware: build C3`
 - `Simulator: open round display`
