@@ -12,6 +12,7 @@
 #include "mesh.h"
 #include "odometer_store.h"
 #include "packet.h"
+#include "packet_merge.h"
 #include "pipeline.h"
 #include "settings.h"
 #include "settings_store.h"
@@ -141,8 +142,16 @@ static void countdown_task(void *argument) {
             // Static: the view state is over 1 KB with the mesh fields, too much for this stack.
             static terminal_view_state_t next;
             memset(&next, 0, sizeof(next));
-            view_state_apply_packet(&raw, platform_now_ms(), &next);
-            feed_mesh_pos(&raw);
+            // Nav and telemetry arrive in one packet from Android and in two from iOS
+            // (ANCS text, then the app's telemetry-only v6 write). Merge before applying
+            // so neither half blanks the other; on Android this is a passthrough.
+            static raw_notif_t merged;
+            const uint32_t now_ms = platform_now_ms();
+            if (!packet_merge_accept(&raw, now_ms, &merged)) {
+                continue;
+            }
+            view_state_apply_packet(&merged, now_ms, &next);
+            feed_mesh_pos(&merged);
             next.phone_connected = ble_link_is_connected();
             call_state_fill(&next, platform_now_ms());
             fill_mesh_view(&next);

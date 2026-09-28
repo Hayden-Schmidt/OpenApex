@@ -29,11 +29,21 @@ bool packet_decode(const uint8_t *data, size_t len, raw_notif_t *out) {
     if (data == NULL || out == NULL || len < RAW_NOTIF_PACKET_SIZE) {
         return false;
     }
-    if (data[0] != RAW_NOTIF_VERSION) {
+    if (data[0] < RAW_NOTIF_VERSION_MIN || data[0] > RAW_NOTIF_VERSION) {
         return false;
     }
 
-    out->gnss_fix_valid = (data[1] & 0x01) != 0;
+    const uint8_t flags = data[1];
+    out->gnss_fix_valid = (flags & RAW_FLAG_GNSS_FIX_VALID) != 0;
+    // v5 has no flag bits past bit 0, and the Android relay leaves the rest zero, so reading them
+    // unconditionally would be harmless today -- but "harmless today" is how a version check stops
+    // meaning anything. Only v6 gets to speak about what it omitted.
+    const bool v6 = data[0] >= 6U;
+    out->source_is_ios = v6 && (flags & RAW_FLAG_SOURCE_IS_IOS) != 0;
+    out->source_groups = RAW_GROUP_TELEMETRY;
+    if (!v6 || (flags & RAW_FLAG_NAV_FIELDS_ABSENT) == 0) {
+        out->source_groups |= RAW_GROUP_NAV;
+    }
     out->sequence = read_u32(&data[2]);
     out->speed_kmh_x10 = read_u16(&data[6]);
     out->heading_deg = read_u16(&data[8]);

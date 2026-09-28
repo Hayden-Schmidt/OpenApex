@@ -264,6 +264,22 @@ writing the packet characteristic, so the iOS app is not optional, it is the tel
 iOS kills it the terminal goes telemetry-blind while nav and the clock keep working; that gap is
 surfaced to the rider rather than papered over.
 
+**Packet v6 and the merge.** Nav and telemetry arrive in one packet on Android and in two on iOS,
+so the terminal needs to tell a telemetry-only write apart from a route that has ended -- they
+look identical on the wire. v6 changes no offsets: it adds two flag bits beside `gnss_fix_valid`
+in byte 1, `bit1 nav_fields_absent` and `bit2 source_is_ios`. v5 is still decoded and is read as
+carrying both halves, which is what the Android relay in fact sends; the version check was strict
+equality until now and the compatibility window is deliberately one version wide.
+
+`packet_merge.c` holds the two halves independently and overwrites only the half a packet speaks
+for, so an ANCS nav update cannot blank the app's speed and a telemetry write cannot end the
+route. Freshness is per half, not per field: there are exactly two producers and neither varies
+its fields independently. Each half reverts to its sentinels once its producer goes quiet -- nav
+after 10 s, matching the countdown staleness rule that already governs the nav page, and telemetry
+after 5 s, so an iOS app killed in the background blanks the dial rather than freezing a plausible
+last speed on it (§3). On Android, where every packet carries both halves, the merge is a
+passthrough and the wire behaviour is unchanged.
+
 Phone-side settings, firmware-update and device-info contracts are planned in
 [Phone_App_Architecture.md](Phone_App_Architecture.md) §6 and must land here before implementation.
 

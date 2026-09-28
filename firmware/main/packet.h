@@ -27,9 +27,33 @@
 //
 // v5 adds the phone's fix (lat_e7 at 200, lon_e7 at 204, h_accuracy_m at 208), shared with friends'
 // terminals over the rider mesh (docs/OpenApex_SPEC.md §5.7). Never used for navigation here.
+//
+// v6 changes no offsets at all. It adds two flag bits alongside gnss_fix_valid in byte 1 so a
+// writer can say what it is NOT carrying: bit1 nav_fields_absent marks a telemetry-only write
+// (the iOS app's role -- nav text comes from ANCS on the terminal instead, see SPEC 5.2), and
+// bit2 source_is_ios identifies the writer. Without bit1 a telemetry-only packet is
+// indistinguishable from a route that just ended, and merging it would blank the ANCS nav.
+// v5 is still accepted: the Android relay writes it and the restructure must not change a byte
+// on the wire. A v5 packet is read as carrying both halves, which is exactly what it does.
 #define RAW_NOTIF_PACKET_SIZE 210U
-#define RAW_NOTIF_VERSION 5U
+#define RAW_NOTIF_VERSION 6U
+// Oldest version still decoded. The version check was strict equality until v6 -- this is the
+// first compatibility window, and it is deliberately one version wide.
+#define RAW_NOTIF_VERSION_MIN 5U
 #define RAW_MAX_SEGMENTS 8U
+
+// Byte 1 flag bits.
+#define RAW_FLAG_GNSS_FIX_VALID 0x01U
+#define RAW_FLAG_NAV_FIELDS_ABSENT 0x02U // v6+
+#define RAW_FLAG_SOURCE_IS_IOS 0x04U     // v6+
+
+// Which half of the model a decoded packet speaks for. Not on the wire -- derived from the
+// version and flags by packet_decode(), or set outright by a producer that never had a wire
+// packet (ancs_nav_to_raw). packet_merge.c keeps the two halves independently fresh.
+typedef enum {
+    RAW_GROUP_NAV = 0x01,       // title/distance/eta/progress/glyph/traffic segments
+    RAW_GROUP_TELEMETRY = 0x02, // fix, speed, heading, battery, motion, clock, position
+} raw_group_t;
 
 // Field buffer sizes.
 #define RAW_DIST_STR_LEN 16
@@ -82,9 +106,13 @@ typedef struct {
     int32_t lat_e7;
     int32_t lon_e7;
     uint16_t h_accuracy_m; // RAW_U16_UNKNOWN = unknown
+    // Not wire fields. Bitwise OR of raw_group_t: which halves of this struct the producer
+    // actually filled in. Everything outside them is at its sentinel and means nothing.
+    uint8_t source_groups;
+    bool source_is_ios;
 } raw_notif_t;
 
-// Decodes a raw packet into out. Returns false on wrong version or short length (malformed
+// Decodes a raw packet into out. Returns false on an unsupported version or short length (malformed
 // packets must never produce a fabricated navigation value). Strings are null-terminated and
 // bounded to their buffer size.
 bool packet_decode(const uint8_t *data, size_t len, raw_notif_t *out);

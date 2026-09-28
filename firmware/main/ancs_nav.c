@@ -155,6 +155,10 @@ bool ancs_nav_to_raw(const ancs_notification_t *n, uint32_t sequence, raw_notif_
 
     memset(out, 0, sizeof(*out));
     out->sequence = sequence;
+    // Nav only, and from an iPhone by definition -- ANCS exists nowhere else. The telemetry
+    // half arrives separately as a v6 telemetry-only packet from the companion app.
+    out->source_groups = RAW_GROUP_NAV;
+    out->source_is_ios = true;
 
     // Everything ANCS cannot carry stays at its sentinel. A missing field must never become a
     // fabricated zero (SPEC §3) -- on this path that is most of the packet, and the telemetry

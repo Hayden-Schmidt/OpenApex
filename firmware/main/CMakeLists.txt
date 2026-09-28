@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "countdown.c" "packet.c" "normalize.c" "pipeline.c" "ble_link.c" "ancs_core.c" "ancs_nav.c" "ancs_bridge.c" "apple_client.c" "cts_client.c" "display_driver.c" "touch_driver.c" "drive_log.c" "heading_fusion.c" "heading_store.c" "odometer.c" "odometer_store.c" "call_packet.c" "call_state.c" "settings.c" "settings_store.c" "avatar_store.c" "mesh.c" "mesh_transport_ble.c" "mesh_transport_espnow.c" "mesh_core.c" "mesh_proto.c" "mesh_crypto.c"
+    SRCS "main.c" "countdown.c" "packet.c" "packet_merge.c" "normalize.c" "pipeline.c" "ble_link.c" "ancs_core.c" "ancs_nav.c" "ancs_bridge.c" "apple_client.c" "cts_client.c" "display_driver.c" "touch_driver.c" "drive_log.c" "heading_fusion.c" "heading_store.c" "odometer.c" "odometer_store.c" "call_packet.c" "call_state.c" "settings.c" "settings_store.c" "avatar_store.c" "mesh.c" "mesh_transport_ble.c" "mesh_transport_espnow.c" "mesh_core.c" "mesh_proto.c" "mesh_crypto.c"
     INCLUDE_DIRS "."
     # app_update/esp_partition: the dev-only drive logger writes to its own flash partition. The
     # whole of drive_log.c compiles to nothing without -DOPENAPEX_DRIVE_LOG=1, so this costs a
