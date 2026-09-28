@@ -1,6 +1,10 @@
 package org.openapex.app
 
+import org.openapex.mesh.MeshCharacteristic
+import org.openapex.mesh.MeshTransport
+import org.openapex.mesh.RiderMeshSync
 import org.openapex.protocol.*
+import org.openapex.store.RiderMeshStore
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -238,56 +242,43 @@ class RelayBleClient(private val context: Context) {
         is ControlOp.Subscribe -> Unit
     }
 
-    /**
-     * Rider mesh sync on connect (spec §5.7): push this rider's identity, read the terminal's
-     * friends (it may have made some with no phone connected), merge them into ours, write the
-     * merged list back, then subscribe so friendships made later reach us too.
-     */
-    private fun syncRiderMesh() {
-        writeAll(IDENTITY_UUID, listOf(RiderStore.identity(context).encode())) { ok ->
-            Log.i(TAG, "identity push ok=$ok")
-        }
-        readTerminalFriends(0, mutableListOf())
-    }
+    // Rider mesh sync (spec 5.7) lives in commonMain: the cursor walk over the terminal's friend
+    // list, the merge and the push-back are the same on both platforms, and they are the half
+    // worth testing without a phone. This class supplies the GATT half as a MeshTransport, and
+    // the store adapter below so the sync goes through RiderStore's lock rather than the
+    // un-synchronised core.
+    private val mesh = RiderMeshSync(
+        store = object : RiderMeshStore {
+            override fun identity() = RiderStore.identity(context)
+            override fun friends() = RiderStore.friends(context)
+            override fun setFriends(list: List<Friend>) = RiderStore.setFriends(context, list)
+        },
+        link = object : MeshTransport {
+            override fun writeAll(char: MeshCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit) =
+                this@RelayBleClient.writeAll(uuidOf(char), frames, done)
 
-    private fun readTerminalFriends(index: Int, acc: MutableList<Friend>) {
-        writeAll(FRIENDS_UUID, listOf(RiderMesh.cursor(index))) { ok ->
-            if (!ok) return@writeAll // old firmware or link gone; next connect retries
-            enqueue(ControlOp.Read(FRIENDS_UUID) { rec ->
-                val f = rec?.takeIf { it.isNotEmpty() }?.let(Friend::decode)
-                if (f != null && index < RiderMesh.FRIEND_CAP) {
-                    acc += f
-                    readTerminalFriends(index + 1, acc)
-                } else if (rec != null) {
-                    pushFriends(acc)
-                }
-            })
-        }
-    }
+            override fun read(char: MeshCharacteristic, done: (ByteArray?) -> Unit) =
+                enqueue(ControlOp.Read(uuidOf(char), done))
 
-    private fun pushFriends(terminal: List<Friend>) {
-        val merged = RiderMesh.merge(RiderStore.friends(context), terminal)
-        RiderStore.setFriends(context, merged)
-        Log.i(TAG, "friends sync: terminal=${terminal.size} merged=${merged.size}")
-        writeAll(FRIENDS_UUID, listOf(RiderMesh.clear()) + merged.map(RiderMesh::upsert)) { ok ->
-            Log.i(TAG, "friends push ok=$ok")
-        }
-        synchronized(frames) { controlOps.addLast(ControlOp.Subscribe(FRIENDS_UUID)) }
-        pumpQueue()
+            override fun subscribe(char: MeshCharacteristic) {
+                synchronized(this@RelayBleClient.frames) { controlOps.addLast(ControlOp.Subscribe(uuidOf(char))) }
+                pumpQueue()
+            }
+
+            override fun log(message: String) { Log.i(TAG, message) }
+        },
+    )
+
+    private fun uuidOf(char: MeshCharacteristic): UUID = when (char) {
+        MeshCharacteristic.IDENTITY -> IDENTITY_UUID
+        MeshCharacteristic.FRIENDS -> FRIENDS_UUID
     }
 
     /** Pushes the phone's friend list again, e.g. after the rider removes one in the app. */
-    fun pushFriends() = writeAll(
-        FRIENDS_UUID, listOf(RiderMesh.clear()) + RiderStore.friends(context).map(RiderMesh::upsert),
-    ) { ok -> Log.i(TAG, "friends push ok=$ok") }
+    fun pushFriends() = mesh.pushFriends()
 
-    // A friendship completed on the terminal: `[op=UPSERT][record]`.
     private fun onFriendNotify(char: BluetoothGattCharacteristic, value: ByteArray?) {
-        if (char.uuid != FRIENDS_UUID || value == null || value.isEmpty()) return
-        if (value[0].toInt() != RiderMesh.OP_UPSERT) return
-        val f = Friend.decode(value.copyOfRange(1, value.size)) ?: return
-        Log.i(TAG, "terminal added friend ${f.name}")
-        RiderStore.setFriends(context, RiderMesh.merge(RiderStore.friends(context), listOf(f)))
+        if (char.uuid == FRIENDS_UUID && value != null) mesh.onFriendNotify(value)
     }
 
     // Starts the next control op, if any. Returns true when one was pending, so nav waits.
@@ -455,7 +446,7 @@ class RelayBleClient(private val context: Context) {
                 Log.i(TAG, "call action subscribe started=$subscribing")
                 synchronized(frames) { writeInFlight = subscribing }
                 RelayStateHolder.noteBleConnected()
-                syncRiderMesh()
+                mesh.onConnected()
             }
         }
 

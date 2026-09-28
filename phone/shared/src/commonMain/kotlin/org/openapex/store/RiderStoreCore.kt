@@ -17,8 +17,8 @@ import org.openapex.protocol.RiderIdentity
 class RiderStoreCore(
     private val store: SecureStore,
     private val randomBytes: (Int) -> ByteArray,
-) {
-    fun identity(): RiderIdentity {
+) : RiderMeshStore {
+    override fun identity(): RiderIdentity {
         val id = store.get(KEY_ID)
         val key = store.get(KEY_KEY)
         if (id != null && key != null) {
@@ -40,7 +40,7 @@ class RiderStoreCore(
      * no separator, no length prefix, nothing to get out of step. A trailing partial record means
      * a truncated write, and the whole list is treated as unreadable rather than half-restored.
      */
-    fun friends(): List<Friend> {
+    override fun friends(): List<Friend> {
         val blob = store.get(KEY_FRIENDS) ?: return emptyList()
         if (blob.size % Friend.RECORD_LEN != 0) return emptyList()
         return (0 until blob.size / Friend.RECORD_LEN).mapNotNull { i ->
@@ -48,7 +48,7 @@ class RiderStoreCore(
         }
     }
 
-    fun setFriends(list: List<Friend>) {
+    override fun setFriends(list: List<Friend>) {
         val blob = ByteArray(list.size * Friend.RECORD_LEN)
         list.forEachIndexed { i, f -> f.encode().copyInto(blob, i * Friend.RECORD_LEN) }
         store.put(KEY_FRIENDS, blob)
