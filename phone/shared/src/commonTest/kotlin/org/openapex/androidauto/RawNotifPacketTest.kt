@@ -1,8 +1,8 @@
 package org.openapex.androidauto
 
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.Test
 
 class RawNotifPacketTest {
 
@@ -26,6 +26,8 @@ class RawNotifPacketTest {
                 yawDeg = 271f,
                 yawRateDps = -12.5f,
             ),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(RAW_NOTIF_PACKET_SIZE, packet.size)
         assertEquals(RAW_NOTIF_VERSION.toByte(), packet[0])
@@ -60,6 +62,8 @@ class RawNotifPacketTest {
             nav = RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null),
             gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
             motion = MotionTelemetry(accelMs2 = floatArrayOf(0f, 0f, 9.80665f), gyroRadS = floatArrayOf(0f, 0f, 0f)),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(RAW_NOTIF_PACKET_SIZE, withMotion.size)
         assertEquals(1000, readI16(withMotion, 135)) // 1 g on z axis = 1000 milli-g
@@ -69,6 +73,8 @@ class RawNotifPacketTest {
             sequence = 1,
             nav = RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null),
             gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(0x7FFF, readI16(withoutMotion, 131))
         assertEquals(0x7FFF, readI16(withoutMotion, 141))
@@ -86,6 +92,8 @@ class RawNotifPacketTest {
             sequence = 1,
             nav = RawNavNotification(title = "Turn left", etaText = null, distanceText = null, progress = null, progressMax = null),
             gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(0x00, packet[1].toInt() and 0xFF) // fix invalid
         assertEquals(0xFFFF, (packet[6].toInt() and 0xFF) or ((packet[7].toInt() and 0xFF) shl 8))
@@ -105,6 +113,8 @@ class RawNotifPacketTest {
             sequence = 1,
             nav = RawNavNotification(title = longTitle, etaText = null, distanceText = null, progress = null, progressMax = null),
             gnss = GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         val title = readString(packet, 67)
         assertEquals(63, title.length) // 64-byte buffer, null terminator at last byte
@@ -117,6 +127,8 @@ class RawNotifPacketTest {
             sequence = 1,
             nav = RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null),
             gnss = GnssTelemetry(speedKmh = null, headingDeg = 400, fixValid = true, batteryPercent = null),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(40, (packet[8].toInt() and 0xFF) or ((packet[9].toInt() and 0xFF) shl 8))
     }
@@ -145,12 +157,14 @@ class RawNotifPacketTest {
             1,
             RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null, segments = segments),
             GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(2, packet[158].toInt())
         assertEquals(250, readU16(packet, 159))
-        assertArrayEquals(byteArrayOf(0x00, 0x9A.toByte(), 0xA6.toByte()), packet.copyOfRange(161, 164))
+        assertContentEquals(byteArrayOf(0x00, 0x9A.toByte(), 0xA6.toByte()), packet.copyOfRange(161, 164))
         assertEquals(1000, readU16(packet, 164))
-        assertArrayEquals(byteArrayOf(0xE8.toByte(), 0x71, 0x0A), packet.copyOfRange(166, 169))
+        assertContentEquals(byteArrayOf(0xE8.toByte(), 0x71, 0x0A), packet.copyOfRange(166, 169))
     }
 
     @Test
@@ -160,9 +174,55 @@ class RawNotifPacketTest {
             1,
             RawNavNotification(title = null, etaText = null, distanceText = null, progress = null, progressMax = null, segments = segments),
             GnssTelemetry(speedKmh = null, headingDeg = null, fixValid = false, batteryPercent = null),
+            nowEpochMs = null,
+            tzOffsetMin = null,
         )
         assertEquals(MAX_PROGRESS_SEGMENTS, packet[158].toInt())
         assertEquals(800, readU16(packet, 159 + 7 * 5))
+    }
+
+    @Test
+    fun `a NaN reading is unknown, not zero`() {
+        // Math.round(NaN) was 0, so these used to be written as real readings: a stationary
+        // rider, a perfect bearing accuracy, a fix on the equator. Every one of them is a
+        // fabricated value the sentinels exist to prevent.
+        val packet = packRawNotifPacket(
+            sequence = 1,
+            nav = RawNavNotification(
+                title = "x",
+                etaText = null,
+                distanceText = null,
+                progress = null,
+                progressMax = null,
+            ),
+            gnss = GnssTelemetry(
+                speedKmh = Float.NaN,
+                headingDeg = null,
+                fixValid = true,
+                batteryPercent = null,
+                bearingAccuracyDeg = Float.NaN,
+                yawDeg = Float.NaN,
+                yawRateDps = Float.NaN,
+                latitudeDeg = Double.NaN,
+                longitudeDeg = 174.7,
+                accuracyM = Float.NaN,
+            ),
+            motion = MotionTelemetry(
+                accelMs2 = floatArrayOf(Float.NaN, 0f, 0f),
+                gyroRadS = null,
+            ),
+            nowEpochMs = null,
+            tzOffsetMin = null,
+        )
+        assertEquals(0xFFFF, readU16(packet, 6))    // speed
+        assertEquals(0xFFFF, readU16(packet, 145))  // bearing accuracy
+        assertEquals(0xFFFF, readU16(packet, 147))  // yaw
+        assertEquals(0x7FFF, readI16(packet, 149))  // yaw rate
+        assertEquals(0xFFFF, readU16(packet, 208))  // horizontal accuracy
+        assertEquals(0x7FFF, readI16(packet, 131))  // accel x
+        // Half a fix is no fix: the good longitude goes to the sentinel with the bad latitude.
+        assertEquals(0x7FFFFFFFL, readU32(packet, 200))
+        assertEquals(0x7FFFFFFFL, readU32(packet, 204))
     }
 
     private fun readU16(buf: ByteArray, offset: Int): Int =
@@ -174,6 +234,6 @@ class RawNotifPacketTest {
     private fun readString(buf: ByteArray, offset: Int): String {
         var end = offset
         while (end < buf.size && buf[end].toInt() != 0) end++
-        return String(buf, offset, end - offset, Charsets.UTF_8)
+        return buf.decodeToString(offset, end)
     }
 }

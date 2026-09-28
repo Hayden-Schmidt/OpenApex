@@ -1,10 +1,10 @@
 package org.openapex.androidauto
 
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 class RiderMeshTest {
     private val id = ByteArray(8) { it.toByte() }
@@ -15,8 +15,8 @@ class RiderMeshTest {
         val b = RiderIdentity(id, key, "Hay").encode()
         assertEquals(1 + 8 + 16 + 1 + 3, b.size)
         assertEquals(1, b[0].toInt())
-        assertArrayEquals(id, b.copyOfRange(1, 9))
-        assertArrayEquals(key, b.copyOfRange(9, 25))
+        assertContentEquals(id, b.copyOfRange(1, 9))
+        assertContentEquals(key, b.copyOfRange(9, 25))
         assertEquals(3, b[25].toInt())
         assertEquals("Hay", b.copyOfRange(26, 29).decodeToString())
     }
@@ -46,7 +46,7 @@ class RiderMeshTest {
     fun friendRecordLayout() {
         val b = Friend(id, key, "Sam", 4, 0x12AB34, null).encode()
         assertEquals(4, b[24].toInt())
-        assertArrayEquals(byteArrayOf(0x12, 0xAB.toByte(), 0x34), b.copyOfRange(25, 28))
+        assertContentEquals(byteArrayOf(0x12, 0xAB.toByte(), 0x34), b.copyOfRange(25, 28))
         assertEquals(3, b[29].toInt())
         assertEquals("Sam", b.copyOfRange(30, 33).decodeToString())
     }
@@ -76,8 +76,8 @@ class RiderMeshTest {
 
     @Test
     fun ops() {
-        assertArrayEquals(byteArrayOf(4, 7), RiderMesh.cursor(7))
-        assertArrayEquals(byteArrayOf(3), RiderMesh.clear())
+        assertContentEquals(byteArrayOf(4, 7), RiderMesh.cursor(7))
+        assertContentEquals(byteArrayOf(3), RiderMesh.clear())
         assertEquals(123, RiderMesh.upsert(Friend(id, key, "x", 0, 0, null)).size)
     }
 }

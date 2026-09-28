@@ -32,7 +32,12 @@ data class Friend(
     /** 80-byte custom art, or null for a preset avatar. */
     val art: ByteArray?,
 ) {
-    val idHex: String get() = id.joinToString("") { "%02x".format(it) }
+    // Hand-rolled rather than "%02x".format(it): String.format is JVM-only, and this is
+    // commonMain.
+    val idHex: String get() = id.joinToString("") { b ->
+        val v = b.toInt() and 0xFF
+        "0123456789abcdef"[v shr 4].toString() + "0123456789abcdef"[v and 0x0F]
+    }
 
     /** Same rider with the same look; ByteArray fields make the generated equals() useless. */
     fun sameAs(o: Friend) = id.contentEquals(o.id) && key.contentEquals(o.key) && name == o.name &&

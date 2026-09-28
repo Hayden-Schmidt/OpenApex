@@ -38,6 +38,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.TimeZone
 
 /**
  * Foreground service owning the relay lifecycle: GNSS sampling, notification relay state, and
@@ -279,7 +280,14 @@ class RelayService : Service() {
         )
         val motion = MotionTelemetry(accelMs2 = lastAccel, gyroRadS = lastGyro)
         val seq = sequence.incrementAndGet()
-        val packet = packRawNotifPacket(seq, currentNav, telemetry, motion)
+        // The clock is supplied here rather than defaulted inside the packer: commonMain has no
+        // ambient time, and on iOS the terminal takes the clock from CTS instead.
+        val nowMs = System.currentTimeMillis()
+        val packet = packRawNotifPacket(
+            seq, currentNav, telemetry, motion,
+            nowEpochMs = nowMs,
+            tzOffsetMin = TimeZone.getDefault().getOffset(nowMs) / 60_000,
+        )
         Log.i(TAG, "publish: connected=$connected packetLen=${packet.size}")
         // Recorded before the write, and regardless of `connected`: a packet the phone built but
         // could not send is exactly the case the ESP-side log cannot show on its own.

@@ -1,16 +1,16 @@
 package org.openapex.androidauto
 
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 class SettingsTlvTest {
 
     @Test
     fun `defaults encode to the spec golden fixture`() {
-        assertArrayEquals(SettingsTlv.DEFAULTS_FIXTURE, SettingsTlv.encode(TerminalSettings()))
+        assertContentEquals(SettingsTlv.DEFAULTS_FIXTURE, SettingsTlv.encode(TerminalSettings()))
         assertEquals(TerminalSettings(), SettingsTlv.decode(SettingsTlv.DEFAULTS_FIXTURE))
     }
 

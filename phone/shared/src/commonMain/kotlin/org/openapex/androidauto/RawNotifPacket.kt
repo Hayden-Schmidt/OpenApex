@@ -1,6 +1,8 @@
 package org.openapex.androidauto
 
-import java.nio.charset.StandardCharsets
+import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
  * v4 raw-notification relay packet. The phone reads raw Google Maps navigation notification
@@ -134,15 +136,17 @@ fun packRawNotifPacket(
     nav: RawNavNotification,
     gnss: GnssTelemetry,
     motion: MotionTelemetry = MotionTelemetry(null, null),
-    nowEpochMs: Long? = System.currentTimeMillis(),
-    tzOffsetMin: Int? = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000,
+    // No defaults: commonMain has no ambient clock, and it should not have one. The caller
+    // owns "now" and its UTC offset, which also makes every packet in a test reproducible.
+    nowEpochMs: Long?,
+    tzOffsetMin: Int?,
 ): ByteArray {
     val p = ByteArray(RAW_NOTIF_PACKET_SIZE)
     p[0] = RAW_NOTIF_VERSION.toByte()
     p[1] = if (gnss.fixValid) 0x01 else 0x00
 
     putU32(p, 2, sequence)
-    putU16(p, 6, gnss.speedKmh?.let { Math.round(it * 10f).toInt().coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
+    putU16(p, 6, gnss.speedKmh.scaledOrNull(10.0)?.coerceIn(0, 0xFFFE) ?: U16_UNKNOWN)
     putU16(p, 8, gnss.headingDeg?.let { it.mod(360).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
     p[10] = gnss.batteryPercent?.coerceIn(0, 254)?.toByte() ?: U8_UNKNOWN.toByte()
     putU32(p, 11, nav.progress?.takeIf { it >= 0 } ?: U32_UNKNOWN)
@@ -157,18 +161,20 @@ fun packRawNotifPacket(
     putMotionVector(p, 137, motion.gyroRadS, scale = 1000.0 * RAD_PER_S_TO_DEG_PER_S)
     putI16(p, 143, nav.iconRotationDeg?.mod(360) ?: I16_UNKNOWN)
 
-    putU16(p, 145, gnss.bearingAccuracyDeg?.let { Math.round(it * 10f).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
-    putU16(p, 147, gnss.yawDeg?.let { Math.round(it).mod(360).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
-    putI16(p, 149, gnss.yawRateDps?.let { Math.round(it * 10f).coerceIn(-0x7FFE, 0x7FFE) } ?: I16_UNKNOWN)
+    putU16(p, 145, gnss.bearingAccuracyDeg.scaledOrNull(10.0)?.coerceIn(0, 0xFFFE) ?: U16_UNKNOWN)
+    putU16(p, 147, gnss.yawDeg.scaledOrNull(1.0)?.mod(360)?.coerceIn(0, 0xFFFE) ?: U16_UNKNOWN)
+    putI16(p, 149, gnss.yawRateDps.scaledOrNull(10.0)?.coerceIn(-0x7FFE, 0x7FFE) ?: I16_UNKNOWN)
 
     putU32(p, 152, nowEpochMs?.takeIf { it >= 0 }?.let { (it / 1000L).toInt() } ?: U32_UNKNOWN)
     putI16(p, 156, tzOffsetMin?.coerceIn(-0x7FFE, 0x7FFE) ?: I16_UNKNOWN)
     putSegments(p, 158, nav.segments)
 
-    val hasFix = gnss.latitudeDeg != null && gnss.longitudeDeg != null
-    putU32(p, 200, if (hasFix) Math.round(gnss.latitudeDeg!! * 1e7).toInt() else I32_UNKNOWN)
-    putU32(p, 204, if (hasFix) Math.round(gnss.longitudeDeg!! * 1e7).toInt() else I32_UNKNOWN)
-    putU16(p, 208, gnss.accuracyM?.let { Math.round(it).coerceIn(0, 0xFFFE) } ?: U16_UNKNOWN)
+    // isFinite as well as non-null: a NaN latitude is not a fix, and half a fix is no fix --
+    // writing one coordinate and a sentinel for the other would put the rider on the equator.
+    val hasFix = gnss.latitudeDeg?.isFinite() == true && gnss.longitudeDeg?.isFinite() == true
+    putU32(p, 200, if (hasFix) (gnss.latitudeDeg!! * 1e7).roundToLong().toInt() else I32_UNKNOWN)
+    putU32(p, 204, if (hasFix) (gnss.longitudeDeg!! * 1e7).roundToLong().toInt() else I32_UNKNOWN)
+    putU16(p, 208, gnss.accuracyM.scaledOrNull(1.0)?.coerceIn(0, 0xFFFE) ?: U16_UNKNOWN)
     return p
 }
 
@@ -195,13 +201,26 @@ private fun putSegments(buf: ByteArray, offset: Int, segments: List<ProgressSegm
 }
 
 private const val MS2_PER_G = 9.80665
-private const val RAD_PER_S_TO_DEG_PER_S = 180.0 / Math.PI
+// Rounds `this * scale`, or null when there is no usable reading.
+//
+// The null case is why this exists. Math.round(NaN) was 0, so a sensor that reported NaN -- a
+// GNSS accuracy with no fix behind it, a yaw before the rotation vector settles -- used to be
+// written as a real zero, which is precisely the fabricated value the wire format has sentinels
+// to avoid. kotlin.math.roundToInt throws on NaN instead, so neither the old behaviour nor the
+// literal translation is right: unknown has to stay unknown.
+private fun Float?.scaledOrNull(scale: Double): Int? {
+    val v = this ?: return null
+    if (v.isNaN() || v.isInfinite()) return null
+    return (v * scale).roundToLong().toInt()
+}
+
+private const val RAD_PER_S_TO_DEG_PER_S = 180.0 / PI
 
 // Packs a 3-axis reading as round(value * scale) milli-units, or I16_UNKNOWN per axis when absent.
 private fun putMotionVector(buf: ByteArray, offset: Int, values: FloatArray?, scale: Double) {
     for (axis in 0..2) {
         val raw = values?.getOrNull(axis)
-        val milli = raw?.let { Math.round(it * scale).toInt().coerceIn(-0x7FFE, 0x7FFE) } ?: I16_UNKNOWN
+        val milli = raw.scaledOrNull(scale)?.coerceIn(-0x7FFE, 0x7FFE) ?: I16_UNKNOWN
         putI16(buf, offset + axis * 2, milli)
     }
 }
@@ -212,9 +231,9 @@ private fun putI16(buf: ByteArray, offset: Int, value: Int) {
 }
 
 private fun putString(buf: ByteArray, offset: Int, max: Int, value: String?) {
-    val bytes = value?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0)
+    val bytes = value?.encodeToByteArray() ?: ByteArray(0)
     val n = bytes.size.coerceAtMost(max - 1)
-    System.arraycopy(bytes, 0, buf, offset, n)
+    bytes.copyInto(buf, offset, 0, n)
     // buf is zero-filled; null terminator is guaranteed at offset + n.
 }
 

@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "OpenApex"
 include(":androidApp")
+include(":shared")

@@ -1,8 +1,8 @@
 package org.openapex.androidauto
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.Test
 
 class CallPacketTest {
 
@@ -15,9 +15,9 @@ class CallPacketTest {
         assertEquals(CALL_EVENT_RING, p[1].toInt())
         assertEquals(0x34, p[2].toInt() and 0xFF)
         assertEquals(0x12, p[3].toInt() and 0xFF)
-        assertEquals("Jane Doe", String(p, 4, 8, Charsets.UTF_8))
+        assertEquals("Jane Doe", p.decodeToString(4, 12))
         assertEquals(0, p[12].toInt())
-        assertEquals("+64 27 123", String(p, 44, 10, Charsets.UTF_8))
+        assertEquals("+64 27 123", p.decodeToString(44, 54))
         assertEquals(0, p[54].toInt())
     }
 

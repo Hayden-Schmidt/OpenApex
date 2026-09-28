@@ -147,7 +147,7 @@ data class DeviceInfo(
                 settingsSchema = buf[3].u(),
                 avatarUpload = buf[4].u() and 0x01 != 0,
                 avatarPx = buf[5].u() or (buf[6].u() shl 8),
-                firmwareVersion = String(buf, HEADER_BYTES, buf.size - HEADER_BYTES, Charsets.US_ASCII),
+                firmwareVersion = buf.decodeToString(HEADER_BYTES, buf.size),
             )
         }
     }

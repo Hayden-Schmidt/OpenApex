@@ -32,6 +32,9 @@ android {
 }
 
 dependencies {
+    // The wire formats: packet, call, settings TLV and rider mesh. Shared with iOS verbatim --
+    // one encoder per format, so the two platforms cannot drift a byte apart.
+    implementation(project(":shared"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     // Rider mesh keys at rest (RiderStore).
