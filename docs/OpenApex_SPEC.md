@@ -307,6 +307,20 @@ Incoming calls use two more characteristics in the same service (layout in
 - Call action `c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f`, terminal → phone. `NOTIFY`, with an
   encrypted CCCD. It carries ACCEPT plus the `call_id`.
 
+**Fragmentation, and the single write that replaces it.** Every packet is normally split into
+20-byte writes (3-byte header + 17 payload) that fit the 23-byte default ATT MTU on any stack.
+That is a workaround, not a design: on the 2026-09-24 captures an Android stack reported
+`GATT_REQUEST_NOT_SUPPORTED` for the MTU exchange all session and truncated every write to 20
+bytes regardless of the MTU it had agreed, so nothing may depend on that exchange for
+correctness. iOS negotiates 185 and honours it, where the split costs 12 extra writes per packet
+to route around a bug that is not there.
+
+So the terminal also accepts the whole 210-byte packet in a single write, advertised as `caps`
+bit 1. The two framings are told apart by length rather than a header version field: a fragment
+write is at most 20 bytes, so a 210-byte write cannot be one, and the packet's own version byte
+already covers format changes. Nothing is negotiated and a writer may switch per packet -- which
+matters, because the MTU is only known after an exchange that on Android lies about itself.
+
 ### 5.4 Future polyline stream
 
 Route context is Phase 2 or later. A future smartphone companion may downsample a 500 m to 1 km
@@ -404,7 +418,10 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 - The terminal applies a write live and saves it to flash after 1 s without further changes.
 
 **Device info.** `[info_ver=1][board_id][gfx_tier][settings_schema][caps][avatar_px u16 LE][fw version, ASCII]`.
-`board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means custom avatar upload is supported.
+`board_id` is 1 for C3 and 2 for S3. `caps` bit 0 means custom avatar upload is supported,
+bit 1 that the navigation characteristic also accepts a whole packet in one write, and bit 2
+that the terminal reads ANCS and CTS off the phone itself (§5.2), so an iOS app need not --
+and cannot -- relay notifications or the clock.
 `avatar_px` is the edge an avatar is drawn at (96 on C3, 192 on S3), for previews.
 
 **Preset avatars.** The nine presets (crab, owl, dino, octopus, chick, slime, bear, dragon,

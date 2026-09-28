@@ -1,5 +1,11 @@
 #include "apple_client.h"
 
+#include "board_profile.h"
+
+// The whole GATT-client role compiles out on a board without it, so the call sites in
+// ble_link.c and main.c stay unconditional (same pattern as touch_driver.c).
+#if BOARD_HAS_ANCS
+
 #include "cts_client.h"
 
 #include "esp_log.h"
@@ -604,3 +610,30 @@ void apple_client_dump(void) {
         }
     }
 }
+
+#else
+
+void apple_client_init(const apple_client_cfg_t *cfg) { (void)cfg; }
+void apple_client_on_connect(uint16_t conn_handle) { (void)conn_handle; }
+void apple_client_on_disconnect(void) {}
+void apple_client_on_encryption(uint16_t conn_handle, int status) {
+    (void)conn_handle;
+    (void)status;
+}
+bool apple_client_on_notify_rx(struct ble_gap_event *event) {
+    (void)event;
+    return false;
+}
+void apple_client_tick(uint32_t now_ms) { (void)now_ms; }
+bool apple_client_perform_action(uint32_t uid, ancs_action_id_t action) {
+    (void)uid;
+    (void)action;
+    return false;
+}
+bool apple_client_ancs_ready(void) { return false; }
+// No discovery will ever run, so there is nothing left to wait for -- which is what
+// stops main.c logging an empty service table forever.
+bool apple_client_may_retry(void) { return false; }
+void apple_client_dump(void) {}
+
+#endif

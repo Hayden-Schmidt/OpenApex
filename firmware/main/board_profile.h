@@ -59,6 +59,12 @@
 // display and NimBLE already use.
 #define BOARD_MESH_ESPNOW 0
 
+// ANCS/CTS GATT client on the phone's own connection (SPEC 5.2). Gated per board because it
+// needs CONFIG_BT_NIMBLE_ROLE_CENTRAL and a controller with room for a client session
+// alongside the mesh advert; the phone is told over DEVICE_INFO so an iPhone knows whether
+// this terminal can read its notifications at all.
+#define BOARD_HAS_ANCS 1
+
 // Touch: CST816/CST816D over I2C (touch variant only). Compiles out when BOARD_HAS_TOUCH == 0.
 #define BOARD_TOUCH_PIN_SDA 4
 #define BOARD_TOUCH_PIN_SCL 5
@@ -96,6 +102,9 @@
 
 // Rider mesh radios: BLE (the baseline every terminal speaks) plus ESP-NOW for S3-to-S3 range.
 #define BOARD_MESH_ESPNOW 1
+
+// ANCS/CTS GATT client (SPEC 5.2). The S3 has the headroom the C3 is tight on.
+#define BOARD_HAS_ANCS 1
 
 #else
 #error "No board profile selected. Define BOARD_PROFILE_PROTOTYPE_C3_GC9A01 or BOARD_PROFILE_S3_AMOLED_175 (or add a new profile)."

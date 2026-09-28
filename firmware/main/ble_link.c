@@ -52,6 +52,13 @@ static const ble_uuid128_t s_friends_uuid =
 
 #define DEVICE_INFO_VERSION 1u
 #define DEVICE_INFO_CAP_AVATAR 0x01u
+// The nav characteristic also accepts a whole 210-byte packet in one write. A phone that sees
+// this bit and has the MTU for it can skip fragmenting; one that does not, or cannot, keeps
+// fragmenting and is served identically.
+#define DEVICE_INFO_CAP_UNFRAGMENTED 0x02u
+// This terminal reads ANCS and CTS off an iPhone itself, so the app need not (and on iOS
+// cannot) relay notifications or the clock.
+#define DEVICE_INFO_CAP_ANCS 0x04u
 
 #if defined(BOARD_PROFILE_PROTOTYPE_C3_GC9A01)
 #define DEVICE_INFO_BOARD_ID 1u
@@ -271,6 +278,8 @@ bool ble_link_send_call_accept(uint16_t call_id) {
     return rc == 0;
 }
 
+static int deliver_reassembled(void);
+
 static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                           struct ble_gatt_access_ctxt *ctxt, void *arg) {
     (void)conn_handle;
@@ -278,6 +287,28 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     (void)arg;
     if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
         return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    // Single-write fast path. The 13-fragment scheme below exists for an Android stack that
+    // truncated every write to 20 bytes regardless of the MTU it had just agreed; iOS
+    // negotiates 185 and honours it, so there the fragmenting costs 12 extra writes per packet
+    // to work around a bug that is not present.
+    //
+    // The two framings are told apart by length rather than by a version field in the header:
+    // a fragment write is at most BLE_FRAG_HEADER_BYTES + BLE_FRAG_CHUNK_BYTES == 20 bytes, so
+    // a 210-byte write cannot be one, and the packet's own version byte already covers format
+    // changes. Nothing is negotiated and a writer may switch per packet -- which matters
+    // because the MTU is only known after the exchange, and on Android it lies.
+    if (OS_MBUF_PKTLEN(ctxt->om) == RAW_NOTIF_PACKET_SIZE) {
+        uint16_t whole_len = 0;
+        if (ble_hs_mbuf_to_flat(ctxt->om, s_reasm_buf, sizeof(s_reasm_buf), &whole_len) != 0 ||
+            whole_len != RAW_NOTIF_PACKET_SIZE) {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
+        // A whole packet supersedes any half-finished fragmented one, and it has just
+        // overwritten the buffer that one was accumulating into.
+        reasm_reset();
+        return deliver_reassembled();
     }
     uint8_t buf[BLE_FRAG_HEADER_BYTES + BLE_FRAG_CHUNK_BYTES];
     uint16_t out_len = 0;
@@ -323,7 +354,12 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         return 0; // waiting on the rest of this packet's fragments
     }
     reasm_reset();
+    return deliver_reassembled();
+}
 
+// Decodes whatever is in s_reasm_buf and hands it to countdown_task. Shared by the fragment and
+// single-write paths, which differ only in how the 210 bytes got there.
+static int deliver_reassembled(void) {
     raw_notif_t raw;
     if (!packet_decode(s_reasm_buf, RAW_NOTIF_PACKET_SIZE, &raw)) {
         note_decode_failure(RAW_NOTIF_PACKET_SIZE, RAW_NOTIF_PACKET_SIZE);
@@ -377,7 +413,8 @@ static int info_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         DEVICE_INFO_BOARD_ID,
         BOARD_GFX_TIER,
         SETTINGS_SCHEMA_VERSION,
-        DEVICE_INFO_CAP_AVATAR,
+        DEVICE_INFO_CAP_AVATAR | DEVICE_INFO_CAP_UNFRAGMENTED |
+            (BOARD_HAS_ANCS ? DEVICE_INFO_CAP_ANCS : 0u),
         (uint8_t)(BOARD_AVATAR_PX & 0xFF),
         (uint8_t)(BOARD_AVATAR_PX >> 8),
     };

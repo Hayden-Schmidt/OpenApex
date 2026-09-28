@@ -1,5 +1,9 @@
 #include "ancs_bridge.h"
 
+#include "board_profile.h"
+
+#if BOARD_HAS_ANCS
+
 #include "ancs_core.h"
 #include "ancs_nav.h"
 #include "apple_client.h"
@@ -146,3 +150,23 @@ bool ancs_bridge_accept_call(uint16_t call_id) {
     // CALL_ACTION notify would write a call id the phone has never heard of.
     return true;
 }
+
+#else
+
+void ancs_bridge_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queue) {
+    (void)raw_packet_queue;
+    (void)call_event_queue;
+}
+void ancs_bridge_on_notification(const ancs_notification_t *n, bool removed) {
+    (void)n;
+    (void)removed;
+}
+void ancs_bridge_on_time(uint32_t local_epoch_s) { (void)local_epoch_s; }
+void ancs_bridge_tick(uint32_t now_ms) { (void)now_ms; }
+// Never ours, so the tap falls through to the Android CALL_ACTION notify.
+bool ancs_bridge_accept_call(uint16_t call_id) {
+    (void)call_id;
+    return false;
+}
+
+#endif
