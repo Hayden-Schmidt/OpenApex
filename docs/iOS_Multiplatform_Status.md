@@ -66,7 +66,30 @@ it on the bench.
 
 ## Phase B — KMP restructure
 
-Not started as of this writing. Target layout is `docs/Phone_App_Architecture.md` §3.
+In progress. Done: a Gradle wrapper (there was none), `android/` renamed to `phone/` with
+`:androidApp` and a multiplatform `:shared`, the Car App shell deleted, packages renamed to
+`org.openapex.protocol` and `org.openapex.app`, and the four wire-format files plus
+fragmentation and the send queue moved to `commonMain`. `:shared:jvmTest` is 34 tests.
+
+**Verified on hardware after the move** (2026-09-29): reinstalled on the OnePlus, 13 packets
+written at 1 Hz as 13 fragments each, and the C3 decoded 26 consecutive packets (seq 150-175)
+with no gaps and no warnings. The restructure does not change a byte on the wire.
+
+Two things that only a reinstall could show:
+
+- The notification-listener grant is stored **fully qualified**, so the package rename would have
+  silently stopped nav scraping even on an in-place update -- the listener would point at a class
+  that no longer exists, with no error anywhere. Re-issued with `cmd notification allow_listener`.
+- **Pre-existing, not from this work:** on a fresh install the app crash-loops.
+  `RelayService.onCreate` starts a `connectedDevice` foreground service before
+  `BLUETOOTH_CONNECT` is granted and Android throws. Survivable for a developer who grants
+  permissions out of band; wrong for anyone else.
+
+Remaining, reordered from the plan: `SecureStore` must come **before** the mesh sync state
+machine, because `syncRiderMesh` calls `RiderStore.identity(context)` directly and cannot move
+until that is behind an interface. Then the control-op queue and a characteristic enum, the
+`TerminalLink` interface with `DeviceId` replacing the saved MAC, `TelemetryAggregator` out of
+`RelayService`, and v6 plus `telemetryOnly()`.
 
 The Android app today: single Gradle module, ~3.3k LOC, **no coroutines anywhere** (everything is
 a main-looper `Handler`), no Compose, no DI. Four files are already pure Kotlin and move verbatim:
