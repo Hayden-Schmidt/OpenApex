@@ -2,12 +2,14 @@
 
 ## Repository layout
 
-- `phone/`: the companion app. `androidApp/` is the Android host; shared multiplatform code
-  lands in `shared/` as the iOS work proceeds (docs/Phone_App_Architecture.md §3).
+- `phone/`: the companion app. `androidApp/` is the Android host; `shared/` is the multiplatform
+  library holding the wire formats, the BLE queue, the rider-mesh sync and telemetry aggregation
+  (docs/Phone_App_Architecture.md §3). iOS targets are not declared yet -- they need a Mac.
 - `firmware/`: ESP-IDF C3 terminal skeleton and profile-independent countdown module.
 - `simulator/`: hardware-free browser display and PlatformIO native harness.
 - `scripts/`: setup and host-test helpers.
 - `docs/OpenApex_SPEC.md`: active architecture and Phase 1 contract.
+- `docs/iOS_Handoff.md`: start here for the iOS/multiplatform work in progress.
 
 ## Required tools
 

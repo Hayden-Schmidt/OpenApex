@@ -20,40 +20,71 @@ The phone is a **dumb relay** plus the control panel for the terminal (SPEC §2.
 **Rule:** protocol, state and UI go in shared code. Anything that must keep running in the background is written natively per platform, behind a shared interface.
 
 ## 3. Module layout
+
+What exists today (Phase B complete; see docs/iOS_Handoff.md):
+
 ```
 phone/
-  shared/            KMP library
+  shared/                          KMP library, androidTarget + jvm
     commonMain/
-      protocol/      packet v4 codec, settings TLV, firmware-update frames (byte-exact with firmware)
-      ble/           TerminalLink interface, connection state machine
-      telemetry/     TelemetrySource interface, sample model
-      device/        known devices, reconnect state
-      settings/      terminal config model + local persistence
-      ota/           firmware-update state machine (chunk, CRC, resume, verify)
-      ui/            all screens, navigation, design system
-    androidMain/     Android BLE, location/sensors, NotificationListener relay, foreground service, CDM, boot
-    iosMain/         CoreBluetooth (with state restoration), CoreLocation, CoreMotion
-    commonTest/      protocol + state machine tests, golden packet fixtures
-  androidApp/        Activity + manifest only
-  iosApp/            Xcode project, thin SwiftUI host for ComposeUIViewController, Info.plist background modes
+      protocol/    RawNotifPacket (v5 + v6), CallPacket, SettingsTlv, RiderMesh, Fragmentation
+      ble/         TerminalLink, DeviceId, TerminalCharacteristic, ControlQueue
+      mesh/        RiderMeshSync, MeshTransport
+      store/       SecureStore, RiderMeshStore, RiderStoreCore
+      telemetry/   TelemetryAggregator
+    commonTest/    61 tests, incl. golden fixtures cross-checked against the firmware's C decoder
+  androidApp/      RelayBleClient (TerminalLink impl), RelayService, nav/call relays, CDM, boot
 ```
-Migration (done): `android/` became `phone/androidApp`, the `OpenApexCarAppService` stub and the
+
+Not yet present, and deliberately so: `iosMain/` and `iosApp/` need a Mac, and the iOS Kotlin
+targets are not declared until then. `jvm` exists so `commonMain` is genuinely compiled and tested
+on Windows rather than only inspected. `ota/` and `ui/` are unwritten.
+
+Migration (done): `android/` became `phone/`, the `OpenApexCarAppService` stub and the
 `androidx.car.app` dependency are gone, and the Kotlin package is now `org.openapex.app` for the
 Android host and `org.openapex.protocol` for the shared wire formats. The **applicationId stays
 `org.openapex.androidauto`** on purpose: it is the installed app's identity, and changing it
 forces an uninstall that costs the test phone its pairing, settings and rider identity.
 
 ## 4. Platform boundaries (shared interfaces)
+
+As built. Callback-shaped rather than suspending, because the Android app has no coroutines
+anywhere -- it is main-looper `Handler`s throughout. These shapes change when the queue pump is
+converted to a `Channel`, which is its own step; they are small so that change stays cheap.
+
 ```kotlin
-interface TerminalLink {            // one per platform, native BLE stack
-    val state: StateFlow<LinkState>
-    suspend fun connect(device: DeviceId)
-    suspend fun write(char: TerminalChar, bytes: ByteArray, withResponse: Boolean)
-    fun notifications(char: TerminalChar): Flow<ByteArray>
+@JvmInline value class DeviceId(val value: String)   // MAC on Android, CBPeripheral UUID on iOS
+
+interface TerminalLink {                             // RelayBleClient / IosTerminalLink
+    fun connect(id: DeviceId, background: Boolean = false)
+    fun disconnect()
+    fun write(packet: ByteArray)                     // nav, fragmented, no response
+    fun writeCall(packet: ByteArray)
+    fun readSettings(done: (TerminalSettings?) -> Unit)
+    fun writeSettings(settings: TerminalSettings, done: (Boolean) -> Unit = {})
+    fun readDeviceInfo(done: (DeviceInfo?) -> Unit)
+    fun readAvatar(done: (AvatarArt?) -> Unit)
+    fun uploadAvatar(art: AvatarArt, done: (Boolean) -> Unit = {})
+    fun clearAvatar(done: (Boolean) -> Unit = {})
+    fun pushFriends()
 }
-interface TelemetrySource { val samples: Flow<TelemetrySample> }
-interface NavRelaySource  { val raw: Flow<RawNavFields> }   // Android only; iOS = empty
+
+interface MeshTransport {                            // what RiderMeshSync needs, and no more
+    fun writeAll(char: TerminalCharacteristic, frames: List<ByteArray>, done: (Boolean) -> Unit)
+    fun read(char: TerminalCharacteristic, done: (ByteArray?) -> Unit)
+    fun subscribe(char: TerminalCharacteristic)
+    fun log(message: String)
+}
+
+interface SecureStore { fun get(key: String): ByteArray?; fun put(key: String, value: ByteArray?) }
 ```
+
+Connection state is not on `TerminalLink`: a link can drop without anyone having asked it for
+anything, so it is observed through `RelayStateHolder` instead.
+
+Still to write, for iOS: `TelemetrySource` (Android feeds `TelemetryAggregator` directly today) and
+`NavRelaySource` (Android only; iOS is empty by design, ANCS owns it).
+
 - BLE is native on each platform, not a third-party KMP BLE library. iOS background reliability depends on CoreBluetooth state restoration, which we need full control over.
 - DI: constructor injection plus a small manual container per platform. Add a DI library only if the manual container gets painful.
 
