@@ -430,7 +430,7 @@ static size_t extract_street(const char *text, char *out, size_t out_len) {
 // The km case is not cosmetic: strtol() stops at the decimal point, so "1.1 km" used to parse as
 // ONE METRE and the terminal counted down from 1 m while the turn was still a kilometre away.
 // Nineteen packets on the 2026-09-23 capture did exactly that.
-static int32_t parse_distance_metres(const char *s) {
+int32_t normalize_parse_distance_metres(const char *s) {
     if (s == NULL || s[0] == '\0') return -1;
     char *end = NULL;
     long v = strtol(s, &end, 10);
@@ -533,9 +533,9 @@ void normalize_packet(const raw_notif_t *raw, nav_model_t *out) {
     }
 
     // Distance: prefer the clean numeric field (Android shortCriticalText), else scan the title.
-    out->distance_meters = parse_distance_metres(raw->distance_str);
+    out->distance_meters = normalize_parse_distance_metres(raw->distance_str);
     if (out->distance_meters < 0) {
-        out->distance_meters = parse_distance_metres(raw->title_str);
+        out->distance_meters = normalize_parse_distance_metres(raw->title_str);
     }
 
     // Remaining trip distance from progress/progressMax, when both are present and ordered.

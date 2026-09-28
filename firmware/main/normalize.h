@@ -31,6 +31,12 @@ typedef enum {
 
 void normalize_set_street_pref(normalize_street_pref_t pref);
 
+// Parses a distance in metres from a plain number ("250"), a number embedded in a sentence, or a
+// kilometre-suffixed decimal ("1.1 km"). Returns -1 on no parse. Exposed because the iOS/ANCS path
+// has no clean numeric distance field and has to work out which text line holds one (ancs_nav.c),
+// and because the "1.1 km parsed as 1 m" bug it fixes is not worth writing twice.
+int32_t normalize_parse_distance_metres(const char *s);
+
 // Classifies one Maps progress-bar segment colour into a traffic level. Exposed for the host tests.
 nav_traffic_level_t normalize_traffic_color(uint8_t r, uint8_t g, uint8_t b);
 
