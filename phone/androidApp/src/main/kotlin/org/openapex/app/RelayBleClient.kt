@@ -50,8 +50,14 @@ class RelayBleClient(private val context: Context) {
     // What to send next and in what order lives in commonMain (FragmentQueue): it is the half
     // iOS needs unchanged, and the half worth testing without a phone. This class owns only the
     // GATT calls and the one-operation-in-flight rule. FragmentQueue is not thread-safe, which is
-    // why every access below is inside the same lock that already guarded the deque.
+    // why every access below is inside queueLock.
     private val frames = FragmentQueue()
+
+    // Guards frames, controlOps and writeInFlight together: they are one queue with one
+    // in-flight slot and are never consistent apart. An explicit object rather than the
+    // FragmentQueue itself, because a local named frames -- writeAll() has a parameter by that
+    // name -- silently shadowed it and locked the wrong thing.
+    private val queueLock = Any()
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -166,7 +172,7 @@ class RelayBleClient(private val context: Context) {
      * ble_link.c. A dropped fragment costs one packet, superseded by the next publish (~3Hz).
      */
     fun write(packet: ByteArray) {
-        val packetId = synchronized(frames) { frames.offerNav(packet) }
+        val packetId = synchronized(queueLock) { frames.offerNav(packet) }
         Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$NAV_FRAG_COUNT queued")
         pumpQueue()
     }
@@ -177,7 +183,7 @@ class RelayBleClient(private val context: Context) {
      * ring refresh (CallRelay) re-sends once the link is back.
      */
     fun writeCall(packet: ByteArray) {
-        val packetId = synchronized(frames) { frames.offerCall(packet) }
+        val packetId = synchronized(queueLock) { frames.offerCall(packet) }
         Log.i(TAG, "writeCall: packet=$packetId frags=$CALL_FRAG_COUNT queued")
         pumpQueue()
     }
@@ -223,7 +229,7 @@ class RelayBleClient(private val context: Context) {
                 if (!ok || i == frames.lastIndex) done(ok)
             }
         }
-        synchronized(frames) { controlOps.addAll(batch) }
+        synchronized(queueLock) { controlOps.addAll(batch) }
         pumpQueue()
     }
 
@@ -232,7 +238,7 @@ class RelayBleClient(private val context: Context) {
             op.done(null)
             return
         }
-        synchronized(frames) { controlOps.addLast(op) }
+        synchronized(queueLock) { controlOps.addLast(op) }
         pumpQueue()
     }
 
@@ -261,7 +267,7 @@ class RelayBleClient(private val context: Context) {
                 enqueue(ControlOp.Read(uuidOf(char), done))
 
             override fun subscribe(char: MeshCharacteristic) {
-                synchronized(this@RelayBleClient.frames) { controlOps.addLast(ControlOp.Subscribe(uuidOf(char))) }
+                synchronized(queueLock) { controlOps.addLast(ControlOp.Subscribe(uuidOf(char))) }
                 pumpQueue()
             }
 
@@ -321,7 +327,7 @@ class RelayBleClient(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun pumpQueue() {
         val g = gatt ?: return
-        synchronized(frames) {
+        synchronized(queueLock) {
             if (writeInFlight) return
             if (pumpControl(g)) return
             val frame = frames.peek() ?: return
@@ -410,7 +416,7 @@ class RelayBleClient(private val context: Context) {
                 backgroundPending = false
                 // A link dropped mid-write never gets its onCharacteristicWrite, and a flag left
                 // set would stall pumpQueue() on every later connection: packets queue, none send.
-                val dropped = synchronized(frames) {
+                val dropped = synchronized(queueLock) {
                     writeInFlight = false
                     val ops = listOfNotNull(controlInFlight) + controlOps
                     controlInFlight = null
@@ -444,7 +450,7 @@ class RelayBleClient(private val context: Context) {
                 // Held through the CCCD write when there is one; onDescriptorWrite releases it.
                 val subscribing = subscribeCallAction(g)
                 Log.i(TAG, "call action subscribe started=$subscribing")
-                synchronized(frames) { writeInFlight = subscribing }
+                synchronized(queueLock) { writeInFlight = subscribing }
                 RelayStateHolder.noteBleConnected()
                 mesh.onConnected()
             }
@@ -452,7 +458,7 @@ class RelayBleClient(private val context: Context) {
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             Log.i(TAG, "descriptor write ${descriptor.characteristic.uuid} status=$status")
-            synchronized(frames) {
+            synchronized(queueLock) {
                 writeInFlight = false
                 controlInFlight = null
             }
@@ -477,7 +483,7 @@ class RelayBleClient(private val context: Context) {
             char: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            val op = synchronized(frames) {
+            val op = synchronized(queueLock) {
                 writeInFlight = false
                 controlInFlight.also { controlInFlight = null }
             }
@@ -493,7 +499,7 @@ class RelayBleClient(private val context: Context) {
             status: Int,
         ) {
             val value = char.value
-            val op = synchronized(frames) {
+            val op = synchronized(queueLock) {
                 writeInFlight = false
                 controlInFlight.also { controlInFlight = null }
             }
