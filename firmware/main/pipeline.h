@@ -37,6 +37,12 @@ void pipeline_set_eta_format(pipeline_eta_format_t format);
  *  pipeline_reset(). */
 void pipeline_set_clock_12h(bool twelve_hour);
 
+// Sets the wall clock from a LOCAL epoch (seconds; no zone, because the terminal only ever shows
+// HH:MM). The Android path derives this from the packet's epoch_s + tz_offset_min; the iOS path
+// takes it from the phone's Current Time Service, which keeps the clock right with no app running.
+// A zero or sentinel epoch is ignored rather than shown.
+void pipeline_set_wall_clock(uint32_t local_epoch_s, uint32_t now_ms);
+
 // Advances countdown interpolation to now_ms and refreshes distance/stale in out.
 void view_state_tick(uint32_t now_ms, terminal_view_state_t *out);
 

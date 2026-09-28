@@ -1,6 +1,7 @@
 #include "ble_link.h"
 
 #include "call_packet.h"
+#include "apple_client.h"
 #include "avatar_store.h"
 #include "board_profile.h"
 #include "drive_log.h"
@@ -71,7 +72,27 @@ static uint16_t s_friends_val_handle;
 static volatile bool s_friends_subscribed;
 static uint8_t s_own_addr_type;
 
+// ANCS service UUID, byte-reversed for BLE_UUID128_INIT. We do not serve this -- we SOLICIT it:
+// an advert carrying a solicitation tells iOS "this accessory wants your notification service",
+// which is what makes the terminal pairable from iOS Settings and gets ANCS published to us once
+// bonded (docs/OpenApex_SPEC.md 5.2). apple_client.c is the consumer.
+static const ble_uuid128_t s_ancs_sol_uuid =
+    BLE_UUID128_INIT(0xd0, 0x00, 0x2d, 0x12, 0x1e, 0x4b, 0x0f, 0xa4, 0x99, 0x4e, 0xce, 0xb5, 0x31,
+                     0xf4, 0x05, 0x79);
+
+// Advertising rates, in 0.625ms units. Fast is the old always-on rate, kept for the window where
+// a phone is plausibly looking; slow is 152.5ms, the slowest of Apple's recommended set and the
+// floor of what they consider acceptable for sustained advertising.
+#define OPENAPEX_ADV_FAST_ITVL_MIN 32u  // 20ms
+#define OPENAPEX_ADV_FAST_ITVL_MAX 64u  // 40ms
+#define OPENAPEX_ADV_SLOW_ITVL_MIN 244u // 152.5ms
+#define OPENAPEX_ADV_SLOW_ITVL_MAX 400u // 250ms
+#define OPENAPEX_ADV_FAST_MS 30000u     // fast burst on every (re)start
+
 #define PHONE_ADV_INSTANCE 0
+// False during the post-(re)start fast burst, true once it has elapsed. Written only from the
+// NimBLE host task.
+static bool s_adv_slow;
 static void start_advertising(void);
 
 // Consecutive failed decodes on the current link. Reset by any successful decode.
@@ -483,6 +504,21 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
             s_call_action_subscribed = false;
             s_friends_subscribed = false;
             s_connected = true;
+            apple_client_on_connect(event->connect.conn_handle);
+            // Ask for encryption rather than waiting to be asked. Every ANCS characteristic
+            // requires an encrypted link, and the old behaviour -- let the central retry after an
+            // ATT insufficient-authentication error -- only happens if the central writes
+            // something first. On iOS nothing writes: the phone is the server on that path, so
+            // without this the bond never forms and ANCS is never published.
+            {
+                struct ble_gap_conn_desc desc;
+                if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0 && !desc.sec_state.encrypted) {
+                    const int src = ble_gap_security_initiate(event->connect.conn_handle);
+                    if (src != 0 && src != BLE_HS_EALREADY) {
+                        ESP_LOGW(TAG, "security_initiate failed; rc=%d", src);
+                    }
+                }
+            }
         } else {
             ESP_LOGW(TAG, "connect failed; status=%d, resuming advertising", event->connect.status);
             start_advertising();
@@ -494,6 +530,10 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         s_connected = false;
         s_call_action_subscribed = false;
         s_friends_subscribed = false;
+        s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        apple_client_on_disconnect();
+        // A phone has just gone away, so this is exactly when one is likely to come looking.
+        s_adv_slow = false;
         start_advertising();
         return 0;
     case BLE_GAP_EVENT_SUBSCRIBE:
@@ -506,6 +546,9 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         }
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
+        // The fast burst elapsed (it is the only thing that sets a duration). Drop to the
+        // Apple-compliant rate and keep advertising indefinitely.
+        s_adv_slow = true;
         start_advertising();
         return 0;
     case BLE_GAP_EVENT_MTU:
@@ -523,6 +566,26 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
                      event->mtu.value, (unsigned)RAW_NOTIF_PACKET_SIZE);
         }
         return 0;
+    case BLE_GAP_EVENT_ENC_CHANGE:
+        // The bond is up (or failed). This is the gate for the whole iOS path: ANCS and CTS
+        // discovery starts here, never on connect.
+        {
+            struct ble_gap_conn_desc desc;
+            const bool enc = ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0 &&
+                             desc.sec_state.encrypted;
+            ESP_LOGI(TAG, "encryption change: status=%d encrypted=%d", event->enc_change.status,
+                     (int)enc);
+            apple_client_on_encryption(event->enc_change.conn_handle,
+                                       enc ? 0 : (event->enc_change.status != 0
+                                                      ? event->enc_change.status
+                                                      : -1));
+        }
+        return 0;
+    case BLE_GAP_EVENT_NOTIFY_RX:
+        // Inbound notifications/indications exist only because we are also a GATT client here:
+        // ANCS Notification Source and Data Source, CTS, and GATT Service Changed.
+        (void)apple_client_on_notify_rx(event);
+        return 0;
     case BLE_GAP_EVENT_REPEAT_PAIRING:
         // A central we already have a bond for is re-pairing (e.g. it lost its bond). Delete the
         // stale bond and let the pairing procedure retry, rather than reject and get stuck.
@@ -538,19 +601,55 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
     }
 }
 
+// Fills an mbuf with advertising fields and hands it to NimBLE. Returns 0 on success; the mbuf
+// is consumed either way.
+static int set_adv_payload(const struct ble_hs_adv_fields *fields, bool scan_rsp) {
+    struct os_mbuf *data = os_msys_get_pkthdr(BLE_HS_ADV_MAX_SZ, 0);
+    if (data == NULL) {
+        ESP_LOGW(TAG, "no mbuf for advertising data");
+        return -1;
+    }
+    int rc = ble_hs_adv_set_fields_mbuf(fields, data);
+    if (rc != 0) {
+        // Almost always "does not fit in 31 bytes". Say so loudly: a silently dropped
+        // solicitation is an iPhone that never offers to pair, with nothing on screen to explain it.
+        ESP_LOGE(TAG, "advert payload (%s) rejected; rc=%d", scan_rsp ? "scan rsp" : "primary", rc);
+        os_mbuf_free_chain(data);
+        return rc;
+    }
+    rc = scan_rsp ? ble_gap_ext_adv_rsp_set_data(PHONE_ADV_INSTANCE, data)   // consumes data
+                  : ble_gap_ext_adv_set_data(PHONE_ADV_INSTANCE, data);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "advertising data failed; rc=%d", rc);
+    }
+    return rc;
+}
+
 static void start_advertising(void) {
+    // The 31-byte legacy payload cannot hold flags (3B) + our service UUID128 (18B) + the ANCS
+    // solicitation (18B) + a name (10B) -- that is 49 bytes. So it splits:
+    //
+    //   primary     flags + our 128-bit service UUID   (21B)
+    //   scan rsp    ANCS solicitation + "OpenApex"     (28B)
+    //
+    // Our service UUID stays in the PRIMARY advert deliberately: Android's CompanionDeviceManager
+    // observer mode filters on it there, and that path is already fragile enough
+    // (docs/CDM_Cold_Wake_Investigation.md). The name moves to the scan response, where an active
+    // scanner -- which the CDM picker is -- still reads it.
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.uuids128 = (ble_uuid128_t *)&s_svc_uuid;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
-    // "OpenApex" (8 chars) is the longest name that fits alongside flags (3B) + UUID128 (18B) in
-    // the 31-byte legacy primary payload (2B AD header + 8B = 10B, total 31B exactly). CDM/Android
-    // only filters on the service UUID, but a real name replaces the raw MAC in the CDM picker UI.
-    fields.name = (const uint8_t *)"OpenApex";
-    fields.name_len = 8;
-    fields.name_is_complete = 1;
+
+    struct ble_hs_adv_fields rsp;
+    memset(&rsp, 0, sizeof(rsp));
+    rsp.sol_uuids128 = &s_ancs_sol_uuid;
+    rsp.sol_num_uuids128 = 1;
+    rsp.name = (const uint8_t *)"OpenApex";
+    rsp.name_len = 8;
+    rsp.name_is_complete = 1;
 
     // Extended-advertising API (the rider mesh owns instance 1, mesh_transport_ble.c), but a
     // legacy connectable PDU on 1M, so the phone sees exactly the advert it always has.
@@ -563,32 +662,36 @@ static void start_advertising(void) {
     adv_params.primary_phy = BLE_HCI_LE_PHY_1M;
     adv_params.secondary_phy = BLE_HCI_LE_PHY_1M;
     adv_params.sid = PHONE_ADV_INSTANCE;
-    // Fast advertising interval (20-40ms) rather than the NimBLE default (~1.28s): Android's
-    // low-power background scan (used by CompanionDeviceManager observer mode) samples the air
-    // infrequently, so a slow advertiser can be missed for multiple scan windows in a row.
-    adv_params.itvl_min = 32; // 32 * 0.625ms = 20ms
-    adv_params.itvl_max = 64; // 64 * 0.625ms = 40ms
+    // Advertising interval. 20-40ms was chosen for Android's low-power background scan (used by
+    // CompanionDeviceManager observer mode), which samples the air infrequently enough that a slow
+    // advertiser gets missed for several scan windows in a row.
+    //
+    // Apple's Accessory Design Guidelines want 152.5ms or slower for SUSTAINED advertising, and a
+    // 20ms advertiser is both out of spec and expensive on a battery. The compromise is a fast
+    // burst on every (re)start, which is when a phone is actually looking, backing off to a
+    // compliant steady rate -- see the duration/backoff on ble_gap_ext_adv_start below.
+    adv_params.itvl_min = OPENAPEX_ADV_FAST_ITVL_MIN;
+    adv_params.itvl_max = OPENAPEX_ADV_FAST_ITVL_MAX;
+    if (s_adv_slow) {
+        adv_params.itvl_min = OPENAPEX_ADV_SLOW_ITVL_MIN;
+        adv_params.itvl_max = OPENAPEX_ADV_SLOW_ITVL_MAX;
+    }
     int rc = ble_gap_ext_adv_configure(PHONE_ADV_INSTANCE, &adv_params, NULL, gap_event_cb, NULL);
     if (rc != 0) {
         ESP_LOGW(TAG, "ble_gap_ext_adv_configure failed; rc=%d", rc);
         return;
     }
-    struct os_mbuf *data = os_msys_get_pkthdr(BLE_HS_ADV_MAX_SZ, 0);
-    if (data == NULL) {
-        ESP_LOGW(TAG, "no mbuf for advertising data");
+    if (set_adv_payload(&fields, false) != 0) {
         return;
     }
-    rc = ble_hs_adv_set_fields_mbuf(&fields, data);
-    if (rc == 0) {
-        rc = ble_gap_ext_adv_set_data(PHONE_ADV_INSTANCE, data); // consumes data
-    } else {
-        os_mbuf_free_chain(data);
+    if (set_adv_payload(&rsp, true) != 0) {
+        // Losing the scan response costs the solicitation and the name, not the link: Android
+        // still sees the service UUID in the primary advert. Carry on advertising.
+        ESP_LOGW(TAG, "advertising without ANCS solicitation");
     }
-    if (rc != 0) {
-        ESP_LOGW(TAG, "advertising data failed; rc=%d", rc);
-        return;
-    }
-    rc = ble_gap_ext_adv_start(PHONE_ADV_INSTANCE, 0, 0);
+    // Fast phase runs for a bounded time, then ADV_COMPLETE brings us back here to restart slow.
+    const int32_t duration_10ms = s_adv_slow ? 0 : (int32_t)(OPENAPEX_ADV_FAST_MS / 10);
+    rc = ble_gap_ext_adv_start(PHONE_ADV_INSTANCE, duration_10ms, 0);
     if (rc != 0) {
         ESP_LOGW(TAG, "ble_gap_ext_adv_start failed; rc=%d", rc);
     }

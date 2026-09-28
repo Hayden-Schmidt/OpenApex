@@ -91,14 +91,22 @@ void pipeline_reset(void) {
     s_eta_arrival[0] = '\0';
 }
 
-static void accept_time(const raw_notif_t *raw, uint32_t now_ms) {
+void pipeline_set_wall_clock(uint32_t local_epoch_s, uint32_t now_ms) {
     // epoch 0 is a zero-filled field, not 1970: never show a fabricated time.
+    if (local_epoch_s == 0U || local_epoch_s == RAW_U32_UNKNOWN) {
+        return;
+    }
+    s_local_epoch_s_at_sync = (int64_t)local_epoch_s;
+    s_sync_ms = now_ms;
+    s_have_time = true;
+}
+
+static void accept_time(const raw_notif_t *raw, uint32_t now_ms) {
     if (raw->epoch_s == RAW_U32_UNKNOWN || raw->epoch_s == 0U || raw->tz_offset_min == (int16_t)RAW_I16_UNKNOWN) {
         return;
     }
-    s_local_epoch_s_at_sync = (int64_t)raw->epoch_s + (int64_t)raw->tz_offset_min * 60;
-    s_sync_ms = now_ms;
-    s_have_time = true;
+    pipeline_set_wall_clock((uint32_t)((int64_t)raw->epoch_s + (int64_t)raw->tz_offset_min * 60),
+                            now_ms);
 }
 
 static void format_clock(uint32_t now_ms, char *out, size_t out_len) {

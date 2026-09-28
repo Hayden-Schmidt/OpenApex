@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 New-Item -ItemType Directory -Force -Path build\host | Out-Null
 
-$common = @('firmware\main\countdown.c', 'firmware\main\packet.c', 'firmware\main\normalize.c', 'firmware\main\pipeline.c', 'firmware\main\heading_fusion.c', 'firmware\main\odometer.c', 'firmware\main\call_packet.c', 'firmware\main\call_state.c', 'firmware\main\ancs_core.c', 'firmware\main\ancs_nav.c')
+$common = @('firmware\main\countdown.c', 'firmware\main\packet.c', 'firmware\main\normalize.c', 'firmware\main\pipeline.c', 'firmware\main\heading_fusion.c', 'firmware\main\odometer.c', 'firmware\main\call_packet.c', 'firmware\main\call_state.c', 'firmware\main\ancs_core.c', 'firmware\main\ancs_nav.c', 'firmware\main\cts_client.c')
 
 # A GCC installed under a path containing a space is unusable: its `ld` splits the internal
 # -L path on the space and fails looking for default-manifest.o under the truncated prefix.

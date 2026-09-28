@@ -24,7 +24,11 @@ CONFIG_LV_FONT_MONTSERRAT_44=y
 # terminals (rider mesh); central is unused for now — see docs/OpenApex_SPEC.md §16.5 for why the terminal is the peripheral, not the phone.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
-CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+# CENTRAL is on not because we ever initiate a connection, but because NimBLE gates every
+# ble_gattc_* symbol behind it. On iOS the terminal must be the GATT CLIENT on the phone's
+# own connection to read ANCS and CTS: client/server and central/peripheral are orthogonal,
+# so we stay the peripheral and still need this.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y

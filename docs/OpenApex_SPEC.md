@@ -220,12 +220,49 @@ terminal side.
 
 ### 5.2 iOS/ANCS path
 
-For ANCS, the C3 acts as a BLE GATT client subscribing to the iPhone's notification source. The
-terminal filters supported navigation applications and maps notification attributes into the same
-normalized model. Phone GNSS telemetry may be supplied by a later iOS companion path or a platform-
-specific telemetry characteristic. (This path keeps the terminal as central for ANCS specifically,
-since ANCS requires the terminal to be the GATT client of the iPhone's notification service; it is
-unrelated to the Android path's peripheral/central roles in §5.1.)
+iOS has no notification listener, no call observation and no permanent background service, so an
+iOS companion app cannot be the nav source the way the Android relay is. The terminal reads the
+notifications off the iPhone itself, over Apple's ANCS. That is the reason normalization lives in
+C on the terminal (§2.4): the same normalizer serves both platforms, or it would be written
+twice and drift.
+
+**Roles.** The terminal stays the *peripheral* exactly as in §5.1 -- the phone connects to it.
+On that one connection the terminal is both the GATT **server** for its own service and a GATT
+**client** of the iPhone's Apple services. Central/peripheral and client/server are orthogonal,
+and ANCS is only offered to an accessory acting as the client, so this is required rather than a
+choice. NimBLE gates every `ble_gattc_*` symbol behind `CONFIG_BT_NIMBLE_ROLE_CENTRAL`, which is
+therefore enabled even though the terminal never initiates a connection.
+
+**Getting iOS to offer ANCS.** The terminal puts an ANCS *service solicitation*
+(`7905F431-B5CE-4E99-A40F-4B1E122D00D0`) in its advert, and initiates pairing on connect: every
+ANCS characteristic requires an encrypted link, so discovering before the bond exists only earns
+an ATT error. The 31-byte legacy advert cannot hold flags, our 128-bit service UUID, the
+solicitation and the name at once, so the primary advert keeps flags plus our service UUID (which
+is what Android's CompanionDeviceManager filters on) and the solicitation and name move to the
+scan response.
+
+iOS publishes and unpublishes ANCS at will, so the terminal subscribes to GATT Service Changed
+(`0x1801` / `0x2A05`) and rediscovers rather than treating one discovery pass as final.
+
+**What ANCS carries, and what it does not.** Per notification: `AppIdentifier`, `Title`,
+`Subtitle`, `Message`, `Date` -- text only. There is no maneuver glyph, no progress, no traffic,
+no speed, heading or position. So on iOS the maneuver comes from text matching alone (a
+roundabout's exit direction, which on Android the glyph supplies, is unknown), and progress and
+traffic render as unknown rather than as fabricated zeros (§3). Google Maps posts turn-by-turn
+under `CategoryIDLocation`; Apple Maps posts no notifications at all and cannot be a nav source.
+Incoming calls arrive as `CategoryIDIncomingCall` and are answered with the notification's
+positive action (§5.5) rather than the Android CALL_ACTION characteristic.
+
+**Clock.** The C3 has no RTC and on iOS there is no packet to carry a time whenever the companion
+app is asleep, which iOS will make it be. The terminal therefore also reads and subscribes to the
+Current Time Service (`0x1805` / `0x2A2B`). CTS carries no zone, so what it yields is local time
+treated as an epoch, which is all the clock face needs.
+
+**Telemetry.** ANCS and CTS both work with no app running, which is what the iOS design rests on.
+Everything else -- GNSS, speed, heading, motion, phone battery -- still needs the companion app
+writing the packet characteristic, so the iOS app is not optional, it is the telemetry half. When
+iOS kills it the terminal goes telemetry-blind while nav and the clock keep working; that gap is
+surfaced to the rider rather than papered over.
 
 Phone-side settings, firmware-update and device-info contracts are planned in
 [Phone_App_Architecture.md](Phone_App_Architecture.md) §6 and must land here before implementation.
@@ -322,6 +359,8 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 | `c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE (both encrypted) | Settings TLV |
 | `c9c6d0a0-0006-4f0a-9c8e-2f6b1a2d3e4f` | READ | Device info |
 | `c9c6d0a0-0007-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE (both encrypted) | Custom avatar |
+| `c9c6d0a0-0008-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE (both encrypted) | Rider identity (§5.7) |
+| `c9c6d0a0-0009-4f0a-9c8e-2f6b1a2d3e4f` | READ, WRITE, NOTIFY (encrypted) | Friend list (§5.7) |
 
 **Settings TLV.** `[schema=0x01]` followed by records of `[tag u8][len u8][value]`.
 
@@ -333,9 +372,15 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 | 0x04 | 1 | Clock | 0 24-hour, 1 12-hour (`H:MM`, no am/pm) | 0 |
 | 0x05 | 1 | Units | 0 metric, 1 imperial (distances) | 0 |
 | 0x06 | 1 | Default dial outer ring | 0 compass, 1 trip | 0 |
+| 0x07 | 1 | Friends on the compass | 0 hidden, 1 shown | 1 |
+| 0x08 | 1 | Friend marker style | 0 their character, 1 a dot | 0 |
+| 0x09 | 1 | Rider mesh radio | 0 silent, 1 on | 1 |
 
-- A read returns every field. Golden fixture for the defaults (21 bytes):
-  `01 01 03 00 FF E8 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00`.
+- A read returns every field. Golden fixture for the defaults (30 bytes):
+  `01 01 03 00 FF E8 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00 07 01 01 08 01 00 09 01 01`.
+  Tags 0x07-0x09 push the read past the 20-byte default MTU, so a full read needs a negotiated
+  MTU or an ATT read-blob. A phone that sees only the first 20 bytes still parses the records it
+  did get, which is the reason this is a record stream and not a fixed struct.
 - A write may carry any subset of records; untouched fields keep their value. Split a full config
   across several writes to stay within 20 bytes.
 - Unknown tags are skipped (forward compatibility). A wrong schema byte, truncated record, wrong
@@ -367,6 +412,80 @@ exactly 80 bytes replaces it and an empty write deletes it; any other length is 
 value is longer than one packet, so the phone sends it as an ATT long write (prepare/execute,
 Android's default write type does this); the terminal only sees the whole value, so an interrupted
 upload changes nothing. Selecting 0xFF with nothing stored shows the default character.
+
+### 5.7 Rider mesh
+
+Terminals within radio range of each other show their riders as markers on the compass. The
+phone is not in the path: two terminals talk directly, so the mesh keeps working where there is
+no cell coverage, which is where a group ride most wants it.
+
+**Transports.** BLE extended advertising on the Coded PHY is the baseline every board speaks, so
+any two terminals can meet. Boards with the RAM for Wi-Fi (the S3, not the C3) additionally run
+ESP-NOW for more range and bandwidth. A frame goes out on every transport the board has; the
+receive side de-duplicates, so a board running both is not heard twice
+(`firmware/main/mesh_transport.h`).
+
+**Frame header.** Every frame is 14 bytes of header then a type-specific body:
+
+    'O' 'A' | proto_ver=1 | type | sender rider_id (8) | seq u16 LE
+
+A wrong magic or version is dropped and an unknown type is ignored, so a newer terminal's frames
+pass harmlessly through an older one. `MESH_FRAME_MAX` is 250 bytes (the ESP-NOW v1 payload
+limit). Multi-byte fields are little-endian except colours, which are RGB big-endian as in the
+settings TLV.
+
+| Type | Name | Body |
+|---|---|---|
+| 0x01 | HELLO | The sender's look (avatar, accent, name, optional 80-byte custom art) + caps |
+| 0x02 | FRIEND_ACCEPT | Target rider_id (8) + the sender's rider key (16) |
+| 0x03 | FRIEND_ACK | Target rider_id (8) |
+| 0x04 | POS | Encrypted position (see below) |
+| 0x10-0x1F | reserved | Nav share, Phase 2: encrypted like POS, fragmented |
+
+HELLO goes out every 2 s in clear: it is what makes a stranger visible enough to be friended,
+and it carries nothing a passer-by could not see by looking at the bike. Position never does.
+
+**Friending is a mutual physical act.** Both riders hold the ring on the friend prompt. Holding
+sends FRIEND_ACCEPT (retried up to 5 times at 1 s, stopped by the peer's FRIEND_ACK), and the
+friendship completes on a terminal only once it has both held locally and received the other's
+accept. So one rider cannot add another unilaterally, and a rider who declines simply never
+holds. A peer that has not been heard from for 10 s drops out of range.
+
+The prompt may cover the nav page only when it cannot hide a turn the rider needs: under
+20 km/h, or the next maneuver more than 50 m away, or not navigating at all
+(`mesh_core.h`). An unanswered prompt lapses after 20 s on screen.
+
+**Position privacy.** POS frames are AES-128-CCM (RFC 3610, 13-byte nonce, 8-byte tag) under the
+*sender's own* key, which only riders it has friended hold. A non-friend hears the ciphertext and
+learns nothing; a forged frame fails the tag and is discarded rather than decoded into a
+plausible position (`mesh_crypto.h`). The nonce is the sender id, a random per-boot `session`
+value re-rolled when `seq` wraps, and `seq` itself. The plaintext is lat/lon at 1e-7 degrees,
+speed and heading at 0.1 units with 0xFFFF for unknown, and horizontal accuracy in metres. POS
+goes out once a second, and a fix of ours older than 5 s is not shared at all rather than shared
+stale.
+
+**Phone-facing values.** Two further characteristics on the same service, both bonded-only in
+each direction because they carry the rider key:
+
+- Identity `c9c6d0a0-0008-...`, READ/WRITE: `[ver=1][rider_id 8][rider_key 16][name_len u8]
+  [name <= 12 bytes UTF-8]`. The phone owns the identity and the key; the terminal stores them.
+- Friends `c9c6d0a0-0009-...`, READ/WRITE/NOTIFY. A write is an op byte then its argument:
+  `01` upsert (+ a 122-byte record), `02` remove (+ rider_id 8), `03` clear, `04` set the read
+  cursor (+ index u8). A read returns the record at the cursor, or zero bytes past the end,
+  which is how the phone knows the list has ended. A friendship completed on the terminal is
+  notified as an upsert, so the two lists converge without the phone polling.
+
+A friend record is a fixed 122 bytes: `rider_id 8 | rider_key 16 | avatar u8 | accent RGB 3 |
+flags u8 | name_len u8 | name 12 (zero-padded) | art 80 (zeros unless flags bit 0)`.
+
+**Limits.** 8 peers in range, 16 friends, names 12 bytes of UTF-8. Tags 0x07-0x09 of the
+settings TLV control whether friends are drawn on the compass, whether they are drawn as their
+character or a dot, and whether the mesh radio runs at all.
+
+**Terminal-side structure.** `mesh_core.c` is the whole protocol with no radio, no clock and no
+NVS -- frames and time go in, a send callback goes out -- so it runs unchanged in host tests.
+`mesh.c` is the only thing that knows about ESP-IDF: it owns the single instance behind a mutex,
+drives the transports, and persists identity and friends to NVS.
 
 ## 6. Hardware Profiles
 

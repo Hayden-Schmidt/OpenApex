@@ -55,5 +55,12 @@ typedef struct {
 // Latin accents lose their mark, anything else becomes '?'.
 bool call_event_decode(const uint8_t *data, size_t len, call_event_t *out);
 
+// Folds UTF-8 src (bounded by src_len, stopping at NUL) into the printable ASCII the terminal's
+// fonts carry: common Latin accents lose their mark, anything else becomes '?', so a name in
+// another script still shows its length rather than vanishing. Exposed because the iOS/ANCS call
+// path builds a call_event_t from notification text rather than decoding a packet, and the fold
+// table is not worth having twice.
+void call_fold_ascii(const uint8_t *src, size_t src_len, char *dst, size_t dst_len);
+
 // Encodes a CALL_ACTION packet into out (CALL_ACTION_PACKET_SIZE bytes).
 void call_action_encode(call_action_t action, uint16_t call_id, uint8_t out[CALL_ACTION_PACKET_SIZE]);

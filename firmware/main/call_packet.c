@@ -10,7 +10,7 @@ static const char kLatin1Fold[65] = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTs"
 // Folds UTF-8 src (bounded by src_len, stops at NUL) into printable ASCII. Multi-byte sequences
 // outside Latin-1 collapse to a single '?', so a name in another script still shows its length
 // rather than vanishing.
-static void fold_ascii(const uint8_t *src, size_t src_len, char *dst, size_t dst_len) {
+void call_fold_ascii(const uint8_t *src, size_t src_len, char *dst, size_t dst_len) {
     size_t i = 0;
     size_t n = 0;
     while (i < src_len && src[i] != 0 && n < dst_len - 1) {
@@ -48,8 +48,8 @@ bool call_event_decode(const uint8_t *data, size_t len, call_event_t *out) {
     }
     out->type = (call_event_type_t)data[1];
     out->call_id = (uint16_t)((uint16_t)data[2] | ((uint16_t)data[3] << 8));
-    fold_ascii(&data[4], CALL_CALLER_WIRE_LEN, out->caller, CALL_CALLER_LEN);
-    fold_ascii(&data[4 + CALL_CALLER_WIRE_LEN], CALL_NUMBER_WIRE_LEN, out->number, CALL_NUMBER_LEN);
+    call_fold_ascii(&data[4], CALL_CALLER_WIRE_LEN, out->caller, CALL_CALLER_LEN);
+    call_fold_ascii(&data[4 + CALL_CALLER_WIRE_LEN], CALL_NUMBER_WIRE_LEN, out->number, CALL_NUMBER_LEN);
     return true;
 }
 

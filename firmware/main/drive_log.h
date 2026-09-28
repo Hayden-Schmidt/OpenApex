@@ -38,6 +38,7 @@ typedef enum {
     DRIVE_LOG_KIND_RAW = 3,   // tier 1: raw_notif_t as decoded off the wire
     DRIVE_LOG_KIND_MODEL = 4, // tier 2: nav_model_t as produced by normalize_packet()
     DRIVE_LOG_KIND_VIEW = 5,  // tier 3: terminal_view_state_t as handed to the GUI
+    DRIVE_LOG_KIND_ANCS = 6,  // iOS: raw ANCS bytes, both directions, BEFORE any parsing
 } drive_log_kind_t;
 
 typedef enum {
@@ -122,10 +123,25 @@ typedef struct DRIVE_LOG_PACKED {
     uint8_t battery_percent;
 } drive_log_view_t;
 
+// iOS capture tier. Deliberately RAW BYTES and not a parsed struct: the whole reason this exists
+// is that what iOS actually sends is unknown until a real iPhone has been recorded, so a stream
+// we fail to understand still has to survive verbatim. `kind` is ancs_raw_kind_t (0 notification
+// source, 1 data source, 2 control point, outbound).
+//
+// A Data Source frame can exceed the 106 bytes that fit here; `total_len` records the true length
+// so the decoder can say a record was clipped rather than silently reassembling a short one.
+typedef struct DRIVE_LOG_PACKED {
+    uint8_t kind;
+    uint8_t len;        // bytes actually stored below
+    uint16_t total_len; // bytes the stream carried
+    uint8_t data[DRIVE_LOG_RECORD_SIZE - 16 - 4];
+} drive_log_ancs_t;
+
 // The payload must fit the fixed record; tools/decode_drive.py unpacks these exact layouts.
 _Static_assert(sizeof(drive_log_raw_t) <= DRIVE_LOG_RECORD_SIZE - 16, "raw payload too large");
 _Static_assert(sizeof(drive_log_model_t) <= DRIVE_LOG_RECORD_SIZE - 16, "model payload too large");
 _Static_assert(sizeof(drive_log_view_t) <= DRIVE_LOG_RECORD_SIZE - 16, "view payload too large");
+_Static_assert(sizeof(drive_log_ancs_t) <= DRIVE_LOG_RECORD_SIZE - 16, "ancs payload too large");
 
 #if defined(_MSC_VER)
 #pragma pack(pop)
@@ -145,6 +161,9 @@ void drive_log_raw(const raw_notif_t *raw);
 // and burn flash for nothing.
 void drive_log_model(const nav_model_t *model);
 void drive_log_view(const terminal_view_state_t *view);
+// Every ANCS byte, unparsed. Cheap enough to leave on for a whole capture ride: the stream is a
+// few frames per maneuver, not the 3 Hz of the Android packet path.
+void drive_log_ancs(uint8_t kind, const uint8_t *data, uint16_t len);
 
 #else
 
@@ -155,5 +174,6 @@ static inline void drive_log_ble(drive_log_ble_event_t event, int32_t detail) { 
 static inline void drive_log_raw(const raw_notif_t *raw) { (void)raw; }
 static inline void drive_log_model(const nav_model_t *model) { (void)model; }
 static inline void drive_log_view(const terminal_view_state_t *view) { (void)view; }
+static inline void drive_log_ancs(uint8_t kind, const uint8_t *data, uint16_t len) { (void)kind; (void)data; (void)len; }
 
 #endif

@@ -191,6 +191,24 @@ void drive_log_raw(const raw_notif_t *raw) {
     enqueue(DRIVE_LOG_KIND_RAW, &payload, sizeof(payload));
 }
 
+void drive_log_ancs(uint8_t kind, const uint8_t *data, uint16_t len) {
+    if (data == NULL) return;
+    drive_log_ancs_t payload;
+    memset(&payload, 0, sizeof(payload));
+    payload.kind = kind;
+    payload.total_len = len;
+    // Clip rather than split. A clipped record still shows the kind, the true length and the
+    // leading bytes, which is what identifies a frame; splitting would invent an ordering the
+    // ring does not guarantee across a torn write.
+    uint16_t n = len;
+    if (n > sizeof(payload.data)) {
+        n = (uint16_t)sizeof(payload.data);
+    }
+    payload.len = (uint8_t)n;
+    memcpy(payload.data, data, n);
+    enqueue(DRIVE_LOG_KIND_ANCS, &payload, sizeof(payload));
+}
+
 void drive_log_model(const nav_model_t *model) {
     if (model == NULL) return;
     drive_log_model_t payload;

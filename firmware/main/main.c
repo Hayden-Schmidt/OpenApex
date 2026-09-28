@@ -1,3 +1,5 @@
+#include "ancs_bridge.h"
+#include "apple_client.h"
 #include "avatar_store.h"
 #include "ble_link.h"
 #include "call_state.h"
@@ -23,6 +25,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "openapex";
@@ -64,6 +67,28 @@ static void view_state_snapshot(terminal_view_state_t *out) {
 
 uint32_t platform_now_ms(void) {
     return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+// Day-one capture tap: every ANCS byte, both directions, before anything parses it. What iOS
+// actually sends is the open question the first real iPhone answers, so a stream we fail to
+// understand still has to survive verbatim (tools/decode_ancs.py reads these back).
+static void log_ancs_raw(ancs_raw_kind_t kind, const uint8_t *data, size_t len, void *ctx) {
+    (void)ctx;
+    drive_log_ancs((uint8_t)kind, data, (uint16_t)len);
+    // Also to the serial monitor, so a bench session answers "what did iOS just send" live
+    // rather than only after pulling the flash partition. ANCS is a few frames per maneuver,
+    // not the 3 Hz of the Android packet path, so this is not a firehose.
+    static const char *kKind[] = {"NS", "DS", "CP->"};
+    char hex[3 * 32 + 4];
+    size_t shown = len > 32 ? 32 : len;
+    size_t o = 0;
+    for (size_t i = 0; i < shown; i++) {
+        o += (size_t)snprintf(&hex[o], sizeof(hex) - o, "%02x ", data[i]);
+    }
+    if (shown < len) {
+        snprintf(&hex[o], sizeof(hex) - o, "...");
+    }
+    ESP_LOGI(TAG, "ancs %s %uB: %s", kind < 3 ? kKind[kind] : "?", (unsigned)len, hex);
 }
 
 // gui_app's Accept seam. Runs on gui_task; never blocks it.
@@ -135,7 +160,29 @@ static void countdown_task(void *argument) {
         call_state_tick(now, ble_link_is_connected());
         uint16_t accept_id;
         while (xQueueReceive(call_accept_queue, &accept_id, 0) == pdTRUE) {
-            ble_link_send_call_accept(accept_id);
+            // On iOS the call came from ANCS and is answered by writing the notification's
+            // POSITIVE action back to the phone; there is no CALL_ACTION characteristic in that
+            // direction. ancs_bridge claims the tap when the call is one of its own.
+            if (!ancs_bridge_accept_call(accept_id)) {
+                ble_link_send_call_accept(accept_id);
+            }
+        }
+        // ANCS ring refresh and any pending Apple-services rediscovery.
+        ancs_bridge_tick(now);
+        // While a phone is connected but the Apple services have not come up, say so every 10s
+        // with the full handle table. On iOS that gap is the single most likely place for the
+        // whole path to be stuck (no bond, or iOS has not published ANCS yet), and it is
+        // invisible from the screen.
+        {
+            static uint32_t next_dump_ms;
+            if (ble_link_is_connected() && !apple_client_ancs_ready()) {
+                if (next_dump_ms == 0 || (int32_t)(now - next_dump_ms) >= 0) {
+                    next_dump_ms = now + 10000u;
+                    apple_client_dump();
+                }
+            } else {
+                next_dump_ms = 0;
+            }
         }
         // Self-throttled to ~30s; cheap to call on every 100ms tick (see heading_store.h).
         heading_store_maybe_save(now);
@@ -265,6 +312,20 @@ void app_main(void) {
     // Before ble_link_init: the identity and friends characteristics call into mesh.c as soon as a
     // phone connects.
     mesh_init();
+    // The iOS path. apple_client is the terminal's GATT-CLIENT role on the same link where
+    // ble_link is the server: ANCS supplies notifications and calls, CTS the wall clock, and
+    // both keep working with no phone app running -- which on iOS they have to, because iOS
+    // will suspend and then kill it. Set up before ble_link_init: ble_link's GAP callback
+    // starts calling into apple_client the moment a phone connects.
+    {
+        const apple_client_cfg_t apple_cfg = {
+            .on_notification = ancs_bridge_on_notification,
+            .on_time = ancs_bridge_on_time,
+            .on_raw = log_ancs_raw,
+        };
+        ancs_bridge_init(raw_packet_queue, call_event_queue);
+        apple_client_init(&apple_cfg);
+    }
     ble_link_init(raw_packet_queue, call_event_queue);
     mesh_start();
     heading_store_load();

@@ -4,6 +4,7 @@
 
 #include "../main/ancs_core.h"
 #include "../main/ancs_nav.h"
+#include "../main/cts_client.h"
 #include "../main/nav_model.h"
 #include "../main/normalize.h"
 
@@ -537,6 +538,65 @@ static void test_oversized_attributes(void) {
     assert(g_last.title[ANCS_TITLE_LEN - 1] == '\0');
 }
 
+// ---------------------------------------------------------------------------------------------
+// Current Time Service: the iOS clock, which has to work with no app running.
+// ---------------------------------------------------------------------------------------------
+
+static void make_cts(uint8_t *b, int year, int mon, int day, int h, int mi, int s) {
+    b[0] = (uint8_t)(year & 0xFF);
+    b[1] = (uint8_t)(year >> 8);
+    b[2] = (uint8_t)mon;
+    b[3] = (uint8_t)day;
+    b[4] = (uint8_t)h;
+    b[5] = (uint8_t)mi;
+    b[6] = (uint8_t)s;
+    b[7] = 1; // day of week
+    b[8] = 0; // fractions256
+    b[9] = 0; // adjust reason
+}
+
+static void test_cts(void) {
+    // Anchors computed independently of the implementation.
+    assert(cts_days_from_civil(1970, 1, 1) == 0);
+    assert(cts_days_from_civil(1970, 1, 2) == 1);
+    assert(cts_days_from_civil(2000, 3, 1) == 11017);
+    assert(cts_days_from_civil(2026, 9, 28) == 20724);
+    // Leap-year handling: 2024 has a 29 February, 2100 does not.
+    assert(cts_days_from_civil(2024, 3, 1) - cts_days_from_civil(2024, 2, 28) == 2);
+    assert(cts_days_from_civil(2100, 3, 1) - cts_days_from_civil(2100, 2, 28) == 1);
+
+    uint8_t b[CTS_CURRENT_TIME_LEN];
+    uint32_t epoch = 0;
+
+    make_cts(b, 1970, 1, 1, 0, 0, 0);
+    // Year 1970 is below the sanity floor -- a phone reporting it is not telling us the time.
+    assert(!cts_parse_current_time(b, sizeof(b), &epoch));
+
+    make_cts(b, 2026, 9, 28, 10, 15, 2);
+    assert(cts_parse_current_time(b, sizeof(b), &epoch));
+    assert(epoch == (uint32_t)20724 * 86400u + 10u * 3600u + 15u * 60u + 2u);
+    // The terminal only ever shows HH:MM, so that is what has to survive the round trip.
+    assert((epoch % 86400u) / 3600u == 10u && (epoch % 3600u) / 60u == 15u);
+
+    // A short read is not a time.
+    assert(!cts_parse_current_time(b, CTS_CURRENT_TIME_LEN - 1, &epoch));
+    assert(!cts_parse_current_time(NULL, sizeof(b), &epoch));
+
+    // All-zero is CTS "unknown", not midnight on 1 January year zero.
+    memset(b, 0, sizeof(b));
+    assert(!cts_parse_current_time(b, sizeof(b), &epoch));
+
+    // Out-of-range fields are rejected rather than normalised into a plausible wrong time.
+    make_cts(b, 2026, 13, 1, 0, 0, 0);
+    assert(!cts_parse_current_time(b, sizeof(b), &epoch));
+    make_cts(b, 2026, 1, 32, 0, 0, 0);
+    assert(!cts_parse_current_time(b, sizeof(b), &epoch));
+    make_cts(b, 2026, 1, 1, 24, 0, 0);
+    assert(!cts_parse_current_time(b, sizeof(b), &epoch));
+    make_cts(b, 2026, 1, 1, 0, 60, 0);
+    assert(!cts_parse_current_time(b, sizeof(b), &epoch));
+}
+
 int main(void) {
     test_control_point_encoding();
     test_data_source_reassembly_at_every_split();
@@ -556,6 +616,7 @@ int main(void) {
     test_roundabout_degrades_safely_without_a_glyph();
     test_date_parsing();
     test_oversized_attributes();
+    test_cts();
 
     puts("ancs tests passed");
     return 0;

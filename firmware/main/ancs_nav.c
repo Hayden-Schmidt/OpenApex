@@ -130,12 +130,19 @@ static bool line_states_distance(const char *s) {
     return false;
 }
 
+// Truncation here is intended and routine -- ANCS attributes are longer than the packet fields
+// they land in -- so this copies an explicit length rather than using strncpy, whose truncation
+// warning would be correct and useless.
 static void copy_bounded(char *dst, size_t cap, const char *src) {
     if (cap == 0) {
         return;
     }
-    strncpy(dst, src, cap - 1);
-    dst[cap - 1] = '\0';
+    size_t n = strlen(src);
+    if (n > cap - 1) {
+        n = cap - 1;
+    }
+    memcpy(dst, src, n);
+    dst[n] = '\0';
 }
 
 bool ancs_nav_to_raw(const ancs_notification_t *n, uint32_t sequence, raw_notif_t *out) {
