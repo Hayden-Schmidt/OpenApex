@@ -16,7 +16,7 @@ import kotlin.math.roundToLong
  * | Offset | Size | Field            | Encoding                              |
  * |--------|------|------------------|----------------------------------------|
  * | 0      | 1    | protocol version | constant `1`                           |
- * | 1      | 1    | flags            | bit0 gnss_fix_valid, rest reserved     |
+ * | 1      | 1    | flags            | bit0 gnss_fix_valid, bit1 nav_fields_absent (v6), bit2 source_is_ios (v6) |
  * | 2      | 4    | sequence         | uint32 LE                              |
  * | 6      | 2    | speed_kmh_x10    | uint16 LE, 0xFFFF = unknown            |
  * | 8      | 2    | heading_deg      | uint16 LE (0-359), 0xFFFF = unknown    |
@@ -77,6 +77,25 @@ import kotlin.math.roundToLong
  */
 const val RAW_NOTIF_PACKET_SIZE = 210
 const val RAW_NOTIF_VERSION = 5
+
+/**
+ * Same 210-byte layout as v5, two more flag bits. The firmware accepts either (packet.c takes
+ * versions 5 through 6), so v5 stays the default and nothing on Android changes on the wire.
+ */
+const val RAW_NOTIF_VERSION_IOS = 6
+
+const val RAW_FLAG_GNSS_FIX_VALID = 0x01
+
+/**
+ * v6. The nav half of this packet carries nothing: do not let it blank nav that arrived from
+ * somewhere else. On iOS the nav comes over ANCS, straight to the terminal, while the app supplies
+ * only telemetry -- so without this bit every telemetry packet would wipe the turn on screen.
+ * packet_merge.c on the terminal is the other half of this.
+ */
+const val RAW_FLAG_NAV_FIELDS_ABSENT = 0x02
+
+/** v6. Tells the terminal the app cannot be the nav source, so ANCS is not a fallback but the only one. */
+const val RAW_FLAG_SOURCE_IS_IOS = 0x04
 const val MAX_PROGRESS_SEGMENTS = 8
 
 private const val DIST_STR_BYTES = 16
@@ -140,10 +159,12 @@ fun packRawNotifPacket(
     // owns "now" and its UTC offset, which also makes every packet in a test reproducible.
     nowEpochMs: Long?,
     tzOffsetMin: Int?,
+    version: Int = RAW_NOTIF_VERSION,
+    extraFlags: Int = 0,
 ): ByteArray {
     val p = ByteArray(RAW_NOTIF_PACKET_SIZE)
-    p[0] = RAW_NOTIF_VERSION.toByte()
-    p[1] = if (gnss.fixValid) 0x01 else 0x00
+    p[0] = version.toByte()
+    p[1] = ((if (gnss.fixValid) RAW_FLAG_GNSS_FIX_VALID else 0) or extraFlags).toByte()
 
     putU32(p, 2, sequence)
     putU16(p, 6, gnss.speedKmh.scaledOrNull(10.0)?.coerceIn(0, 0xFFFE) ?: U16_UNKNOWN)
@@ -248,3 +269,29 @@ private fun putU32(buf: ByteArray, offset: Int, value: Int) {
     buf[offset + 2] = ((value shr 16) and 0xFF).toByte()
     buf[offset + 3] = ((value shr 24) and 0xFF).toByte()
 }
+
+/**
+ * A packet carrying telemetry and no navigation, for iOS, where the app is only ever the telemetry
+ * half: nav reaches the terminal over ANCS and the app never sees it.
+ *
+ * The nav fields are not merely empty, they are flagged absent. An empty maneuver means "riding,
+ * not navigating" and the terminal settles on its compass view -- which is right on Android, where
+ * the app would know if there were a turn, and wrong on iOS, where it would erase a turn ANCS just
+ * delivered.
+ */
+fun telemetryOnlyPacket(
+    sequence: Int,
+    gnss: GnssTelemetry,
+    motion: MotionTelemetry = MotionTelemetry(null, null),
+    nowEpochMs: Long?,
+    tzOffsetMin: Int?,
+): ByteArray = packRawNotifPacket(
+    sequence,
+    RawNavNotification(null, null, null, null, null, null),
+    gnss,
+    motion,
+    nowEpochMs = nowEpochMs,
+    tzOffsetMin = tzOffsetMin,
+    version = RAW_NOTIF_VERSION_IOS,
+    extraFlags = RAW_FLAG_NAV_FIELDS_ABSENT or RAW_FLAG_SOURCE_IS_IOS,
+)

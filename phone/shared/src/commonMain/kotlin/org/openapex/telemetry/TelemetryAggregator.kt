@@ -4,6 +4,7 @@ import org.openapex.protocol.GnssTelemetry
 import org.openapex.protocol.MotionTelemetry
 import org.openapex.protocol.RawNavNotification
 import org.openapex.protocol.packRawNotifPacket
+import org.openapex.protocol.telemetryOnlyPacket
 
 /**
  * Holds the latest of every input the terminal is sent and turns them into a packet on demand.
@@ -41,6 +42,13 @@ class TelemetryAggregator {
     var accelMs2: FloatArray? = null
     var gyroRadS: FloatArray? = null
 
+    /**
+     * Set on iOS, where nav reaches the terminal over ANCS and the app never sees it. Packets then
+     * flag their nav fields absent rather than empty, so they do not erase a turn the terminal
+     * already has. Android leaves this false: there the app is the nav source.
+     */
+    var telemetryOnly: Boolean = false
+
     private var sequence = 0
 
     /** A built packet and the sequence number it carries, which the drive log records alongside. */
@@ -64,28 +72,25 @@ class TelemetryAggregator {
         val recent = fix?.takeIf { monotonicMs - it.monotonicMs < FIX_MAX_AGE_MS }
 
         val seq = ++sequence
-        return Published(
-            seq,
-            packRawNotifPacket(
-                seq,
-                currentNav,
-                GnssTelemetry(
-                    speedKmh = speedKmh,
-                    headingDeg = headingDeg,
-                    fixValid = fixValid,
-                    batteryPercent = batteryPercent,
-                    bearingAccuracyDeg = bearingAccuracyDeg,
-                    yawDeg = yawDeg,
-                    yawRateDps = yawRateDps,
-                    latitudeDeg = recent?.latitudeDeg,
-                    longitudeDeg = recent?.longitudeDeg,
-                    accuracyM = recent?.accuracyM,
-                ),
-                MotionTelemetry(accelMs2 = accelMs2, gyroRadS = gyroRadS),
-                nowEpochMs = nowEpochMs,
-                tzOffsetMin = tzOffsetMin,
-            ),
+        val gnss = GnssTelemetry(
+            speedKmh = speedKmh,
+            headingDeg = headingDeg,
+            fixValid = fixValid,
+            batteryPercent = batteryPercent,
+            bearingAccuracyDeg = bearingAccuracyDeg,
+            yawDeg = yawDeg,
+            yawRateDps = yawRateDps,
+            latitudeDeg = recent?.latitudeDeg,
+            longitudeDeg = recent?.longitudeDeg,
+            accuracyM = recent?.accuracyM,
         )
+        val motion = MotionTelemetry(accelMs2 = accelMs2, gyroRadS = gyroRadS)
+        val bytes = if (telemetryOnly) {
+            telemetryOnlyPacket(seq, gnss, motion, nowEpochMs = nowEpochMs, tzOffsetMin = tzOffsetMin)
+        } else {
+            packRawNotifPacket(seq, currentNav, gnss, motion, nowEpochMs = nowEpochMs, tzOffsetMin = tzOffsetMin)
+        }
+        return Published(seq, bytes)
     }
 
     companion object {
