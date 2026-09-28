@@ -66,54 +66,57 @@ it on the bench.
 
 ## Phase B — KMP restructure
 
-In progress. Done: a Gradle wrapper (there was none), `android/` renamed to `phone/` with
-`:androidApp` and a multiplatform `:shared`, the Car App shell deleted, packages renamed to
-`org.openapex.protocol` and `org.openapex.app`, and the four wire-format files plus
-fragmentation and the send queue moved to `commonMain`. `:shared:jvmTest` is 34 tests.
+**Done.** `android/` is now `phone/` with `:androidApp` and a multiplatform `:shared`; a Gradle
+wrapper exists where there was none; the Car App shell is gone; packages are `org.openapex.protocol`
+/ `org.openapex.app`. `:shared:jvmTest` is 61 tests, plus 9 firmware host suites.
 
-**Verified on hardware after the move** (2026-09-29): reinstalled on the OnePlus, 13 packets
-written at 1 Hz as 13 fragments each, and the C3 decoded 26 consecutive packets (seq 150-175)
-with no gaps and no warnings. The restructure does not change a byte on the wire.
+What is in `commonMain`, and why each had to move before the one after it:
 
-Two things that only a reinstall could show:
+| | |
+|---|---|
+| `RawNotifPacket`, `CallPacket`, `SettingsTlv`, `RiderMesh` | the wire formats, already pure |
+| `Fragmentation` / `FragmentQueue` | what to send next and in what order |
+| `SecureStore` + `RiderStoreCore` | had to precede the mesh sync, which reached into `Context` |
+| `RiderMeshSync` on `MeshTransport` | had to leave `RelayBleClient` before `TerminalLink` could |
+| `TerminalCharacteristic` + `ControlQueue` | the last non-GATT thing in `RelayBleClient` |
+| `TerminalLink` + `DeviceId` | the interface `iosMain` implements |
+| `TelemetryAggregator` | was fields scattered across `RelayService` |
+| `telemetryOnlyPacket()` (v6) | the iOS packet, written before iOS can compile |
 
+`RelayBleClient` is now GATT calls and the one-operation-in-flight rule, nothing else.
+
+**`DeviceId` needs no migration.** It is opaque, and Android's value is the MAC string already in
+SharedPreferences under the same key. iOS supplies `CBPeripheral.identifier` instead -- per-install,
+so it differs between two phones looking at one terminal. Nothing above the link may parse it.
+
+**Verified on hardware throughout, not just at the end.** Each step was installed on the OnePlus
+and run against the C3: a full mesh sync (`identity push ok=true`, `friends sync terminal=1
+merged=1`, `friends push ok=true`, FRIENDS subscribed) through the new store, then the new sync,
+then the new queue, then over a `DeviceId` connect; and the C3 decoding packets gaplessly, seq
+40-52 at 1 Hz with GNSS, and on the final build with `speed_x10=65535 heading=65535` -- the absent
+sentinels, correct indoors. **Not one byte changed on the wire**, which was the pass condition.
+
+New: `packet_kotlin_fixture_test.c` decodes packets the Kotlin packer actually produced using the
+firmware's own `packet.c`. One wire format has two implementations in two languages and nothing
+compared them before; the Kotlin tests only ever agreed with Kotlin.
+
+Two bugs found and fixed on the way, both pre-existing:
+
+- `RelayBleClient.writeAll` locked its own `frames` parameter, which shadowed the `FragmentQueue`
+  field every other caller locks, so `controlOps` was mutated outside its guard. The queue now has
+  an explicit lock object.
 - The notification-listener grant is stored **fully qualified**, so the package rename would have
-  silently stopped nav scraping even on an in-place update -- the listener would point at a class
-  that no longer exists, with no error anywhere. Re-issued with `cmd notification allow_listener`.
-- **Pre-existing, not from this work:** on a fresh install the app crash-loops.
-  `RelayService.onCreate` starts a `connectedDevice` foreground service before
-  `BLUETOOTH_CONNECT` is granted and Android throws. Survivable for a developer who grants
-  permissions out of band; wrong for anyone else.
+  silently stopped nav scraping. Re-issued with `cmd notification allow_listener`.
 
-Also done: the rider store behind `SecureStore` + `RiderStoreCore`, and the rider-mesh sync state
-machine as `RiderMeshSync` on `MeshTransport` + `RiderMeshStore`. `:shared:jvmTest` is now 45
-tests. Both verified on the OnePlus, in place: a full sync -- `identity push ok=true`,
-`friends sync: terminal=1 merged=1`, `friends push ok=true`, FRIENDS subscribed -- so the list was
-read off the terminal, merged, stored in the new format and pushed back. The rider identity
-survived the storage change, which is the one value that cannot be regenerated without orphaning
-every friendship.
+Still open, and not from this work:
 
-Fixed along the way: `RelayBleClient.writeAll` locked its own `frames` parameter instead of the
-`FragmentQueue` field of the same name, leaving `controlOps` mutated outside the lock that guards
-it everywhere else. Pre-existing. The queue now has an explicit lock object.
-
-Remaining: the control-op queue and a characteristic enum, the `TerminalLink` interface with
-`DeviceId` replacing the saved MAC, `TelemetryAggregator` out of `RelayService`, and v6 plus
-`telemetryOnly()`.
-
-**Open question at the `DeviceId` step:** whether replacing the stored MAC needs a migration path
-or whether a re-pair is acceptable.
-
-The Android app today: single Gradle module, ~3.3k LOC, **no coroutines anywhere** (everything is
-a main-looper `Handler`), no Compose, no DI. Four files are already pure Kotlin and move verbatim:
-`RawNotifPacket.kt`, `CallPacket.kt`, `SettingsTlv.kt`, `RiderMesh.kt`.
-
-**The pass condition for the whole phase: not one byte changes on the wire.** The Android capture
-fixtures must replay end-to-end identically before and after.
-
-The hazard is the coroutine conversion. Turning the BLE queue pump — single-op-in-flight, with
-control > call > nav priority — into a `Channel` is the single biggest refactor in the plan and
-should be its own step with tests around it, not smuggled into the module move.
+- **A fresh install crash-loops.** `RelayService.onCreate` starts a `connectedDevice` foreground
+  service before `BLUETOOTH_CONNECT` is granted. Survivable for a developer; wrong for anyone else.
+- **No coroutines anywhere** -- everything is still a main-looper `Handler`. Converting the queue
+  pump to a `Channel` is the biggest single refactor left and deliberately was not smuggled into a
+  module move. `TerminalLink` and `MeshTransport` change shape when it happens.
+- `publish()` is driven *only* by fused location updates, so with no GNSS fix the packet stream
+  stops entirely. Worth knowing: it is not a smoke test unless the phone can see sky.
 
 ## Phase C — iOS platform layer
 
