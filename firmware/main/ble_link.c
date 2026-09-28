@@ -93,6 +93,7 @@ static const ble_uuid128_t s_ancs_sol_uuid =
 // False during the post-(re)start fast burst, true once it has elapsed. Written only from the
 // NimBLE host task.
 static bool s_adv_slow;
+static bool s_adv_configured; // instance 0 holds usable params, so a failed re-configure is survivable
 static void start_advertising(void);
 
 // Consecutive failed decodes on the current link. Reset by any successful decode.
@@ -546,7 +547,15 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
         }
         return 0;
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        // The fast burst elapsed (it is the only thing that sets a duration). Drop to the
+        // reason == 0 means advertising stopped because a central connected, and NimBLE delivers
+        // this BEFORE the CONNECT event. Restarting here would take the one connection slot's
+        // pool entry into ble_gap_ext_adv_configure(), which rejects a connectable advert with
+        // ENOMEM when none is free -- a confusing rc=6 in the log for a thing we did not want to
+        // do anyway. The CONNECT/DISCONNECT pair owns advertising across a connection.
+        if (event->adv_complete.reason == 0) {
+            return 0;
+        }
+        // Otherwise the fast burst elapsed (the only thing that sets a duration). Drop to the
         // Apple-compliant rate and keep advertising indefinitely.
         s_adv_slow = true;
         start_advertising();
@@ -676,10 +685,29 @@ static void start_advertising(void) {
         adv_params.itvl_min = OPENAPEX_ADV_SLOW_ITVL_MIN;
         adv_params.itvl_max = OPENAPEX_ADV_SLOW_ITVL_MAX;
     }
+    // One connection slot (CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1), so a connectable advert cannot be
+    // configured while a phone is on the link: ble_gap_ext_adv_params_validate() rejects it with
+    // ENOMEM. Nothing should call us in that state, but say so rather than emit a puzzling rc=6.
+    if (s_connected) {
+        ESP_LOGD(TAG, "not advertising: already connected");
+        return;
+    }
+    // Reconfiguring a running instance is rejected too. Stop first; a no-op when it is idle.
+    if (ble_gap_ext_adv_active(PHONE_ADV_INSTANCE)) {
+        (void)ble_gap_ext_adv_stop(PHONE_ADV_INSTANCE);
+    }
     int rc = ble_gap_ext_adv_configure(PHONE_ADV_INSTANCE, &adv_params, NULL, gap_event_cb, NULL);
     if (rc != 0) {
+        // Only fatal the first time. Once the instance holds good params, a failed re-configure
+        // costs the new interval, not the advert -- and returning here is what previously left
+        // the terminal silently unadvertised, invisible to the phone until the next reboot.
         ESP_LOGW(TAG, "ble_gap_ext_adv_configure failed; rc=%d", rc);
-        return;
+        if (!s_adv_configured) {
+            return;
+        }
+        ESP_LOGW(TAG, "re-advertising with the previous parameters");
+    } else {
+        s_adv_configured = true;
     }
     if (set_adv_payload(&fields, false) != 0) {
         return;

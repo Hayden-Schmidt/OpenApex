@@ -60,6 +60,10 @@ bool apple_client_perform_action(uint32_t uid, ancs_action_id_t action);
 // True once ANCS is discovered and both its notify characteristics are subscribed.
 bool apple_client_ancs_ready(void);
 
+// True while a discovery is running or retries remain. Goes false for good on a peer that has no
+// Apple services at all -- every Android phone -- which is the signal to stop reporting on it.
+bool apple_client_may_retry(void);
+
 // Logs the discovered handle table and the live notification table. The day-one answer to "what
 // did iOS actually do", without a rebuild.
 void apple_client_dump(void);

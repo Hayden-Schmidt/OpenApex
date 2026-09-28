@@ -175,7 +175,11 @@ static void countdown_task(void *argument) {
         // invisible from the screen.
         {
             static uint32_t next_dump_ms;
-            if (ble_link_is_connected() && !apple_client_ancs_ready()) {
+            // Only while there is still a chance of ANCS turning up. On an Android phone there
+            // never is -- it publishes neither ANCS nor CTS -- so once apple_client has given up
+            // retrying, repeating the same empty table every 10 s for the rest of the ride buries
+            // everything else in the log.
+            if (ble_link_is_connected() && !apple_client_ancs_ready() && apple_client_may_retry()) {
                 if (next_dump_ms == 0 || (int32_t)(now - next_dump_ms) >= 0) {
                     next_dump_ms = now + 10000u;
                     apple_client_dump();

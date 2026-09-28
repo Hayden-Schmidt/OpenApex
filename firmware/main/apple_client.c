@@ -582,6 +582,10 @@ bool apple_client_ancs_ready(void) {
     return s_h.ns_subscribed && s_h.ds_subscribed;
 }
 
+bool apple_client_may_retry(void) {
+    return s_discovering || s_tries < DISCOVERY_MAX_TRIES;
+}
+
 void apple_client_dump(void) {
     ESP_LOGI(TAG, "conn=%u encrypted=%d discovering=%d tries=%u", s_conn_handle, (int)s_encrypted,
              (int)s_discovering, s_tries);
