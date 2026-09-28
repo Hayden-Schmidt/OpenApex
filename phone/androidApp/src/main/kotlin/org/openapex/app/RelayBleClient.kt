@@ -1,6 +1,8 @@
 package org.openapex.app
 
 import org.openapex.ble.ControlOp
+import org.openapex.ble.DeviceId
+import org.openapex.ble.TerminalLink
 import org.openapex.ble.ControlQueue
 import org.openapex.ble.TerminalCharacteristic
 import org.openapex.mesh.MeshTransport
@@ -14,6 +16,7 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothStatusCodes
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -31,7 +34,7 @@ import java.util.UUID
  * is central/client. Mirrors the OpenApex BLE identifiers from docs/OpenApex_SPEC.md (same pair
  * the terminal firmware decodes against).
  */
-class RelayBleClient(private val context: Context) {
+class RelayBleClient(private val context: Context) : TerminalLink {
 
     private var gatt: BluetoothGatt? = null
     private var characteristic: BluetoothGattCharacteristic? = null
@@ -89,6 +92,19 @@ class RelayBleClient(private val context: Context) {
      * user/CDM-initiated starts.
      */
     @SuppressLint("MissingPermission")
+    override fun connect(id: DeviceId, background: Boolean) {
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+        if (adapter == null) {
+            Log.w(TAG, "connect: no Bluetooth adapter")
+            return
+        }
+        // getRemoteDevice throws on anything that is not a MAC. A DeviceId is opaque above this
+        // class, but on Android it is always one this class stored, so a malformed one is a bug
+        // here rather than bad input.
+        connect(adapter.getRemoteDevice(id.value), background)
+    }
+
+    @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice, background: Boolean = false) {
         // Multiple wake paths (RelayService's own scan, plus CDM's legacy onDeviceAppeared and
         // API 36 onDevicePresenceEvent callbacks, which can both fire for the same appearance)
@@ -145,7 +161,7 @@ class RelayBleClient(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun disconnect() {
+    override fun disconnect() {
         gatt?.disconnect()
         gatt?.close()
         gatt = null
@@ -172,7 +188,7 @@ class RelayBleClient(private val context: Context) {
      * correctness no longer depends on requestMtu() ever succeeding. The terminal reassembles in
      * ble_link.c. A dropped fragment costs one packet, superseded by the next publish (~3Hz).
      */
-    fun write(packet: ByteArray) {
+    override fun write(packet: ByteArray) {
         val packetId = synchronized(queueLock) { frames.offerNav(packet) }
         Log.i(TAG, "write: packet=$packetId len=${packet.size} frags=$NAV_FRAG_COUNT queued")
         pumpQueue()
@@ -183,22 +199,22 @@ class RelayBleClient(private val context: Context) {
      * the same way as nav packets and queued ahead of them. Dropped while not connected: the
      * ring refresh (CallRelay) re-sends once the link is back.
      */
-    fun writeCall(packet: ByteArray) {
+    override fun writeCall(packet: ByteArray) {
         val packetId = synchronized(queueLock) { frames.offerCall(packet) }
         Log.i(TAG, "writeCall: packet=$packetId frags=$CALL_FRAG_COUNT queued")
         pumpQueue()
     }
 
     /** Reads the terminal's settings; [done] gets null if not connected or unreadable. */
-    fun readSettings(done: (TerminalSettings?) -> Unit) =
+    override fun readSettings(done: (TerminalSettings?) -> Unit) =
         read(TerminalCharacteristic.SETTINGS) { done(it?.let { b -> SettingsTlv.decode(b) }) }
 
     /** Reads the device-info characteristic, which says the board and avatar size. */
-    fun readDeviceInfo(done: (DeviceInfo?) -> Unit) =
+    override fun readDeviceInfo(done: (DeviceInfo?) -> Unit) =
         read(TerminalCharacteristic.DEVICE_INFO) { done(it?.let(DeviceInfo::parse)) }
 
     /** Writes every setting, split into MTU-sized partial writes. [done] is false if any failed. */
-    fun writeSettings(settings: TerminalSettings, done: (Boolean) -> Unit = {}) =
+    override fun writeSettings(settings: TerminalSettings, done: (Boolean) -> Unit) =
         writeAll(TerminalCharacteristic.SETTINGS, SettingsTlv.encodeWrites(settings), done)
 
     /**
@@ -206,14 +222,14 @@ class RelayBleClient(private val context: Context) {
      * avatar = [TerminalSettings.AVATAR_CUSTOM]. One 80-byte write, which Android sends as an ATT
      * long write, so the terminal gets all of it or none.
      */
-    fun uploadAvatar(art: AvatarArt, done: (Boolean) -> Unit = {}) =
+    override fun uploadAvatar(art: AvatarArt, done: (Boolean) -> Unit) =
         writeAll(TerminalCharacteristic.AVATAR, listOf(art.bytes), done)
 
     /** Reads the stored custom avatar; [done] gets null if none is stored or the read failed. */
-    fun readAvatar(done: (AvatarArt?) -> Unit) =
+    override fun readAvatar(done: (AvatarArt?) -> Unit) =
         read(TerminalCharacteristic.AVATAR) { done(it?.let(AvatarArt::fromBytes)) }
 
-    fun clearAvatar(done: (Boolean) -> Unit = {}) =
+    override fun clearAvatar(done: (Boolean) -> Unit) =
         writeAll(TerminalCharacteristic.AVATAR, listOf(ByteArray(0)), done)
 
     // Ordering, batch-failure collapsing and completion live in ControlQueue (commonMain). What
@@ -278,7 +294,7 @@ class RelayBleClient(private val context: Context) {
     }
 
     /** Pushes the phone's friend list again, e.g. after the rider removes one in the app. */
-    fun pushFriends() = mesh.pushFriends()
+    override fun pushFriends() = mesh.pushFriends()
 
     private fun onFriendNotify(char: BluetoothGattCharacteristic, value: ByteArray?) {
         if (char.uuid == FRIENDS_UUID && value != null) mesh.onFriendNotify(value)
@@ -501,8 +517,9 @@ class RelayBleClient(private val context: Context) {
         private const val KEY_ADDRESS = "terminal_address"
 
         /** Last terminal this phone connected to; lets no-address starts reconnect without scanning. */
-        fun savedAddress(context: Context): String? =
+        fun savedDeviceId(context: Context): DeviceId? =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ADDRESS, null)
+                ?.let(::DeviceId)
 
         private fun saveAddress(context: Context, address: String) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

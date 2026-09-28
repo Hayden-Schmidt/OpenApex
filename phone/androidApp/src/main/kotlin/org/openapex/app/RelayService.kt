@@ -1,5 +1,6 @@
 package org.openapex.app
 
+import org.openapex.ble.DeviceId
 import org.openapex.protocol.*
 import android.Manifest
 import android.annotation.SuppressLint
@@ -142,7 +143,7 @@ class RelayService : Service() {
         val adapter = (getSystemService(BluetoothManager::class.java))?.adapter
         if (address != null) {
             stopOwnScan()
-            adapter?.getRemoteDevice(address)?.let { ble.connect(it) }
+            ble.connect(DeviceId(address))
         } else {
             // No address (e.g. started from BootCompletedReceiver, not CompanionDeviceManager):
             // CDM cold-wake is unreliable on some OEMs (see docs/OpenApex_SPEC.md §13 item 9), so
@@ -163,10 +164,10 @@ class RelayService : Service() {
      * OS to suspend. Scanning is only the first-run fallback, before any terminal has connected.
      */
     private fun reconnect(adapter: BluetoothAdapter?) {
-        val saved = RelayBleClient.savedAddress(this)
+        val saved = RelayBleClient.savedDeviceId(this)
         if (saved != null && adapter != null) {
             stopOwnScan()
-            ble.connect(adapter.getRemoteDevice(saved), background = true)
+            ble.connect(saved, background = true)
         } else {
             startOwnScan(adapter)
         }
@@ -204,7 +205,7 @@ class RelayService : Service() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             Log.i(TAG, "onScanResult: found ${result.device.address}")
             stopOwnScan()
-            ble.connect(result.device)
+            ble.connect(DeviceId(result.device.address))
         }
 
         override fun onScanFailed(errorCode: Int) {
