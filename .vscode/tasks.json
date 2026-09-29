@@ -4,7 +4,7 @@
     {
       "label": "Android Auto: assembleDebug",
       "type": "shell",
-      "command": "${workspaceFolder}/gradlew.bat",
+      "command": "${workspaceFolder}/phone/gradlew.bat",
       "args": ["-p", "phone", ":androidApp:assembleDebug"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": "build",
@@ -27,20 +27,12 @@
       "problemMatcher": []
     },
     {
-      "label": "Simulator: open round display",
-      "type": "shell",
-      "command": "Start-Process",
-      "args": ["${workspaceFolder}/simulator/index.html"],
-      "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "Simulator: PlatformIO native",
+      "label": "Simulator: LVGL",
       "type": "shell",
       "command": "pio",
-      "args": ["run", "-e", "native"],
+      "args": ["run", "-d", "firmware/sim_lvgl"],
       "options": { "cwd": "${workspaceFolder}" },
-      "group": "test",
+      "group": "build",
       "problemMatcher": []
     }
   ]

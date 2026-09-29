@@ -20,8 +20,8 @@ idf.py flash monitor
 The GC9A01 driver, BLE packet decoder, and board pin profile are intentionally next work after the
 prototype board is physically verified.
 
-Until then, use `../simulator/index.html` for visual work and the PlatformIO `native` environment
-for countdown/runtime work. Both consume the same countdown source in `main/countdown.c`.
+Until then, use `firmware/sim_lvgl` for visual work and `scripts/build-countdown.ps1` for
+countdown/runtime host tests.
 
 ## Drive logging (development only)
 

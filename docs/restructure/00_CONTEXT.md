@@ -164,16 +164,16 @@ keep it accurate. If you place something elsewhere, edit this table in the same 
 
 ## Owner steps (before T01)
 
-- [ ] Decide the base. Recommended: merge `feat/ios-ancs` into `main` first, then branch
-      `chore/restructure` from `main`. The restructure moves many files, and doing it while
-      `feat/ios-ancs` is unmerged guarantees conflicts.
-- [ ] No other feature branch should be active while the restructure runs.
+- [x] Decide the base. `chore/restructure` was branched from `feat/ios-ancs` instead of `main`
+      (the owner has not merged `feat/ios-ancs` yet, and branching from it avoids conflicts).
+      Treated as satisfying this step.
+- [x] No other feature branch should be active while the restructure runs.
 
 ## Progress
 
 | Task | What | Depends on | Done |
 |---|---|---|---|
-| T01 | Repo cleanup: stray files, root Gradle wrapper, retire `simulator/` | owner steps | [ ] |
+| T01 | Repo cleanup: stray files, root Gradle wrapper, retire `simulator/` | owner steps | [x] |
 | T02 | Move maneuver icon pipeline + reference renderer to `tools/maneuver_icons/` | T01 | [ ] |
 | T03 | Reorganise `design reference/` → `design/` | T02 | [ ] |
 | T04 | Docs skeleton; move whole non-SPEC docs | T03 | [ ] |
@@ -209,3 +209,27 @@ Seeded when the pack was written (2026-09-29):
 - `docs/DEVELOPMENT_SETUP.md` "Verified working (2026-09-21)" figures (RAM 3.3 %, Flash 14.3 %)
   are stale; the rider-mesh plan quotes C3 flash at 64.9 %. → T15
 - SPEC §13 has two items numbered 8. → T10 (8a/8b)
+
+Added by T01 (2026-09-29):
+
+- `docs/OpenApex_SPEC.md:704` still says `pio run -e native` and `pio run -d firmware -e
+  prototype_c3` build clean. `docs/OpenApex_SPEC.md:927` still describes the browser simulator
+  (`simulator/index.html`) and PlatformIO `native` target sharing the countdown implementation.
+  Both are stale now that `simulator/` and the root `platformio.ini` are removed. → T05-T14 (SPEC
+  extraction), final SPEC deletion in T14.
+- `/CMakeLists.txt` and its explanatory comment were removed from `.gitignore`, not just the
+  `simulator/native/CMakeLists.txt` line: the comment said the rule existed "only" to ignore the
+  PlatformIO-generated root `CMakeLists.txt`, which only the now-removed root `platformio.ini`
+  (`native` env) ever generated. No root `CMakeLists.txt` was present in the tree or in git.
+- `scripts/setup-android.ps1` and `phone/README.md` also pointed at the root Gradle wrapper
+  (`.\gradlew.bat`, `..\gradlew.bat -p android`) but weren't in T01's "known references" table.
+  Repointed both at `phone/gradlew.bat`. `phone/README.md` and `setup-android.ps1` also both said
+  `-p android`, but the Gradle module is `:androidApp` under the `phone` project (there is no
+  `android` project) — already wrong before this session's edit, unrelated to the wrapper move.
+  Corrected to `-p phone` while touching those lines anyway, since leaving a known-broken command
+  behind a "fixed" path felt worse than the small scope creep. → flag in T15 if this reasoning
+  should be revisited.
+- `pio` and `idf.py` are not on PATH in this environment (PlatformIO is installed under
+  `~/.platformio/penv/Scripts/pio.exe` and `~/.platformio/packages/framework-espidf/tools/idf.py`,
+  but neither is exported). `pio run -d firmware/sim_lvgl` and `pio run -d firmware -e
+  prototype_c3` could not be run this session; not installed/added to PATH per instructions.

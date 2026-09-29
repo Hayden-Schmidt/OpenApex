@@ -5,8 +5,8 @@ if (-not $env:ANDROID_HOME -and -not $env:ANDROID_SDK_ROOT) {
 }
 
 Set-Location (Join-Path $PSScriptRoot '..')
-if (-not (Test-Path .\gradlew.bat)) {
+if (-not (Test-Path .\phone\gradlew.bat)) {
     throw 'Gradle wrapper is missing. Run from a repository containing the wrapper files.'
 }
-& .\gradlew.bat --version
-& .\gradlew.bat -p android dependencies
+& .\phone\gradlew.bat --version
+& .\phone\gradlew.bat -p phone dependencies

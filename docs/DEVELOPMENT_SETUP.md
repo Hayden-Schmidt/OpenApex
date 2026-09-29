@@ -6,7 +6,6 @@
   library holding the wire formats, the BLE queue, the rider-mesh sync and telemetry aggregation
   (docs/Phone_App_Architecture.md §3). iOS targets are not declared yet -- they need a Mac.
 - `firmware/`: ESP-IDF C3 terminal skeleton and profile-independent countdown module.
-- `simulator/`: hardware-free browser display and PlatformIO native harness.
 - `scripts/`: setup and host-test helpers.
 - `docs/OpenApex_SPEC.md`: active architecture and Phase 1 contract.
 - `docs/iOS_Handoff.md`: start here for the iOS/multiplatform work in progress.
@@ -49,10 +48,8 @@ docs/iOS_Multiplatform_Status.md.
 PlatformIO's `espressif32` platform already bundles `framework-espidf` plus the RISC-V/Xtensa
 toolchains — a separate Espressif installer is not required. `idf.py` is the documented build
 entry point (`.vscode/tasks.json` "Firmware: build C3", `firmware/README.md`) because `firmware/`
-is a hand-rolled ESP-IDF CMake project. PlatformIO can also build it directly, through a second,
-nested project at `firmware/platformio.ini` (kept separate from the repo-root `platformio.ini`
-because PlatformIO only supports one `src_dir` per project, and the C3/native targets compile
-disjoint source trees):
+is a hand-rolled ESP-IDF CMake project. PlatformIO can also build it directly, through
+`firmware/platformio.ini`, its own standalone PlatformIO project:
 
 ```powershell
 pio run -d firmware -e prototype_c3
@@ -124,20 +121,14 @@ asset-generation, packet-fixture, or firmware tooling that uses Python.
 - `Android: assembleDebug`
 - `Firmware: host countdown test`
 - `Firmware: build C3`
-- `Simulator: open round display`
-- `Simulator: PlatformIO native`
+- `Simulator: LVGL`
 
 ## Hardware-free screen development
 
-Open `simulator/index.html` directly or run `Simulator: open round display`. It provides a round
-466x466 canvas with maneuver, distance, speed, GNSS validity, pause/resume, and new-notification
-controls. This is the fastest way to iterate on the C3 dial before the board arrives.
-
-The PlatformIO `native` environment compiles `firmware/main/countdown.c` directly through
-`simulator/native/countdown_bridge.cpp`, so the countdown logic is shared rather than copied.
-The native target prints a deterministic countdown trace; the browser target supplies visual
-feedback. PlatformIO's CLI may be exposed only inside the VS Code PlatformIO terminal, even when
-`pio` is not available in an ordinary PowerShell session.
+Run `scripts/build-countdown.ps1` for a deterministic countdown trace against
+`firmware/main/countdown.c`, and see the LVGL SDL simulator below for a visual target.
+PlatformIO's CLI may be exposed only inside the VS Code PlatformIO terminal, even when `pio` is
+not available in an ordinary PowerShell session.
 
 ### LVGL SDL simulator (`firmware/sim_lvgl`)
 
@@ -204,7 +195,6 @@ working. Don't add a third env without the same guard.
 
 ## Verified working (2026-09-21)
 
-- `pio run -e native` (root project): builds and runs the native simulator via g++/MinGW.
 - `pio run -d firmware -e prototype_c3`: builds the C3 firmware through PlatformIO's espidf
   framework (RAM 3.3%, Flash 14.3% of an esp32c3-devkitm-1).
 - `idf.py -C firmware build`: builds the same C3 firmware directly.
