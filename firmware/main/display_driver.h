@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 
-// Board-specific GC9A01/SPI + LVGL display wiring (docs/OpenApex_SPEC.md board_profile.h pins).
+// Board-specific GC9A01/SPI + LVGL display wiring (docs/reference/hardware.md, board_profile.h pins).
 // Owns the panel, the backlight, and the one lv_display_t the GUI layer draws into -- none of this
 // may be referenced from firmware/gui, which only ever touches the LVGL display API generically
 // (lv_display_get_default()).

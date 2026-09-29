@@ -31,7 +31,7 @@ import java.util.UUID
 /**
  * BLE central: connects to the terminal's bonded GATT service and writes each [RawNotifPacket]
  * into its nav characteristic. The ESP32 terminal is peripheral/advertiser/GATT server; the phone
- * is central/client. Mirrors the OpenApex BLE identifiers from docs/OpenApex_SPEC.md (same pair
+ * is central/client. Mirrors the OpenApex BLE identifiers from docs/reference/ble_link.md (same pair
  * the terminal firmware decodes against).
  */
 class RelayBleClient(private val context: Context) : TerminalLink {
@@ -71,7 +71,7 @@ class RelayBleClient(private val context: Context) : TerminalLink {
     private var writeInFlight = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Settings / device-info / avatar operations (spec §5.6). Android allows one GATT operation in
+    // Settings / device-info / avatar operations (docs/reference/settings_and_avatar.md). Android allows one GATT operation in
     // flight, so these share writeInFlight with the nav fragments and go ahead of them in
     // pumpQueue(): they are rare and user-driven, while a delayed nav packet is superseded anyway.
     private val controlOps = ControlQueue()
@@ -307,7 +307,7 @@ class RelayBleClient(private val context: Context) : TerminalLink {
         val op = controlOps.peek() ?: return false
         val char = g.getService(SERVICE_UUID)?.getCharacteristic(uuidOf(op.char))
         if (char == null) {
-            // Firmware older than spec §5.6. Posted rather than called here: failHead() runs the
+            // Firmware older than docs/reference/settings_and_avatar.md. Posted rather than called here: failHead() runs the
             // caller's callback, and that must not happen while holding queueLock.
             mainHandler.post { synchronized(queueLock) { controlOps.failHead() } }
             mainHandler.post { pumpQueue() }
@@ -526,7 +526,7 @@ class RelayBleClient(private val context: Context) : TerminalLink {
                 .putString(KEY_ADDRESS, address).apply()
         }
 
-        // Fixed OpenApex BLE identifiers — see docs/OpenApex_SPEC.md §5.3.
+        // Fixed OpenApex BLE identifiers — see docs/reference/ble_link.md.
         val SERVICE_UUID: UUID = UUID.fromString("c9c6d0a0-0001-4f0a-9c8e-2f6b1a2d3e4f")
         val CHAR_UUID: UUID = UUID.fromString("c9c6d0a0-0002-4f0a-9c8e-2f6b1a2d3e4f")
         /** Incoming call, phone -> terminal (CallPacket.kt / firmware call_packet.h). */
@@ -535,12 +535,12 @@ class RelayBleClient(private val context: Context) : TerminalLink {
         val CALL_ACTION_UUID: UUID = UUID.fromString("c9c6d0a0-0004-4f0a-9c8e-2f6b1a2d3e4f")
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-        // Terminal settings, device info and avatar upload — docs/OpenApex_SPEC.md §5.6.
+        // Terminal settings, device info and avatar upload — docs/reference/settings_and_avatar.md.
         val SETTINGS_UUID: UUID = UUID.fromString("c9c6d0a0-0005-4f0a-9c8e-2f6b1a2d3e4f")
         val DEVICE_INFO_UUID: UUID = UUID.fromString("c9c6d0a0-0006-4f0a-9c8e-2f6b1a2d3e4f")
         val AVATAR_UUID: UUID = UUID.fromString("c9c6d0a0-0007-4f0a-9c8e-2f6b1a2d3e4f")
 
-        // Rider mesh identity and friends — docs/OpenApex_SPEC.md §5.7.
+        // Rider mesh identity and friends — docs/reference/rider_mesh_v1.md.
         val IDENTITY_UUID: UUID = UUID.fromString("c9c6d0a0-0008-4f0a-9c8e-2f6b1a2d3e4f")
         val FRIENDS_UUID: UUID = UUID.fromString("c9c6d0a0-0009-4f0a-9c8e-2f6b1a2d3e4f")
 

@@ -56,7 +56,7 @@ class NavNotificationRelayService : NotificationListenerService() {
         // fires onNotificationPosted again on its own — seed from whatever is currently active.
         activeNotifications?.firstOrNull { it.packageName == MAPS_PACKAGE }?.let { relayIfNav(it) }
         // System-forced rebind after process death is a more reliable wake signal on this OEM
-        // than CDM cold-wake (see docs/CDM_Cold_Wake_Investigation.md) — use it to also restart
+        // than CDM cold-wake (see docs/investigations/CDM_Cold_Wake_Investigation.md) — use it to also restart
         // RelayService, same as BootCompletedReceiver, in case the process was killed without an
         // intervening reboot. No-op if RelayService is already running (own-scan guards on
         // `scanning`, ble.connect() guards on existing connection).
@@ -190,7 +190,7 @@ class NavNotificationRelayService : NotificationListenerService() {
      * Recursively logs a Bundle, descending into nested Bundles and Lists. The ProgressStyle
      * Parcelables (android.progressSegments / android.progressPoints) stringify only as
      * "Bundle[mParcelledData.dataSize=124]" until something forces them to unparcel, which is why
-     * the earlier capture (docs/Android16_ProgressStyle_Notification_Extras.md) never saw inside
+     * the earlier capture (docs/investigations/2026-09-24_android16_progressstyle_extras.md) never saw inside
      * them. Touching keySet() unparcels; it can throw for classes we don't have, hence the catch.
      */
     private fun dumpBundle(bundle: Bundle, prefix: String, depth: Int = 0) {

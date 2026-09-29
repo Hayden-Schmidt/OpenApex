@@ -2,7 +2,7 @@
 
 #include "theme.hpp"
 
-// Richest tier (S3/RICH, §16.6). Starts visually identical to BasicTheme -- animated transitions
+// Richest tier (S3/RICH, docs/reference/gui_and_display.md). Starts visually identical to BasicTheme -- animated transitions
 // (lv_screen_load_anim) are an additive follow-up once base screen content exists on both tiers.
 class RichTheme : public GuiTheme {
 public:

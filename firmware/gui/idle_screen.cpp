@@ -12,7 +12,7 @@
 
 namespace {
 
-// Geometry lifted from "design reference/2. Idle Screen/Idle Screen Ref.svg", expressed in that
+// Geometry lifted from "design/screens/02-idle/Idle Screen Ref.svg", expressed in that
 // file's 240px reference frame and scaled at runtime -- same convention as the icon manifest's
 // size_240 and nav_renderer.cpp's 600-unit design diameter. The SVG draws both link states side by
 // side in one 520x240 canvas; the numbers below are its coordinates translated so each circle's
@@ -36,7 +36,7 @@ constexpr float kRiseTravel = 52.0f;
 
 constexpr uint32_t kTweenMs = 1000;
 
-// Page entry ("design reference/Screen Transitions.md"): the bubble rises onto the page from below
+// Page entry ("design/SCREEN_TRANSITIONS.md"): the bubble rises onto the page from below
 // the bottom edge, then the link glyph slides out from behind it. Leaving plays it all in reverse.
 // The bubble arrives fast and settles (exponential ease-out) and leaves as the exact reverse
 // (ease-in: slow to start, then away).

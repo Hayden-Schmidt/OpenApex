@@ -157,7 +157,7 @@ class MainActivity : Activity() {
 
     // Android 16 (API 36) deprecated startObservingDevicePresence(String) in favor of the
     // ObservingDevicePresenceRequest overload, and on-device testing found the old overload's
-    // callbacks silently never fire on API 36 (see docs/OpenApex_SPEC.md §13 item 9). Both paths
+    // callbacks silently never fire on API 36 (see docs/blueprints/01_nav_terminal_core.md (Open decisions, item 9)). Both paths
     // are registered here so minSdk 26..35 devices keep working via the legacy overload while
     // API 36+ devices use the one that's actually reliable.
     @Suppress("DEPRECATION") // getAssociations()/startObservingDevicePresence(String) are the pre-36 APIs

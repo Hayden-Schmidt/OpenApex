@@ -47,7 +47,7 @@ import kotlin.math.roundToLong
  *
  * accel_mg/gyro_mdps are raw phone motion samples for terminal-side diagnostics/future use only —
  * they are never classified or fed into the normalized navigation/countdown model (that stays the
- * ESP32 normalizer's job per docs/OpenApex_SPEC.md §2.4).
+ * ESP32 normalizer's job per docs/reference/system_overview.md).
  *
  * icon_rotation_deg is likewise raw geometry, not a classification: it's the angle of the
  * notification's maneuver arrow bitmap, extracted on the phone via image-moment analysis (the
@@ -59,7 +59,7 @@ import kotlin.math.roundToLong
  * ("take the Nth exit") never states a direction and this is the only source.
  *
  * bearing_accuracy_deg_x10/yaw_deg/yaw_rate_dps_x10 (v3) are the raw inputs the ESP32-side
- * heading_fusion.c filter needs (docs/Heading_Sensor_Fusion_Plan.md): heading_deg above stays the
+ * heading_fusion.c filter needs (docs/blueprints/02_heading_sensor_fusion.md): heading_deg above stays the
  * raw GPS course exactly as it always was — the terminal no longer treats it as the final display
  * heading, it's one input to the fusion filter alongside these three.
  *
@@ -73,7 +73,7 @@ import kotlin.math.roundToLong
  * the route as "no data".
  *
  * lat_e7/lon_e7/h_accuracy_m (v5) are the phone's fix, which the terminal shares with friends'
- * terminals over the rider mesh (spec §5.7). Never used for navigation on the terminal.
+ * terminals over the rider mesh (docs/reference/rider_mesh_v1.md). Never used for navigation on the terminal.
  */
 const val RAW_NOTIF_PACKET_SIZE = 210
 const val RAW_NOTIF_VERSION = 5

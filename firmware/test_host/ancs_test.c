@@ -442,7 +442,7 @@ static void test_ancs_to_raw_fields(void) {
     assert(!ancs_nav_to_raw(&n, 1u, &raw));
 }
 
-// The point of SPEC §2.4: the same normalizer, the same answer, from either platform's source.
+// The point of docs/reference/system_overview.md: the same normalizer, the same answer, from either platform's source.
 static void test_ancs_and_android_normalize_identically(void) {
     static const struct {
         const char *title;

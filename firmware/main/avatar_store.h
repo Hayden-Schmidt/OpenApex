@@ -5,7 +5,7 @@
 
 #include "host/ble_gatt.h"
 
-// The rider's uploaded avatar (docs/OpenApex_SPEC.md §5.6): colour-agnostic A2 art, a 16x16 and an
+// The rider's uploaded avatar (docs/reference/settings_and_avatar.md): colour-agnostic A2 art, a 16x16 and an
 // 8x8 version back to back, tinted with the accent colour at draw time like the built-in presets.
 // 80 bytes, so it lives in NVS beside the settings and survives reboots with no phone in range.
 

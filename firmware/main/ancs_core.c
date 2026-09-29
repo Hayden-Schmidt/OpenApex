@@ -7,7 +7,7 @@
 // reorder them and nothing here would care.
 //
 // AppIdentifier tells us whether this is Google Maps (the nav path) or anything else; Title is the
-// maneuver line on the nav path and the caller name on the call path (SPEC §5.5); Subtitle and
+// maneuver line on the nav path and the caller name on the call path (docs/reference/ble_link.md); Subtitle and
 // Message carry the distance/ETA text that parse_distance_metres() reads; Date is the phone's own
 // timestamp for the notification, which is the only age signal ANCS gives us.
 #define ANCS_REQUESTED_ATTR_COUNT 5u

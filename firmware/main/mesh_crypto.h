@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-// AES-128-CCM (RFC 3610) for rider-mesh position frames (docs/OpenApex_SPEC.md §5.7): 13-byte
+// AES-128-CCM (RFC 3610) for rider-mesh position frames (docs/reference/rider_mesh_v1.md): 13-byte
 // nonce, 8-byte tag. A portable software AES rather than mbedtls so the host tests exercise the
 // exact code the terminal runs; at one frame a second per friend, speed is irrelevant.
 

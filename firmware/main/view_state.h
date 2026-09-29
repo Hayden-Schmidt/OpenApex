@@ -33,13 +33,13 @@ typedef struct {
     char eta[NAV_ETA_LEN];
     uint32_t sequence;
 
-    // --- Idle-screen fields (design reference/2. Idle Screen). Meaningful in every state, but
+    // --- Idle-screen fields (design/screens/02-idle). Meaningful in every state, but
     // only VIEW_IDLE renders them today.
     bool phone_connected;          // BLE central connected; set by countdown_task from ble_link_is_connected()
     char clock[NAV_CLOCK_LEN];     // "HH:MM" local, from the phone's clock (packet v4); empty = never synced
     uint32_t odometer_meters;      // device odometer (odometer.c), NVS-persisted by odometer_store.c
 
-    // --- Trip/traffic ring (design reference/3.Turn by Turn, the "Google Trip Data" variant).
+    // --- Trip/traffic ring (design/screens/03-turn-by-turn, the "Google Trip Data" variant).
     // Source: the ProgressStyle segments of Google Maps' navigation notification (packet v4),
     // classified by normalize_traffic_color(); progress from android.progress/progressMax.
     nav_traffic_span_t traffic[NAV_TRAFFIC_MAX_SPANS];
@@ -55,7 +55,7 @@ typedef struct {
     char caller[CALL_CALLER_LEN];  // contact name, folded to ASCII; empty for an unknown caller
     char call_number[CALL_NUMBER_LEN];  // may be empty (withheld)
 
-    // --- Rider mesh (mesh.h, docs/OpenApex_SPEC.md §5.7). The prompt ranks below a call and above
+    // --- Rider mesh (mesh.h, docs/reference/rider_mesh_v1.md). The prompt ranks below a call and above
     // navigation; mesh_core already holds it back while the prompt gate is closed.
     mesh_prompt_state_t friend_prompt;             // MESH_PROMPT_NONE = no page
     uint8_t friend_prompt_id[MESH_RIDER_ID_LEN];  // echo back in the accept

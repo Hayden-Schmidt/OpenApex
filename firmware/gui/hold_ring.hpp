@@ -9,7 +9,7 @@
 // letting go early retraces the same curve back.
 //
 // Colour is solid, or a two-colour gradient left to right that runs through black at twelve and
-// six ("design reference/7. Add Freind Screen": our accent on the left, the friend's on the right,
+// six ("design/screens/06-add-friend": our accent on the left, the friend's on the right,
 // through black so the two never mix to grey).
 class HoldRing {
 public:

@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// One radio the rider mesh can talk over (docs/OpenApex_SPEC.md §5.7). mesh_core never sees these:
+// One radio the rider mesh can talk over (docs/reference/rider_mesh_v1.md). mesh_core never sees these:
 // mesh.c sends every frame on every transport the board has and funnels what they receive, with
 // duplicates dropped, into the one queue the mesh task drains.
 //

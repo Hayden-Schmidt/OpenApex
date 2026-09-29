@@ -1,7 +1,7 @@
 package org.openapex.ble
 
 /**
- * A settings / device-info / avatar / rider-mesh operation (spec §5.6, §5.7). These are rare and
+ * A settings / device-info / avatar / rider-mesh operation (docs/reference/settings_and_avatar.md, docs/reference/rider_mesh_v1.md). These are rare and
  * user-driven, and they run ahead of nav fragments in the pump: a delayed nav packet is superseded
  * by the next publish anyway, while a dropped settings write is just lost.
  */

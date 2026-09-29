@@ -6,7 +6,7 @@
 
 namespace {
 
-// Geometry from "design reference/3.Turn by Turn/OpenApex Hardware Design Ref.svg", in its 240px
+// Geometry from "design/screens/03-turn-by-turn/OpenApex Hardware Design Ref.svg", in its 240px
 // reference frame: the ring was r=114.5 with a 5px stroke (outer edge 117). Tuned on the device
 // since: outer edge pulled in 1px and the stroke 40% thicker, so it reads at a glance.
 constexpr float kRefHalf = 120.0f;

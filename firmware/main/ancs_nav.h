@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 // Maps an ANCS notification onto the raw packet shape the terminal already normalizes
-// (docs/OpenApex_SPEC.md §2.4). This is the whole reason normalize.c lives in C on the terminal:
+// (docs/reference/system_overview.md). This is the whole reason normalize.c lives in C on the terminal:
 // on iOS the notification text arrives here with no phone app in the loop, so routing it through
 // the same normalize_packet() the Android relay uses is what stops the maneuver/street/distance
 // rules from being written twice and drifting.

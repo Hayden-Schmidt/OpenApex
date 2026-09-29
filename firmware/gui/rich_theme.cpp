@@ -9,7 +9,7 @@ lv_color_t RichTheme::palette() const {
     return lv_color_hex(settings_get()->accent_rgb);
 }
 
-// #1E8D3E, straight off "design reference/3.Turn by Turn/Arrived Pop Up.svg".
+// #1E8D3E, straight off "design/screens/03-turn-by-turn/Arrived Pop Up.svg".
 lv_color_t RichTheme::arrived_surface() const { return lv_color_hex(0x1E8D3E); }
 
 void RichTheme::apply_state_change(Screen *prev, Screen *next) {

@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-// Rider mesh wire formats (docs/OpenApex_SPEC.md §5.7): terminal-to-terminal frames over ESP-NOW,
+// Rider mesh wire formats (docs/reference/rider_mesh_v1.md): terminal-to-terminal frames over ESP-NOW,
 // plus the two phone-facing values that feed them (rider identity, friend record). Pure C with no
 // ESP-IDF dependency, like settings.c, so host tests and the simulator link it as-is. Multi-byte
 // fields are little-endian except colours, which are RGB big-endian as in the settings TLV.

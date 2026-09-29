@@ -7,7 +7,7 @@
 
 // gcc -std=c11 -o settings_test firmware/test_host/settings_test.c firmware/main/settings.c
 
-// Golden fixture shared with docs/OpenApex_SPEC.md §5.6 and Android's SettingsTlvTest: the full
+// Golden fixture shared with docs/reference/settings_and_avatar.md and Android's SettingsTlvTest: the full
 // encoding of the factory defaults.
 static const uint8_t kDefaultsTlv[] = {
     0x01,                         // schema

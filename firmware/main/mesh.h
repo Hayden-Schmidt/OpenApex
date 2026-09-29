@@ -12,7 +12,7 @@ extern "C" {
 
 struct ble_gatt_access_ctxt;
 
-// Terminal glue for mesh_core (docs/OpenApex_SPEC.md §5.7): runs it over the board's radios
+// Terminal glue for mesh_core (docs/reference/rider_mesh_v1.md): runs it over the board's radios
 // (mesh_transport.h), owns the one mesh_core_t behind a mutex, persists the rider identity and friend list in
 // NVS and runs the mesh task. Every function here is safe from any task.
 

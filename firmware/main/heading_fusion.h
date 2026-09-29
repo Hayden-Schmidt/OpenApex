@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Terminal-side heading fusion -- see docs/Heading_Sensor_Fusion_Plan.md for the design. Pure C,
+// Terminal-side heading fusion -- see docs/blueprints/02_heading_sensor_fusion.md for the design. Pure C,
 // no platform dependencies, host-testable exactly like countdown.c. Blends GPS course-over-ground
 // with phone/IMU yaw by learning the fixed mount offset between them (the two are different
 // quantities in different frames -- see the plan's "naive blend" section for why averaging degrees
@@ -31,7 +31,7 @@ typedef struct {
     bool  frozen;         // held from the last good estimate rather than live (stopped, no rotation)
 } heading_output_t;
 
-// Cross-boot persistence (docs/Heading_Sensor_Fusion_Plan.md, "cross-boot persistence"): the
+// Cross-boot persistence (docs/blueprints/02_heading_sensor_fusion.md, "cross-boot persistence"): the
 // platform layer (heading_store.c) reads this once at boot and writes it periodically, so the
 // terminal doesn't start every ride with an unknown heading and a mount offset that has to
 // reconverge from scratch. Plain data, no pointers, so it round-trips through NVS as a fixed-size

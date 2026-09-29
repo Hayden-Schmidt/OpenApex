@@ -10,13 +10,13 @@
 // these are diagnostic/future-use passthrough, not part of the normalized nav/countdown model.
 // v2 also adds icon_rotation_deg (offset 143): the maneuver arrow's rotation angle, extracted on
 // the phone from the notification's icon bitmap (geometry only — no semantic classification, kept
-// on the terminal normalizer per docs/OpenApex_SPEC.md §2.4). 0 = up/straight, clockwise positive.
+// on the terminal normalizer per docs/reference/system_overview.md). 0 = up/straight, clockwise positive.
 // It is a rough estimate and its handedness is mirrored relative to the displayed arrow, so the
 // normalizer treats it as a FALLBACK behind title-text parsing (see normalize.c) — except for
 // roundabout exit direction, which the title text never states.
 //
 // v3 adds the raw heading-fusion inputs the terminal-side filter needs (see
-// docs/Heading_Sensor_Fusion_Plan.md): bearing_accuracy_deg_x10 (offset 145), yaw_deg (offset
+// docs/blueprints/02_heading_sensor_fusion.md): bearing_accuracy_deg_x10 (offset 145), yaw_deg (offset
 // 147) and yaw_rate_dps_x10 (offset 149). heading_deg (offset 8) is unchanged on the wire — it was
 // always the raw GPS course; what changes is the terminal no longer treats it as the final display
 // heading, it's one input to heading_fusion.c alongside these three.
@@ -26,7 +26,7 @@
 // the traffic colouring along the whole route, raw RGB, classified by normalize.c.
 //
 // v5 adds the phone's fix (lat_e7 at 200, lon_e7 at 204, h_accuracy_m at 208), shared with friends'
-// terminals over the rider mesh (docs/OpenApex_SPEC.md §5.7). Never used for navigation here.
+// terminals over the rider mesh (docs/reference/rider_mesh_v1.md). Never used for navigation here.
 //
 // v6 changes no offsets at all. It adds two flag bits alongside gnss_fix_valid in byte 1 so a
 // writer can say what it is NOT carrying: bit1 nav_fields_absent marks a telemetry-only write
@@ -86,7 +86,7 @@ typedef struct {
     // 0 = up/straight, clockwise positive. RAW_I16_UNKNOWN = not extracted/unavailable.
     int16_t icon_rotation_deg;
     // Raw heading-fusion inputs (v3), never fused on the phone — see
-    // docs/Heading_Sensor_Fusion_Plan.md. heading_deg above is the raw GPS course; these are its
+    // docs/blueprints/02_heading_sensor_fusion.md. heading_deg above is the raw GPS course; these are its
     // reliability and the independent phone-yaw witness that heading_fusion.c blends it with.
     uint16_t bearing_accuracy_deg_x10; // RAW_U16_UNKNOWN = unavailable (pre-API26 or no fix)
     uint16_t yaw_deg;                  // 0-359, RAW_U16_UNKNOWN = no rotation-vector reading

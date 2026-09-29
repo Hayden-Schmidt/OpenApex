@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-// Rider-mesh state machine (docs/OpenApex_SPEC.md §5.7): the peer table, the friend list, the
+// Rider-mesh state machine (docs/reference/rider_mesh_v1.md): the peer table, the friend list, the
 // friending handshake, the friend prompt and position sharing. No radio, no clock, no NVS -- the
 // caller passes frames in, time in, and a send callback out -- so the whole protocol runs in host
 // tests. mesh.c owns the only instance on the terminal and serialises every call with a mutex.

@@ -23,7 +23,7 @@
 
 static const char *TAG = "ble_link";
 
-// Fixed OpenApex BLE identifiers (see docs/OpenApex_SPEC.md §5.3), byte-reversed for
+// Fixed OpenApex BLE identifiers (see docs/reference/ble_link.md), byte-reversed for
 // BLE_UUID128_INIT (which takes the wire/little-endian byte order).
 static const ble_uuid128_t s_svc_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x01, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
@@ -82,7 +82,7 @@ static uint8_t s_own_addr_type;
 // ANCS service UUID, byte-reversed for BLE_UUID128_INIT. We do not serve this -- we SOLICIT it:
 // an advert carrying a solicitation tells iOS "this accessory wants your notification service",
 // which is what makes the terminal pairable from iOS Settings and gets ANCS published to us once
-// bonded (docs/OpenApex_SPEC.md 5.2). apple_client.c is the consumer.
+// bonded (docs/reference/ios_ancs.md). apple_client.c is the consumer.
 static const ble_uuid128_t s_ancs_sol_uuid =
     BLE_UUID128_INIT(0xd0, 0x00, 0x2d, 0x12, 0x1e, 0x4b, 0x0f, 0xa4, 0x99, 0x4e, 0xce, 0xb5, 0x31,
                      0xf4, 0x05, 0x79);
@@ -680,7 +680,7 @@ static void start_advertising(void) {
     //
     // Our service UUID stays in the PRIMARY advert deliberately: Android's CompanionDeviceManager
     // observer mode filters on it there, and that path is already fragile enough
-    // (docs/CDM_Cold_Wake_Investigation.md). The name moves to the scan response, where an active
+    // (docs/investigations/CDM_Cold_Wake_Investigation.md). The name moves to the scan response, where an active
     // scanner -- which the CDM picker is -- still reads it.
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));

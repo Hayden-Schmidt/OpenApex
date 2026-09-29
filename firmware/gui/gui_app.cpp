@@ -31,7 +31,7 @@ BasicTheme s_theme;
 
 Screen *s_active = nullptr;
 
-// Transition state ("design reference/Screen Transitions.md"). While s_active plays its leave(),
+// Transition state ("design/SCREEN_TRANSITIONS.md"). While s_active plays its leave(),
 // s_pending is where routing wants to go; the leave callback loads it. A target change mid-leave
 // just retargets s_pending -- the page already on its way out does not restart.
 Screen *s_pending = nullptr;
@@ -44,7 +44,7 @@ uint32_t s_entered_ms = 0;
 bool s_entered_seen = false;
 
 #if BOARD_HAS_SPLASH
-// "design reference/1. Startup Screen/bootscreen.md": the logo must stay up for at least 2s while
+// "design/screens/01-startup/NOTES.md": the logo must stay up for at least 2s while
 // the rest of the terminal starts. The hold lives here rather than in SplashScreen because it is a
 // routing decision -- the splash is not a view_state_t, it is what we show *before* honouring one.
 // It is a floor, not a delay: by the time gui_task runs, BLE and NVS are already up (main.c), so on

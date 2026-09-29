@@ -3,7 +3,7 @@
 #include "compass_ring.hpp"
 #include "screen.hpp"
 
-// design reference/4. Odometer page/odometer page.md + "Odometer page ref.svg".
+// design/screens/04-odometer/NOTES.md + "Odometer page ref.svg".
 //
 // Lifetime distance ridden with OpenApex, over the shared compass ring. Top to bottom: the heading
 // readout (degrees + cardinal, theme colour), the odometer's boxed digits, the wall clock, and the

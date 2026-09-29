@@ -33,7 +33,7 @@ static const char *TAG = "mesh";
 #define DEDUP_LEN 16 // BLE repeats each advert a few times, and dual-radio boards hear frames twice
 #define LOOK_REFRESH_MS 10000u // the avatar upload has no generation counter; re-read it this often
 
-// Friends characteristic ops (§5.7).
+// Friends characteristic ops (docs/reference/rider_mesh_v1.md).
 enum { OP_UPSERT = 1, OP_REMOVE = 2, OP_CLEAR = 3, OP_CURSOR = 4 };
 
 typedef struct {

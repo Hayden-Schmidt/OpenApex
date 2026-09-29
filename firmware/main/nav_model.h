@@ -29,7 +29,7 @@ typedef enum {
 #define NAV_STREET_LEN 64
 #define NAV_ETA_LEN 32
 // Upcoming-traffic runs along the remaining route, from Google Maps' notification progress bar
-// (design reference/3.Turn by Turn). Eight is well past what the notification ever shows; spans
+// (design/screens/03-turn-by-turn). Eight is well past what the notification ever shows; spans
 // beyond it are dropped rather than growing the view state, which is memcpy'd every frame.
 #define NAV_TRAFFIC_MAX_SPANS 8
 

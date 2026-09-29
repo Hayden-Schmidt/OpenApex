@@ -2,7 +2,7 @@
 
 #include "screen.hpp"
 
-// design reference/2. Idle Screen/2. idle screen.md + "Idle Screen Ref.svg".
+// design/screens/02-idle/NOTES.md + "Idle Screen Ref.svg".
 //
 // The pre-navigation page: cached trip odometer in a theme-coloured bubble, phone link status, and
 // -- once the phone is connected -- the wall clock and phone battery above it.
@@ -12,7 +12,7 @@
 //   connected:    bubble and glyph slide down; clock + battery rise out from behind the bubble's
 //                 top edge (clipped by `reveal_`, whose bottom edge tracks that edge).
 //
-// Page entry (Screen Transitions.md) layers on top: the bubble rises in from below the panel, the
+// Page entry (design/SCREEN_TRANSITIONS.md) layers on top: the bubble rises in from below the panel, the
 // glyph slides out from behind it, and only then does the connected layout play. Leaving reverses
 // all three in turn.
 class IdleScreen : public Screen {

@@ -2,7 +2,7 @@
 
 #include "screen.hpp"
 
-// design reference/1. Startup Screen/bootscreen.md + "Boot Screen.svg".
+// design/screens/01-startup/NOTES.md + "Boot Screen.svg".
 //
 // The power-on page: black field, centred logo, held for a minimum of 2s while the rest of the
 // terminal starts. gui_app.cpp owns that hold and routes to the real page once it expires; this

@@ -4,7 +4,7 @@
 
 class Screen;
 
-// Governs Layer 1's *how*, never its *what* (§16.6 GUI architecture): palette and state-change
+// Governs Layer 1's *how*, never its *what* (docs/reference/gui_and_display.md GUI architecture): palette and state-change
 // transition style. BasicTheme/RichTheme are selected at compile time by BOARD_GFX_TIER. Further
 // hooks (e.g. icon fidelity) are added once screen content needs them, not ahead of time.
 class GuiTheme {

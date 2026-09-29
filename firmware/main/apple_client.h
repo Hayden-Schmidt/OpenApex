@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 // The terminal's GATT-CLIENT role, on the same connection where it is already the peripheral and
-// GATT server (docs/OpenApex_SPEC.md §5.2, §5.5).
+// GATT server (docs/reference/ios_ancs.md, docs/reference/ble_link.md).
 //
 // Central/peripheral and client/server are orthogonal: the phone connects to us, and over that
 // one link we serve our own service to the phone AND read the phone's Apple services. That is

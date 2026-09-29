@@ -1,0 +1,69 @@
+# Page 2 — Idle Screen
+
+## Requirements
+
+Screen shown once the app is loaded, before navigation has started. Must be part of the **state
+machine** so screens can still switch later (compass, odometer, music controls — screens not yet
+introduced in this brief).
+
+**Key components:**
+
+- Odometer shows bubble in the theme colour with black text inside .
+- Time: shows current time data from phone connection
+- An icon indicating **phone/connection status**, rendered in the theme colour. use the two bluetooth svgs in design/icons
+- battery symbol, note: this one will not use all phone icons loaded to memory that is wasteful, instead use battery_android_0_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg only, and a lvgl line or rectangle drawn inside it to indicate the battery level, keeps this light.
+
+**Simple:** static screen with a phone icon that updates when connected/disconnected via BLE.
+
+**Rich:** same for now; more actions TBC.
+
+
+Initial screen status, as seen in the SVG, initial screen will be just the odometer displaying locally cached trip meter, and a bluetooth disconnected symbol below it, temporarily positioned in the center. 
+second screen status: once bluetooth conneciton to phone established, bluetooth disconnect icon replaced with bluetooth connect icon, , time and phone battery icon will rise together from behind the odometer bubble, into position (will need to be masked to only be shown above the top line of the bubble) and the bubble and battery icon will move down into position at the same time (ensure mask moves with them) duration about 1s S curve movement. 
+
+## Reference
+
+Idle Screen Ref.svg
+
+## Current code status: ✅ rendered
+
+`firmware/gui/idle_screen.{hpp,cpp}`. Verified against `Idle Screen Ref.svg` at 240×240 — every
+element lands within 1px of the reference, which is the rounding floor at that resolution.
+
+Review it with:
+
+```powershell
+firmware/sim_lvgl/.pio/build/sim_lvgl/program.exe --page idle
+```
+
+which pins `VIEW_IDLE` and flips the link state every 5s so the transition replays continuously.
+
+**Implementation notes:**
+
+- Geometry is authored as reference-design pixels against the SVG's 240px frame and scaled at
+  runtime off the live display resolution, so the page renders at any panel size.
+- The reveal mask is an ordinary `lv_obj` (`reveal_`) spanning screen-top to bubble-top: LVGL clips
+  children to their parent, so shrinking its height in step with the bubble makes the mask travel
+  with the bubble for free. No custom mask or canvas needed.
+- One `lv_anim` drives a 0..1000 progress value through `lv_anim_path_ease_in_out` (the spec's
+  "S curve") and every widget is positioned from it, so the elements cannot drift out of sync.
+- **Battery: the icon-plus-drawn-bar approach in the requirements above was not used.** The eight
+  `battery_android_*` rasters cost 4.6 kB of flash at 240px, while the drawn bar needed four
+  hand-measured interior coordinates that produced a visible misalignment and would go stale on any
+  icon re-export. At 240px the interior is ~10px wide, so the bar had no more visible steps than the
+  rasters do. Rationale recorded in `../../DESIGN_NOTES.md`.
+- The bluetooth icons were resized 20px → 24px in `icons_manifest.json` to match the SVG's glyph
+  bounds.
+
+**Backend gaps flagged** (fields added to `terminal_view_state_t`, nothing populates them — the
+simulator fixture is currently the only writer):
+
+1. `phone_connected` — `firmware/main/ble_link.c` logs connect/disconnect but does not publish it
+   into `shared_view`. This drives the entire animation.
+2. `clock` — no time source. The C3 has no RTC (`board_profile.h`); the S3 has a PCF85063. Phone-side
+   time sync is a post-UI-sprint backend item. Renders `--:--` until then.
+3. `odometer_meters` — no odometer data model or NVS persistence yet.
+4. Unit choice (km vs mi) is hardcoded to km pending the runtime config store.
+
+**GUI gap:** at the RICH/466px tier the clock renders undersized — LVGL's bundled Montserrat stops
+at 48px and the layout wants ~85px. Needs an `lv_font_conv`-generated face.

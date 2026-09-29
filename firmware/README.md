@@ -20,7 +20,7 @@ idf.py flash monitor
 The GC9A01 driver, BLE packet decoder, and board pin profile are intentionally next work after the
 prototype board is physically verified.
 
-Until then, use `firmware/sim_lvgl` for visual work and `scripts/build-countdown.ps1` for
+Until then, use `firmware/sim_lvgl` for visual work and `scripts/run-host-tests.ps1` for
 countdown/runtime host tests.
 
 ## Drive logging (development only)
@@ -69,11 +69,11 @@ fixture.
 ## UI settings
 
 The phone configures the accent colour, avatar, ETA format, clock, units and default dial ring over
-BLE (docs/OpenApex_SPEC.md §5.6). Settings and a custom avatar are saved to NVS, so both apply
+BLE ([settings_and_avatar](../docs/reference/settings_and_avatar.md)). Settings and a custom avatar are saved to NVS, so both apply
 from the splash on every boot with no phone connected.
 
-The nine preset avatars are the artist's pixel art in `design reference/Characters`, transcribed
-with their palettes into `gui/avatars_data.h` (spec §5.6 covers how themed colours follow the accent).
+The nine preset avatars are the artist's pixel art in `design/characters`, transcribed
+with their palettes into `gui/avatars_data.h` ([settings_and_avatar](../docs/reference/settings_and_avatar.md) covers how themed colours follow the accent).
 
 Host test for the settings codec:
 

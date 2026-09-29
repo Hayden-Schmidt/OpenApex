@@ -4,9 +4,9 @@
 #include "hold_ring.hpp"
 #include "screen.hpp"
 
-// design reference/7. Add Freind Screen (a loose design: layout and motion here take licence).
+// design/screens/06-add-friend (a loose design: layout and motion here take licence).
 //
-// A rider nearby who is not a friend yet (terminal_view_state_t::friend_prompt, docs §5.7):
+// A rider nearby who is not a friend yet (terminal_view_state_t::friend_prompt, docs/reference/rider_mesh_v1.md):
 //   OFFER    their name over their character, "Hold to Accept" in their accent. A 2s hold anywhere
 //            fills the HoldRing, our accent on the left fading through black to theirs on the right.
 //   WAITING  we held, they have not: the ring stays full and the line reads "Waiting for <name>".

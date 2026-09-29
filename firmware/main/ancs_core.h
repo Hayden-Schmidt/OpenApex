@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-// Apple Notification Center Service protocol core (docs/OpenApex_SPEC.md §5.2, §5.5).
+// Apple Notification Center Service protocol core (docs/reference/ios_ancs.md, docs/reference/ble_link.md).
 //
 // On iOS there is no notification-listener API a phone app could use, so the terminal itself is
 // the GATT client of the iPhone's ANCS and reads notifications straight off the phone. This file
@@ -36,7 +36,7 @@ typedef enum {
 } ancs_event_id_t;
 
 // EventFlags bits. PositiveAction/NegativeAction say whether Perform Notification Action is
-// meaningful for this notification -- for an incoming call, positive is answer (SPEC §5.5).
+// meaningful for this notification -- for an incoming call, positive is answer (docs/reference/ble_link.md).
 #define ANCS_EVENT_FLAG_SILENT 0x01u
 #define ANCS_EVENT_FLAG_IMPORTANT 0x02u
 #define ANCS_EVENT_FLAG_PRE_EXISTING 0x04u
@@ -181,7 +181,7 @@ bool ancs_core_on_notification_source(ancs_core_t *c, const uint8_t *data, size_
 bool ancs_core_on_data_source(ancs_core_t *c, const uint8_t *data, size_t len);
 
 // Ask the phone to answer (POSITIVE) or decline (NEGATIVE) the notification. Used for the call
-// Accept hold: on iOS there is no CALL_ACTION characteristic, this is the answer path (SPEC §5.5).
+// Accept hold: on iOS there is no CALL_ACTION characteristic, this is the answer path (docs/reference/ble_link.md).
 bool ancs_core_perform_action(ancs_core_t *c, uint32_t uid, ancs_action_id_t action);
 
 // Category of a tracked uid, or -1 if we do not know it.

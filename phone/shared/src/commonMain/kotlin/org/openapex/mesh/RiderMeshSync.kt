@@ -6,7 +6,7 @@ import org.openapex.protocol.RiderMesh
 import org.openapex.store.RiderMeshStore
 
 /**
- * Rider mesh sync on connect (spec §5.7): push this rider's identity, read the terminal's friends
+ * Rider mesh sync on connect (docs/reference/rider_mesh_v1.md): push this rider's identity, read the terminal's friends
  * (it may have made some with no phone connected), merge them into ours, write the merged list
  * back, then subscribe so friendships made later reach us too.
  *

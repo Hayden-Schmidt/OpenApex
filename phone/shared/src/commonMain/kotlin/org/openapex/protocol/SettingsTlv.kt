@@ -2,7 +2,7 @@ package org.openapex.protocol
 
 /**
  * Terminal UI settings, mirroring firmware/main/settings.h. Wire format and defaults are
- * docs/OpenApex_SPEC.md §5.6; [SettingsTlv.DEFAULTS_FIXTURE] is the spec's golden fixture.
+ * docs/reference/settings_and_avatar.md; [SettingsTlv.DEFAULTS_FIXTURE] is the spec's golden fixture.
  */
 data class TerminalSettings(
     val accentRgb: Int = 0x00FFE8,
@@ -12,7 +12,7 @@ data class TerminalSettings(
     val clock12h: Boolean = false,
     val imperial: Boolean = false,
     val dialOuterTrip: Boolean = false,
-    /** Rider mesh (spec §5.7): friends in range drawn on the compass. */
+    /** Rider mesh (docs/reference/rider_mesh_v1.md): friends in range drawn on the compass. */
     val friendsOnCompass: Boolean = true,
     /** Friend marker: their character (false) or a dot in their colour (true). */
     val friendMarkerDot: Boolean = false,
@@ -123,7 +123,7 @@ object SettingsTlv {
     }
 }
 
-/** Device-info characteristic (spec §5.6). */
+/** Device-info characteristic (docs/reference/settings_and_avatar.md). */
 data class DeviceInfo(
     val boardId: Int,
     val gfxTier: Int,
@@ -154,7 +154,7 @@ data class DeviceInfo(
 }
 
 /**
- * Colour-agnostic avatar art (spec §5.6): a 16x16 and an 8x8 image of 2-bit levels, 0 transparent
+ * Colour-agnostic avatar art (docs/reference/settings_and_avatar.md): a 16x16 and an 8x8 image of 2-bit levels, 0 transparent
  * to 3 full accent, which the terminal tints with the accent colour. [bytes] is the 80-byte wire
  * and storage form.
  */

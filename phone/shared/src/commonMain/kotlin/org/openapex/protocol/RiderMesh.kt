@@ -2,7 +2,7 @@ package org.openapex.protocol
 
 /**
  * Rider mesh wire formats for the identity (0x0008) and friends (0x0009) characteristics,
- * mirroring firmware/main/mesh_proto.h (docs/OpenApex_SPEC.md §5.7). Pure Kotlin, no Android
+ * mirroring firmware/main/mesh_proto.h (docs/reference/rider_mesh_v1.md). Pure Kotlin, no Android
  * types, so it can move to KMP commonMain as is.
  */
 class RiderIdentity(val id: ByteArray, val key: ByteArray, val name: String) {

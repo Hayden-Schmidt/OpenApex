@@ -15,7 +15,7 @@ import android.util.Log
  *
  * Android 16 (API 36) deprecated the String-address callbacks below in favor of
  * onDevicePresenceEvent(DevicePresenceEvent), and on-device testing on a real API 36 phone (see
- * docs/OpenApex_SPEC.md §13 item 9) found the old callbacks silently never fire on that OS
+ * docs/blueprints/01_nav_terminal_core.md (Open decisions, item 9)) found the old callbacks silently never fire on that OS
  * version. Both are implemented: the new callback runs on API 36+, the old ones remain for
  * minSdk 26..35 devices where onDevicePresenceEvent is never invoked by the OS.
  */

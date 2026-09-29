@@ -2,7 +2,7 @@
 // configured board display resolution (board_profile.h), driven by a fixture terminal_view_state_t
 // sequence -- there is no live BLE/countdown data available in this isolated simulator run, so
 // states are scripted rather than sourced from countdown_task. The GUI itself is the same
-// firmware/gui/ C++ code (gui_app_init/gui_app_update, docs/OpenApex_SPEC.md §16.6) reused
+// firmware/gui/ C++ code (gui_app_init/gui_app_update, docs/reference/gui_and_display.md) reused
 // unchanged by the real gui_task in firmware/main/main.c.
 #include <cstdio>
 #include <cstdlib>
@@ -33,7 +33,7 @@ namespace {
 // while ACTIVE, so the render pipeline (including NavRenderer's maneuver-change tween) is visibly
 // exercised without needing live BLE/countdown input.
 // Idle-page fixture (--page idle): pins VIEW_IDLE and flips the phone link every 5s so the
-// connect/disconnect transition described in "design reference/2. Idle Screen/2. idle screen.md"
+// connect/disconnect transition described in "design/screens/02-idle/NOTES.md"
 // replays continuously for review. The clock ticks in real time from the host so the digits are
 // visibly live rather than a frozen string.
 terminal_view_state_t make_idle_fixture_frame(uint32_t elapsed_ms) {
@@ -175,7 +175,7 @@ void print_usage(const char *exe) {
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
                  "  --settings     apply a settings TLV write as the phone would, in hex\n"
-                 "                 (docs/OpenApex_SPEC.md 5.6), e.g. 010103ff8000 = orange accent,\n"
+                 "                 (docs/reference/settings_and_avatar.md), e.g. 010103ff8000 = orange accent,\n"
                  "                 010201NN = preset NN (01..09)\n"
                  "  --avatar       custom avatar upload (80 bytes of A2 art) in hex; select it with\n"
                  "                 --settings 010201ff\n",

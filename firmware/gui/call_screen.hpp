@@ -4,7 +4,7 @@
 #include "hold_ring.hpp"
 #include "screen.hpp"
 
-// design reference/6. Calling/OpenApex Call Screens.svg.
+// design/screens/05-calling/OpenApex Call Screens.svg.
 //
 // Incoming and answered call (terminal_view_state_t::call_ringing / call_active): caller name above
 // a theme-coloured bubble holding the number, a phone glyph below it. There is no reject -- letting

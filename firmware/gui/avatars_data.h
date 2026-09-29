@@ -1,4 +1,4 @@
-// Preset avatars from design reference/Characters (docs/OpenApex_SPEC.md §5.6). Each keeps the artist's
+// Preset avatars from design/characters (docs/reference/settings_and_avatar.md). Each keeps the artist's
 // pixels and a small palette. Themed entries follow the accent: the character's main colour is the
 // accent's hue at main_s/main_v times the accent's saturation/brightness, and every other themed
 // colour is the main colour turned by dh degrees with saturation and brightness scaled by s/64 and

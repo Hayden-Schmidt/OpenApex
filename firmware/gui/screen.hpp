@@ -3,7 +3,7 @@
 #include "lvgl.h"
 #include "view_state.h"
 
-// Base for a full-screen page (§16.6 Layer 1/2). Each subclass owns its own top-level lv_obj_t,
+// Base for a full-screen page (docs/reference/gui_and_display.md Layer 1/2). Each subclass owns its own top-level lv_obj_t,
 // created in its constructor, so LVGL's screen-transition API (lv_screen_load / lv_screen_load_anim)
 // can operate between separate Screen instances.
 class Screen {
@@ -19,7 +19,7 @@ public:
     // Called every frame while this screen is active.
     virtual void update(const terminal_view_state_t &state) = 0;
 
-    // Page transitions ("design reference/Screen Transitions.md"). The theme loads a page and calls
+    // Page transitions ("design/SCREEN_TRANSITIONS.md"). The theme loads a page and calls
     // enter(); gui_app.cpp calls leave() and loads the next page only once `done` fires. The
     // defaults are instant, for pages with no motion of their own.
     using LeaveDone = void (*)(void *ctx);

@@ -5,7 +5,7 @@
 
 #include "lvgl.h"
 
-// Easing curves for page transitions. "design reference/Screen Transitions.md": every per-element
+// Easing curves for page transitions. "design/SCREEN_TRANSITIONS.md": every per-element
 // motion is an S-curve or an exponential, never linear. Plain float forms for tweens driven by hand
 // (NavRenderer, the ring zoom), and anim_path<> to hand the same curve to an lv_anim.
 

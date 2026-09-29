@@ -13,7 +13,7 @@
 
 namespace {
 
-// Geometry lifted from "design reference/6. Calling/OpenApex Call Screens.svg", in its 240px
+// Geometry lifted from "design/screens/05-calling/OpenApex Call Screens.svg", in its 240px
 // reference frame (each of the three frames translated so its circle's centre is at (120, 120)) and
 // scaled at runtime, same convention as idle_screen.cpp.
 constexpr float kBubbleW = 129.0f;      // minimum; grows to fit a long number

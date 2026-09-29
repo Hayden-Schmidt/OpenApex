@@ -9,7 +9,7 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 
 // Originally moved verbatim out of nav_renderer.cpp; the tick and marker figures below were then
-// revised against "design reference/3.Turn by Turn/OpenApex Hardware Design Ref.svg".
+// revised against "design/screens/03-turn-by-turn/OpenApex Hardware Design Ref.svg".
 // kDesignDiameter is nav_renderer's 600-unit authoring circle (maneuvers.json / nav_icons_data.h);
 // the tick widths are authored against it, which is why the px conversion needs it.
 constexpr float kDesignDiameter = 600.0f;

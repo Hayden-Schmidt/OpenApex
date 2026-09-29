@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 // Cross-boot persistence for heading_fusion.c's state, backed by NVS (the same partition
-// ble_link_init() already initializes for BLE bonding). See docs/Heading_Sensor_Fusion_Plan.md,
+// ble_link_init() already initializes for BLE bonding). See docs/blueprints/02_heading_sensor_fusion.md,
 // "cross-boot persistence": ignition-off cuts ESP power outright, so without this the mount-offset
 // estimator would reconverge from scratch every ride. Kept out of heading_fusion.c itself so that
 // module stays host-testable with no ESP-IDF dependency.

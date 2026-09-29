@@ -12,7 +12,7 @@
 
 namespace {
 
-// Geometry from "design reference/7. Add Freind Screen" in its 240px frame, scaled at runtime.
+// Geometry from "design/screens/06-add-friend" in its 240px frame, scaled at runtime.
 constexpr float kTitleCy = 78.0f;
 constexpr float kAvatarCy = 127.0f;
 constexpr float kAvatarPer240 = 64.0f;   // on-screen character size (2x the 32px art at 240)

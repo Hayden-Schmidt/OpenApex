@@ -10,7 +10,7 @@
 // countdown engine. Profiles only select hardware providers; feature tasks compile out cleanly
 // when their provider is disabled.
 //
-// GUI tier/capability flags (see docs/OpenApex_SPEC.md §16.6): every profile sets BOARD_GFX_TIER to
+// GUI tier/capability flags (see docs/reference/gui_and_display.md): every profile sets BOARD_GFX_TIER to
 // exactly one of BOARD_GFX_TIER_BASIC or BOARD_GFX_TIER_RICH, selecting the GuiTheme implementation
 // (icon fidelity, palette, state-change animation) used by the shared Layer 1 DialScreen. This is
 // richness only -- it never changes which states exist or what they mean. BOARD_HAS_SPLASH and
@@ -36,7 +36,7 @@
 // GUI: leanest target -- flat/instant dial, no map-following. The splash is NOT a richness feature
 // and is on here too: the panel shows uninitialized GRAM until the MCU writes to it, so the boot
 // logo is the only thing standing between power-on and a visible glitch (see
-// "design reference/1. Startup Screen/bootscreen.md").
+// "design/screens/01-startup/NOTES.md").
 #define BOARD_GFX_TIER BOARD_GFX_TIER_BASIC
 #define BOARD_HAS_SPLASH 1
 #define BOARD_HAS_MAP_RENDER 0
@@ -74,7 +74,7 @@
 #elif defined(BOARD_PROFILE_S3_AMOLED_175)
 
 // Reference production target: Waveshare ESP32-S3-Touch-AMOLED-1.75 (see
-// docs/OpenApex_SPEC.md §6.3). ESP32-S3R8, dual-core Xtensa LX7, 8MB PSRAM, 16MB flash.
+// docs/reference/hardware.md). ESP32-S3R8, dual-core Xtensa LX7, 8MB PSRAM, 16MB flash.
 // 1.75" circular AMOLED, 466x466, CO5300 driver over QSPI. CST9217 capacitive touch over I2C.
 // QMI8658 6-axis IMU, PCF85063 RTC, AXP2101 PMIC. GPS variant adds an LC76G module (not modeled
 // here -- separate BOARD_HAS_GNSS profile variant once the GPS board revision is in hand).
@@ -88,10 +88,10 @@
 #define BOARD_HAS_GNSS 0          // GPS variant not modeled by this profile yet
 #define BOARD_HAS_IMU 1
 
-// GUI: richest target -- animated splash, transitions, map-following once §5.4 exists.
+// GUI: richest target -- animated splash, transitions, map-following once the polyline stream (blueprint 06) exists.
 #define BOARD_GFX_TIER BOARD_GFX_TIER_RICH
 #define BOARD_HAS_SPLASH 1
-#define BOARD_HAS_MAP_RENDER 0    // flips on once the polyline stream (§5.4) is implemented
+#define BOARD_HAS_MAP_RENDER 0    // flips on once the polyline stream (blueprint 06) is implemented
 
 // Display: CO5300 over QSPI. Pins not yet sourced -- see stub note above.
 #define BOARD_DISP_WIDTH 466

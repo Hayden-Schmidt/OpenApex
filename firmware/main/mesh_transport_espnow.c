@@ -10,7 +10,7 @@
 #include "esp_wifi.h"
 #include <string.h>
 
-// Rider mesh over ESP-NOW (§5.7): broadcast-only on a fixed channel, STA mode, never associated.
+// Rider mesh over ESP-NOW (docs/reference/rider_mesh_v1.md): broadcast-only on a fixed channel, STA mode, never associated.
 // Needs ~35 KB of heap for the Wi-Fi stack, which is why the C3 leaves it out.
 
 static const char *TAG = "mesh_espnow";

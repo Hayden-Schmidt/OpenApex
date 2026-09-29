@@ -3,7 +3,7 @@
 #include "lvgl.h"
 #include "view_state.h"
 
-// Friends in range on the compass ring (docs/OpenApex_SPEC.md §5.7): each friend's small character,
+// Friends in range on the compass ring (docs/reference/rider_mesh_v1.md): each friend's small character,
 // or a dot, in their accent, just inside the ticks at their bearing. Setting 0x07 hides them, 0x08
 // picks the style. One set for every page with a compass, the same way the heading is shared.
 

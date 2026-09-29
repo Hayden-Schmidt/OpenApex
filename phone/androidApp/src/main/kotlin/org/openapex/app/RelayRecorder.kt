@@ -182,7 +182,7 @@ object RelayRecorder {
      * [bearingDeg] (GPS course over ground, the bike's direction of travel) and [yawDeg] (the
      * phone's own orientation) are deliberately not combined here. They live in different frames
      * separated by an unknown mount offset, so any pre-fusion destroys the very information the
-     * planned filter needs to learn that offset. See docs/Heading_Sensor_Fusion_Plan.md.
+     * planned filter needs to learn that offset. See docs/blueprints/02_heading_sensor_fusion.md.
      *
      * [headingDeg] is what we currently *send* to the terminal, kept alongside so a capture shows
      * both the raw inputs and today's naive output for comparison.
@@ -223,7 +223,7 @@ object RelayRecorder {
             put("hasBearing", hasBearing ?: JSONObject.NULL)
             put("hasSpeed", hasSpeed ?: JSONObject.NULL)
             // Position. Recorded so a capture can be replayed geometrically: without lat/lon the
-            // learned mount offset in docs/Heading_Sensor_Fusion_Plan.md can only be tuned against
+            // learned mount offset in docs/blueprints/02_heading_sensor_fusion.md can only be tuned against
             // the same GPS course it is meant to be checked against. [fixElapsedRealtimeNanos] is
             // the fix's own monotonic timestamp -- wall clock is not usable for interpolation.
             put("latDeg", latDeg ?: JSONObject.NULL)

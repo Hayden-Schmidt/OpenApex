@@ -71,12 +71,12 @@ class RelayService : Service() {
     private val instanceId = instanceCounter.incrementAndGet()
 
     // Diagnostic/future-use passthrough only — never classified here; see RawNotifPacket.kt KDoc
-    // and docs/OpenApex_SPEC.md §2.4.
+    // and docs/reference/system_overview.md.
     // Latest raw motion samples and heading-fusion inputs live on the aggregator, which is what
     // packs them; pitch and roll are recorded only and have nowhere else to be.
 
     // Raw heading-fusion inputs, recorded but NOT yet used to drive the display. The fusion filter
-    // itself is planned for the terminal, not here -- see docs/Heading_Sensor_Fusion_Plan.md. These
+    // itself is planned for the terminal, not here -- see docs/blueprints/02_heading_sensor_fusion.md. These
     // exist so the filter can be developed and tuned against recorded rides instead of by guessing.
     private var lastPitchDeg: Float? = null
     private var lastRollDeg: Float? = null
@@ -121,7 +121,7 @@ class RelayService : Service() {
         // "location" type foreground service (e.g. from BootCompletedReceiver) is restricted
         // unless specifically exempted, and boot isn't one of the exemptions (a CDM
         // presence-triggered start would be, but we can't rely on that firing - see
-        // docs/OpenApex_SPEC.md §13 item 9). GNSS/location starts once actually BLE-connected,
+        // docs/blueprints/01_nav_terminal_core.md (Open decisions, item 9)). GNSS/location starts once actually BLE-connected,
         // when the service is already legitimately foregrounded.
         startForegroundWithNotification(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         // Dev-only drive capture; no-ops entirely in a release build (RelayRecorder.enabled).
@@ -141,7 +141,7 @@ class RelayService : Service() {
             ble.connect(DeviceId(address))
         } else {
             // No address (e.g. started from BootCompletedReceiver, not CompanionDeviceManager):
-            // CDM cold-wake is unreliable on some OEMs (see docs/OpenApex_SPEC.md §13 item 9), so
+            // CDM cold-wake is unreliable on some OEMs (see docs/blueprints/01_nav_terminal_core.md (Open decisions, item 9)), so
             // this service runs continuously from boot and reconnects itself instead of waiting
             // on a CDM presence callback that may never fire.
             reconnect(adapter)
@@ -454,7 +454,7 @@ class RelayService : Service() {
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         // Android-fused and tilt-compensated -- the hard part on a leaning motorcycle. Raw
-        // magnetometer is deliberately not used; see docs/Heading_Sensor_Fusion_Plan.md.
+        // magnetometer is deliberately not used; see docs/blueprints/02_heading_sensor_fusion.md.
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         accel?.let { sensorManager.registerListener(motionListener, it, SensorManager.SENSOR_DELAY_GAME) }
         gyro?.let { sensorManager.registerListener(motionListener, it, SensorManager.SENSOR_DELAY_GAME) }

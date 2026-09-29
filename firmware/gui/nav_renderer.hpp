@@ -29,7 +29,7 @@ public:
     // (used for the very first maneuver, mirroring demo.js's init()).
     void add_maneuver(nav_render_icon_t icon, bool animate);
 
-    // Page entry ("design reference/Screen Transitions.md"): replaces the route with a runway of
+    // Page entry ("design/SCREEN_TRANSITIONS.md"): replaces the route with a runway of
     // straights leading into `icon`, puts the camera where `icon` alone would have it, and runs the
     // arrow up the runway from off the bottom of the page onto the maneuver over `duration_ms`.
     void enter_maneuver(nav_render_icon_t icon, uint32_t duration_ms);

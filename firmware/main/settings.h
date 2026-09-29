@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 // Rider-facing terminal settings, pushed from the phone over the settings characteristic
-// (docs/OpenApex_SPEC.md §5.6) and persisted in NVS by settings_store.c so they survive a boot with
+// (docs/reference/settings_and_avatar.md) and persisted in NVS by settings_store.c so they survive a boot with
 // no phone in range. Pure C with no ESP-IDF dependency: host tests and firmware/sim_lvgl link it
 // as-is.
 //
@@ -25,7 +25,7 @@ enum {
     SETTINGS_TAG_CLOCK_12H = 0x04,  // len 1: 0 = 24h, 1 = 12h
     SETTINGS_TAG_UNITS = 0x05,      // len 1: settings_units_t
     SETTINGS_TAG_DIAL_OUTER = 0x06, // len 1: gui_dial_outer_t
-    SETTINGS_TAG_FRIENDS_ON_COMPASS = 0x07, // len 1: 0 hidden, 1 shown (rider mesh, §5.7)
+    SETTINGS_TAG_FRIENDS_ON_COMPASS = 0x07, // len 1: 0 hidden, 1 shown (rider mesh, docs/reference/rider_mesh_v1.md)
     SETTINGS_TAG_FRIEND_MARKER = 0x08,      // len 1: settings_friend_marker_t
     SETTINGS_TAG_MESH_ENABLED = 0x09,       // len 1: 0 radio silent, 1 on
 };

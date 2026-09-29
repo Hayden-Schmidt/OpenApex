@@ -236,7 +236,7 @@ static void countdown_task(void *argument) {
 
 static void gui_task(void *argument) {
     (void)argument;
-    // C++ screen classes (firmware/gui, §16.6) live behind gui_app_init/gui_app_update and must
+    // C++ screen classes (firmware/gui, docs/reference/gui_and_display.md) live behind gui_app_init/gui_app_update and must
     // only ever see the local snapshot below, never shared_view or view_mutex directly.
     lv_init();
     lv_tick_set_cb(platform_now_ms);

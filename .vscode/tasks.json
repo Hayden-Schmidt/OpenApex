@@ -11,10 +11,10 @@
       "problemMatcher": []
     },
     {
-      "label": "Firmware: host countdown test",
+      "label": "Firmware: host tests",
       "type": "shell",
       "command": "powershell.exe",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/build-countdown.ps1"],
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/run-host-tests.ps1"],
       "group": "test",
       "problemMatcher": []
     },

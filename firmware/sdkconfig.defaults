@@ -5,7 +5,7 @@ CONFIG_LVGL_ENABLE=y
 # Fonts the 240px screens actually use: 18 for the odometer-page unit, 20 for the idle odometer
 # bubble / odometer-page tenths,
 # 28 for the heading readout and clock, 38 for the odometer digits, 44 for the idle clock
-# (design reference/2. Idle Screen, 4. Odometer page). Each built-in face costs flash, so enable a
+# (design/screens/02-idle, 4. Odometer page). Each built-in face costs flash, so enable a
 # size only when a page needs it. Sizes must be mirrored in firmware/sim_lvgl/include/lv_conf.h or
 # the simulator silently renders a page at a different size than the device does.
 # The 466px RICH tier wants larger still — that needs an lv_font_conv-generated face, not another
@@ -21,7 +21,7 @@ CONFIG_LV_FONT_MONTSERRAT_44=y
 
 # BLE: NimBLE host, peripheral role (terminal advertises and hosts the nav GATT service; the
 # Android relay connects as central and writes packets in). The observer role scans for other
-# terminals (rider mesh); central is unused for now — see docs/OpenApex_SPEC.md §16.5 for why the terminal is the peripheral, not the phone.
+# terminals (rider mesh); central is unused for now — see docs/reference/decisions.md ADR-5 for why the terminal is the peripheral, not the phone.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 # CENTRAL is on not because we ever initiate a connection, but because NimBLE gates every
@@ -42,7 +42,7 @@ CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
 
-# Rider mesh over BLE (docs/OpenApex_SPEC.md §5.7): extended advertising, so the phone's advert
+# Rider mesh over BLE (docs/reference/rider_mesh_v1.md): extended advertising, so the phone's advert
 # (instance 0) and the mesh's Coded-PHY advert (instance 1) run side by side, and a mesh frame (up
 # to ~120 B) fits one advert. Capped at one PDU's worth rather than the 1650 B default buffer.
 CONFIG_BT_NIMBLE_EXT_ADV=y

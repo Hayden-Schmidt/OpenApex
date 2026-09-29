@@ -4,7 +4,7 @@ import org.openapex.protocol.Friend
 import org.openapex.protocol.RiderIdentity
 
 /**
- * Rider-mesh persistence (spec §5.7): this rider's identity, generated on first use, and the
+ * Rider-mesh persistence (docs/reference/rider_mesh_v1.md): this rider's identity, generated on first use, and the
  * friend list the phone owns and every terminal it connects to caches. Both hold rider keys, so
  * the backing [SecureStore] is Keystore- or Keychain-backed.
  *

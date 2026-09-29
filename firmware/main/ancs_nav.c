@@ -59,7 +59,7 @@ bool ancs_nav_is_navigation(const ancs_notification_t *n) {
         return false;
     }
     // An incoming call is never navigation, whoever posted it -- that path is call_state's
-    // (SPEC §5.5) and must not be allowed to write the nav page.
+    // (docs/reference/ble_link.md) and must not be allowed to write the nav page.
     if (n->category == ANCS_CATEGORY_INCOMING_CALL || n->category == ANCS_CATEGORY_MISSED_CALL) {
         return false;
     }
@@ -161,7 +161,7 @@ bool ancs_nav_to_raw(const ancs_notification_t *n, uint32_t sequence, raw_notif_
     out->source_is_ios = true;
 
     // Everything ANCS cannot carry stays at its sentinel. A missing field must never become a
-    // fabricated zero (SPEC §3) -- on this path that is most of the packet, and the telemetry
+    // fabricated zero (docs/reference/nav_pipeline.md) -- on this path that is most of the packet, and the telemetry
     // half arrives separately from the iOS companion app.
     out->gnss_fix_valid = false;
     out->speed_kmh_x10 = RAW_U16_UNKNOWN;

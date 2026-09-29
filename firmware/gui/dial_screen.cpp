@@ -21,7 +21,7 @@ constexpr float kPi = 3.14159265358979323846f;
 //
 // The distance figure is the one number read at speed, so it takes the largest type that clears the
 // arrow rather than LVGL's 14px default.
-// Measured off "design reference/3.Turn by Turn/OpenApex Hardware Design Ref.svg": the street name
+// Measured off "design/screens/03-turn-by-turn/OpenApex Hardware Design Ref.svg": the street name
 // sits just under the arrow and the distance under that, so the eye runs arrow -> where -> how far.
 constexpr float kDistanceGlyphH = 16.8f;  // -> 24px
 constexpr float kDistanceCy = 207.0f;
@@ -39,7 +39,7 @@ constexpr float kFontPerGlyphH = 1.0f / 0.70f;
 // on the road than an empty dial, but it must not look live.
 constexpr uint32_t kStaleGrey = 0x808080;
 
-// Page entry ("design reference/Screen Transitions.md"): the arrow runs on from below, then the
+// Page entry ("design/SCREEN_TRANSITIONS.md"): the arrow runs on from below, then the
 // text slides up along the bottom, then the outer ring closes in from beyond the edge. Steps are
 // sequential: each element lands fully before the next moves.
 constexpr uint32_t kArrowInMs = 900;

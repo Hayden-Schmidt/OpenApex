@@ -2,7 +2,7 @@
 """Decode the ANCS tier of an OpenApex drive capture, and turn it into a host-test fixture.
 
 On iOS the terminal reads notifications straight off the iPhone over ANCS, because no phone app
-can see them (docs/OpenApex_SPEC.md 5.2). What iOS actually sends -- whether Google Maps modifies
+can see them (docs/reference/ios_ancs.md). What iOS actually sends -- whether Google Maps modifies
 one long-lived notification per turn or posts new ones, what its Title/Subtitle/Message hold,
 whether Apple Maps says anything at all -- is not documented anywhere and is answered by capture.
 So firmware/main/drive_log.c records every ANCS byte in BOTH directions, unparsed, and this reads

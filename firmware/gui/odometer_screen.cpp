@@ -11,11 +11,11 @@
 
 namespace {
 
-// Geometry lifted from "design reference/4. Odometer page/Odometer page ref.svg", in that file's
+// Geometry lifted from "design/screens/04-odometer/Odometer page ref.svg", in that file's
 // 240px reference frame and scaled at runtime -- same convention as the idle screen.
 //
 // DIGIT COUNT: the SVG draws FOUR boxes (three full-size, then a smaller tenths box beside "km"),
-// while the prose in odometer page.md says five. The SVG is the Figma reference and wins, as it did
+// while the prose in design/screens/04-odometer/NOTES.md says five. The SVG is the Figma reference and wins, as it did
 // for page 2's km-vs-miles. Flagged in the page doc; changing it is kDigitCount plus kBoxX.
 constexpr float kBoxY = 100.0f;
 constexpr float kBoxSize = 40.0f;

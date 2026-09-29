@@ -42,7 +42,7 @@ void SplashScreen::fade(lv_opa_t to, lv_anim_completed_cb_t completed) {
     lv_anim_start(&a);
 }
 
-// "Screen Transitions.md": the splash leaves by fading out on the same curve it faded in on -- no
+// "design/SCREEN_TRANSITIONS.md": the splash leaves by fading out on the same curve it faded in on -- no
 // scaling or sliding.
 void SplashScreen::leave(LeaveDone done, void *ctx) {
     done_ = done;

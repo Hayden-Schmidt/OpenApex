@@ -2,55 +2,52 @@
 
 A phone-assisted motorcycle navigation terminal for high-visibility round ESP32 displays.
 
-## Phase 1
+The phone reads Google Maps and Apple Maps navigation notifications and relays them, with phone
+GNSS telemetry, over BLE to the terminal. The terminal normalizes the maneuver, counts the distance
+down between notification updates, and renders a high-contrast round dial. Terminals also talk to
+each other over a rider-to-rider mesh (friends on the compass).
 
-OpenApex Phase 1 is a notification and phone-GNSS passthrough proof of concept targeting the
-`PROTOTYPE_C3_GC9A01` 1.28-inch round display.
+No local maps, tiles, route calculation, rerouting, map matching or terminal-side navigation.
 
-The phone reads supported Google Maps and Apple Maps navigation notifications, normalizes the
-maneuver and distance data, and sends it with phone GNSS telemetry over BLE. The C3 parses the
-packet, performs local distance countdown processing between notification updates, and renders a
-high-contrast dial.
+## Start here
 
-Phase 1 does not include local maps, map tiles, route calculation, rerouting, map matching,
-polylines, offline routing, or terminal-side GNSS navigation.
+- **[docs/README.md](docs/README.md)** — the docs index: reference docs (how it works now),
+  numbered blueprints with their status, and investigation logs.
+- [docs/reference/DEVELOPMENT_SETUP.md](docs/reference/DEVELOPMENT_SETUP.md) — Android SDK, Gradle,
+  ESP-IDF, host tests and VS Code tasks.
+- [design/README.md](design/README.md) — screen designs and art.
 
-See [docs/OpenApex_SPEC.md](docs/OpenApex_SPEC.md) for the complete architecture, hardware
-profiles, BLE contract, countdown model, and development roadmap.
+## Layout
 
-See [docs/Phone_App_Architecture.md](docs/Phone_App_Architecture.md) for the Android + iOS phone app
-architecture (Kotlin Multiplatform + Compose Multiplatform).
+| Path | What |
+|---|---|
+| `firmware/` | ESP-IDF terminal firmware (`main/`), the C++ LVGL GUI (`gui/`), host tests (`test_host/`), the SDL GUI simulator (`sim_lvgl/`) |
+| `phone/` | Kotlin Multiplatform companion app: `shared/` (wire formats, BLE queue, mesh sync) and `androidApp/` |
+| `docs/` | Reference, blueprints, investigations — see `docs/README.md` |
+| `design/` | Figma exports, notes, avatar art, status-icon SVGs |
+| `tools/` | Icon pipelines (`maneuver_icons/`, `icons/`) and drive/ANCS log decoders |
+| `scripts/` | Setup helpers, `run-host-tests.ps1`, the BLE link test |
 
-See [docs/DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md) for Android SDK, Gradle, ESP-IDF,
-host-test, and VS Code task setup.
+## Quick checks
 
-## Hardware-free development
+```powershell
+powershell -NoProfile -File scripts/run-host-tests.ps1            # firmware host suites
+pio run -d firmware -e prototype_c3                               # C3 firmware
+pio run -d firmware/sim_lvgl                                      # GUI in an SDL window
+cd phone; .\gradlew.bat :shared:jvmTest :androidApp:assembleDebug  # phone
+```
 
-You can prototype before the C3 arrives:
+## Hardware
 
-- Run `pio run -d firmware/sim_lvgl -e sim_lvgl` for the real LVGL GUI: it opens an SDL2 window at
-    the exact target resolution (`board_profile.h`) and renders the same screen-building code
-    (`firmware/gui/gui_screens.c`) that ships to the C3, so LVGL widget/style work transfers
-    directly to hardware.
-- Run `scripts/build-countdown.ps1` for the countdown model's host tests.
-
-`sim_lvgl` is the visual target for the actual LVGL UI. The C3 environment builds and boots on a
-bare dev board today (BLE central + packet decode confirmed end-to-end against a live Android
-relay); it's ready for the physical display driver once the GC9A01 module is in hand. See
-[docs/OpenApex_SPEC.md](docs/OpenApex_SPEC.md) §11 for full status and next steps.
-
-## Hardware path
-
-- Phase 1: generic ESP32-C3, 240x240 GC9A01 round display, touch or non-touch variant.
-- Expansion: ESP32-C6 and other single-core profiles.
-- Production reference: Waveshare ESP32-S3R8 1.75-inch AMOLED with CO5300, CST9217, QMI8658,
-  PCF85063, AXP2101, and optional LC76G GPS.
+- Current: generic ESP32-C3 with a 240x240 GC9A01 round touch display (CST816).
+- Production reference (not yet in hand): Waveshare ESP32-S3R8 1.75-inch AMOLED with CO5300,
+  CST9217, QMI8658, PCF85063, AXP2101 and optional LC76G GPS.
 
 ## Repository boundary
 
-This is the clean Phase 1 repository. The previous MotoNav repository remains the historical
-reference for reusable Android BLE, sensor, packet-test, dial-layout, and later offline-map ideas.
-Its Ferrostar/Valhalla and offline-map implementation is intentionally not included here.
+The previous MotoNav repository remains the historical reference for reusable Android BLE, sensor,
+packet-test, dial-layout, and later offline-map ideas. Its Ferrostar/Valhalla and offline-map
+implementation is intentionally not included here.
 
 ## License
 

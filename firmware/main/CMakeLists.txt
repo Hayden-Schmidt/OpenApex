@@ -5,7 +5,7 @@ idf_component_register(
     # whole of drive_log.c compiles to nothing without -DOPENAPEX_DRIVE_LOG=1, so this costs a
     # production build only the (already-linked) component dependency.
     # nvs_flash: heading_store.c persists the learned mount offset/heading across power cycles
-    # (docs/Heading_Sensor_Fusion_Plan.md) in the same NVS partition ble_link.c uses for BLE bonding.
+    # (docs/blueprints/02_heading_sensor_fusion.md) in the same NVS partition ble_link.c uses for BLE bonding.
     # nvs_flash also backs settings_store.c and avatar_store.c.
     # esp_wifi/esp_event: the rider mesh's ESP-NOW transport, linked only on boards with BOARD_MESH_ESPNOW.
     REQUIRES bt gui esp_lcd esp_driver_spi esp_driver_gpio esp_driver_i2c esp_lcd_gc9a01 esp_partition nvs_flash esp_wifi esp_event

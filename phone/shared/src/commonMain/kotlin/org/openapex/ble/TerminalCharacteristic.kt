@@ -1,7 +1,7 @@
 package org.openapex.ble
 
 /**
- * The terminal's GATT characteristics (spec §5.3), named rather than carried as UUIDs so the
+ * The terminal's GATT characteristics (docs/reference/ble_link.md), named rather than carried as UUIDs so the
  * shared layer never holds a platform type. Android maps these to `java.util.UUID` and iOS to
  * `CBUUID`; only that mapping differs.
  */

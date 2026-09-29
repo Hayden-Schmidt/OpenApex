@@ -8,7 +8,7 @@
 #include "host/ble_hs.h"
 #include <string.h>
 
-// Rider mesh over BLE extended advertising (§5.7). Advertising instance 0 belongs to ble_link.c
+// Rider mesh over BLE extended advertising (docs/reference/rider_mesh_v1.md). Advertising instance 0 belongs to ble_link.c
 // (the phone's connectable advert); the mesh owns instance 1, non-connectable, on the Coded PHY for
 // range. Each frame rides in manufacturer-specific data and is advertised for a short window
 // before the next queued frame replaces it, since one advert carries one payload. Receiving is a

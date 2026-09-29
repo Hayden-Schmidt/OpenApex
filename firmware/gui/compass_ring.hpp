@@ -9,7 +9,7 @@
 // tick marks with a red north marker riding around it.
 //
 // It lived inside NavRenderer first, because the nav dial was the only page that had one. The
-// odometer page ("design reference/4. Odometer page") reuses the *same* element rather than drawing
+// odometer page ("design/screens/04-odometer") reuses the *same* element rather than drawing
 // a lookalike, so it moved out here and NavRenderer now delegates to it -- one implementation, one
 // set of constants, and a heading that cannot drift between the two pages.
 //

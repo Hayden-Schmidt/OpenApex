@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-// Speed tiers (docs/Heading_Sensor_Fusion_Plan.md §3). Above SPEED_TRUST_KMH, GPS course noise is
+// Speed tiers (docs/blueprints/02_heading_sensor_fusion.md §3). Above SPEED_TRUST_KMH, GPS course noise is
 // low enough to treat as truth; below SPEED_FREEZE_KMH, GPS course is undefined/noise and the
 // display holds the last good heading unless yaw_rate says the bike is actually rotating.
 #define SPEED_TRUST_KMH 15.0f
@@ -28,7 +28,7 @@
 #define TAU_BLEND_S 3.0f         // 3-15 km/h blend zone, and GPS-dropout-at-speed fallback to yaw
 #define TAU_LOW_SPEED_ROTATE_S 1.0f  // near-stationary but genuinely rotating: yaw is the only source
 
-// Display-side slew limit (§4 non-negotiables): heading arrives with each accept(), estimate() is
+// Display-side slew limit (heading fusion blueprint §4 non-negotiables): heading arrives with each accept(), estimate() is
 // called at 10Hz, and without a cap the ~1Hz updates look like steps.
 #define MAX_SLEW_DPS 90.0f
 

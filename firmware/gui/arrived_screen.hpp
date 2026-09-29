@@ -2,7 +2,7 @@
 
 #include "screen.hpp"
 
-// design reference/3.Turn by Turn/Arrived Pop Up.svg -- the VIEW_ARRIVED state.
+// design/screens/03-turn-by-turn/Arrived Pop Up.svg -- the VIEW_ARRIVED state.
 //
 // A full-bleed green surface with a centred destination pin. It gets its own Screen rather than
 // living as a special case inside DialScreen because it shares nothing with the dial: no compass,

@@ -1,0 +1,74 @@
+{
+  "_comment": "Source of truth for rasterized UI icons (status/marker glyphs -- NOT the turn-by-turn maneuver arrows, which stay procedural in firmware/gui/nav_renderer.cpp + nav_icons_data.h; see docs/reference/gui_and_display.md for why). Consumed by tools/icons/build_icon_raster.py, which is the ONLY thing that should write firmware/gui/generated/*.h -- do not hand-edit those. `size_240` is the icon's square render size in pixels AUTHORED AGAINST THE 240px reference profile (prototype_c3_gc9a01); every other screen profile scales it by (profile.width / 240), the same convention nav_renderer.cpp uses for maneuver geometry against its 600-unit design diameter. All source SVGs here are Material Symbols with a square 0 -960 960 960 viewBox, so one size covers width and height.",
+  "icons": {
+    "add_location_alt": {
+      "svg": "design/icons/add_location_alt_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 28
+    },
+    "airline_stops": {
+      "svg": "design/icons/airline_stops_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_0": {
+      "svg": "design/icons/battery_android_0_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_1": {
+      "svg": "design/icons/battery_android_1_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_2": {
+      "svg": "design/icons/battery_android_2_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_3": {
+      "svg": "design/icons/battery_android_3_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_4": {
+      "svg": "design/icons/battery_android_4_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_5": {
+      "svg": "design/icons/battery_android_5_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_6": {
+      "svg": "design/icons/battery_android_6_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "battery_android_full": {
+      "svg": "design/icons/battery_android_full_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "bluetooth_connected": {
+      "svg": "design/icons/bluetooth_connected_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "bluetooth_disabled": {
+      "svg": "design/icons/bluetooth_disabled_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 24
+    },
+    "check_circle": {
+      "svg": "design/icons/check_circle.svg",
+      "size_240": 24
+    },
+    "home_pin": {
+      "svg": "design/icons/home_pin_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 28
+    },
+    "location_on": {
+      "_comment": "54px, sized off the arrived pop-up's pin in 'design/screens/03-turn-by-turn/Arrived Pop Up.svg' (ink 36.67x45.83 there). ArrivedScreen is the only consumer; a future map marker wanting a different size needs its own entry rather than a resize here.",
+      "svg": "design/icons/location_on_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 54
+    },
+    "warning": {
+      "svg": "design/icons/warning.svg",
+      "size_240": 24
+    },
+    "call": {
+      "svg": "design/icons/call_70dp_E3E3E3_FILL0_wght400_GRAD0_opsz48.svg",
+      "size_240": 20
+    }
+  }
+}
