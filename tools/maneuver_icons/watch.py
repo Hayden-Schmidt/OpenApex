@@ -6,7 +6,7 @@ page, least of all a file:// one) -- so "rebuild on page reload" isn't
 literally possible without switching from double-clicking index.html to
 running a local server. This is the practical equivalent for the current
 file:// workflow: leave this running in a terminal while you edit
-maneuvers.json. Save -> it regenerates Demo/icons-data.js immediately ->
+maneuvers.json. Save -> it regenerates tools/maneuver_icons/renderer/icons-data.js immediately ->
 refresh the browser tab.
 
 Run: python watch.py   (Ctrl+C to stop)

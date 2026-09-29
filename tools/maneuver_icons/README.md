@@ -49,7 +49,7 @@ are not mirrors of one another, just three sweep amounts on the same shape.
   plain triangle), re-expressed tip-at-origin pointing up. Its vertices are
   hand-authored in `build_icons.py` (`_HEAD_LEFT`), not derived from anything.
 
-Framing is deliberately **not** baked in here. `Demo/demo.js` frames each
+Framing is deliberately **not** baked in here. `tools/maneuver_icons/renderer/demo.js` frames each
 maneuver from its own bounding box, measured in the rotated camera frame, at a
 **fixed scale** -- there is no camera zoom, because size constancy matters more
 than tight fit on a display glanced at for a fraction of a second. (An earlier
@@ -61,12 +61,12 @@ that one frame. `check_fit()` in `build_icons.py` enforces it: it inflates each
 bbox by half the stroke width plus the arrowhead's scaled half-width and fails
 the build if the diagonal exceeds the 600-unit display. Keep its
 `DISPLAY_DIAMETER` / `LINE_THICKNESS` / `ARROWHEAD_SCALE` constants in sync with
-`Demo/params.js` and `Demo/index.html`.
+`tools/maneuver_icons/renderer/params.js` and `tools/maneuver_icons/renderer/index.html`.
 
-Regenerate `Demo/icons-data.js` with `python build_icons.py`, or leave
+Regenerate `tools/maneuver_icons/renderer/icons-data.js` with `python build_icons.py`, or leave
 `python watch.py` running to rebuild on every save of `maneuvers.json`.
 
-`Demo/icons-data.js` is the **only** build output. The script used to also write
+`tools/maneuver_icons/renderer/icons-data.js` is the **only** build output. The script used to also write
 a per-maneuver `*.json` beside this file (plus an `arrowhead.json`); nothing ever
 read them -- they were duplicates of what the bundle already carries -- so they
 were deleted and the writes removed.

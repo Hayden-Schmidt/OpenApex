@@ -174,7 +174,7 @@ keep it accurate. If you place something elsewhere, edit this table in the same 
 | Task | What | Depends on | Done |
 |---|---|---|---|
 | T01 | Repo cleanup: stray files, root Gradle wrapper, retire `simulator/` | owner steps | [x] |
-| T02 | Move maneuver icon pipeline + reference renderer to `tools/maneuver_icons/` | T01 | [ ] |
+| T02 | Move maneuver icon pipeline + reference renderer to `tools/maneuver_icons/` | T01 | [x] |
 | T03 | Reorganise `design reference/` → `design/` | T02 | [ ] |
 | T04 | Docs skeleton; move whole non-SPEC docs | T03 | [ ] |
 | T05 | SPEC → reference: system overview, nav pipeline, display | T04 | [ ] |
@@ -233,3 +233,23 @@ Added by T01 (2026-09-29):
   `~/.platformio/penv/Scripts/pio.exe` and `~/.platformio/packages/framework-espidf/tools/idf.py`,
   but neither is exported). `pio run -d firmware/sim_lvgl` and `pio run -d firmware -e
   prototype_c3` could not be run this session; not installed/added to PATH per instructions.
+
+Added by T02 (2026-09-29):
+
+- The committed `firmware/gui/nav_icons_data.h` was already stale before this session:
+  `build_icons.py`'s `FRAME_CENTER_OVERRIDES["straight"]` is `[0.0, -137.0]`, but the last commit
+  to regenerate the header (`52768df`) shipped `NAV_RENDER_STRAIGHT`'s frame_center as `-130.0`
+  (the un-overridden geometric default). Reproduced by running the unmoved, unmodified
+  `build_icons.py` from `Google Icons Archive/Icon JSON/` against `HEAD` before touching anything
+  — same `-137.0` output — so this predates T02 and isn't a move mistake. T02 did not regenerate
+  past this: `firmware/gui/nav_icons_data.h` keeps the committed `-130.0` geometry and only its
+  comment paths were hand-edited; the `-137.0` regeneration was discarded so the diff stayed
+  path-only, as required. Someone should decide whether to re-run `build_icons.py` for real
+  (accepting the `-137.0` position for the "straight" icon) or correct the override table.
+- Two comments were left unchanged even though they still say "Google Icons Archive": they
+  describe raw traced-SVG reference material (`SVG_PATH_PACK/Google Icons Archive`,
+  `` `SVG path pack/` and `Google Icons Archive/*.svg` ``) that was never tracked in this repo (no
+  such files exist in git history under `Google Icons Archive/` — it only ever held `Icon JSON/`).
+  This isn't the `Icon JSON`/`Demo` pipeline T02 moved, so there's no new path to point it at;
+  `tools/maneuver_icons/build_icons.py:12` and `tools/maneuver_icons/README.md:9`. Pre-existing
+  stale claim, left as-is per the "don't rewrite substance" rule.

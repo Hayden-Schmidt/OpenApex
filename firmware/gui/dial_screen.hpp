@@ -6,8 +6,8 @@
 #include "screen.hpp"
 
 // Turn-by-turn dial: a NavRenderer-driven maneuver animation (route/camera/tween/compass ring,
-// ported from Demo/demo.js) plus a distance label. ARRIVED/UNKNOWN have no NavRenderer geometry
-// (Demo/Google Icons Archive never modeled them) and get a small dedicated glyph instead -- see
+// ported from tools/maneuver_icons/renderer/demo.js) plus a distance label. ARRIVED/UNKNOWN have no NavRenderer geometry
+// (tools/maneuver_icons/renderer + tools/maneuver_icons never modeled them) and get a small dedicated glyph instead -- see
 // dial_screen.cpp.
 class DialScreen : public Screen {
 public:

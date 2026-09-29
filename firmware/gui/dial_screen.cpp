@@ -64,7 +64,7 @@ lv_point_precise_t point_at(float cx, float cy, float angle_deg, float radius) {
 
 // nav_icon_t (firmware/main/nav_model.h) is the stable cross-platform protocol enum and is not
 // touched here -- this maps each value onto the closest maneuver NavRenderer actually has data
-// for (Google Icons Archive/Icon JSON/maneuvers.json). ARRIVED/UNKNOWN have no equivalent and are
+// for (tools/maneuver_icons/maneuvers.json). ARRIVED/UNKNOWN have no equivalent and are
 // handled separately in DialScreen::update()/draw_status_glyph().
 bool render_icon_for(nav_icon_t icon, nav_render_icon_t *out) {
     switch (icon) {

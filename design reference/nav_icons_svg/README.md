@@ -59,7 +59,7 @@ rendered PNG.
 
 ## Relationship to the maneuver arrow pipeline
 
-`Google Icons Archive/Icon JSON/build_icons.py` + `firmware/gui/nav_icons_data.h` +
+`tools/maneuver_icons/build_icons.py` + `firmware/gui/nav_icons_data.h` +
 `firmware/gui/nav_renderer.cpp` are a *different, older* system: turn arrows are drawn as vector
 line/arc primitives at runtime, specifically to avoid `LV_USE_FLOAT`/ThorVG's RAM cost on the C3
 (no PSRAM, no FPU — see `docs/OpenApex_SPEC.md` §16.6). That system stays as-is. This pipeline is

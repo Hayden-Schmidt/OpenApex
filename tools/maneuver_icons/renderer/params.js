@@ -4,7 +4,7 @@
 // be loaded with a <script> tag instead, same reason icons-data.js is .js.)
 //
 // Maneuver SHAPES are not here -- edit
-// Google Icons Archive/Icon JSON/maneuvers.json and rerun build_icons.py.
+// tools/maneuver_icons/maneuvers.json and rerun build_icons.py.
 const DEMO_PARAMS = {
 
   // --- panel --------------------------------------------------------------

@@ -7,21 +7,21 @@
 #include "lvgl.h"
 #include "nav_icons_data.h"
 
-// Route/camera/tween maneuver renderer -- C++ port of Demo/demo.js + Demo/lvgl_shim.js (see those
+// Route/camera/tween maneuver renderer -- C++ port of tools/maneuver_icons/renderer/demo.js + tools/maneuver_icons/renderer/lvgl_shim.js (see those
 // files for the "why" behind every algorithm below; this is a structural 1:1 port, not a
 // reinterpretation). Draws straight into an LVGL layer via LV_EVENT_DRAW_MAIN, no lv_canvas
 // framebuffer -- see lvgl_shim.js's own LVGL-equivalents mapping comment.
 //
 // One instance per DialScreen. Not thread-safe; only ever touched from the GUI task.
 //
-// Ported knobs (Demo/params.js) are baked in as constants below rather than left runtime-
+// Ported knobs (tools/maneuver_icons/renderer/params.js) are baked in as constants below rather than left runtime-
 // configurable -- nothing in this firmware currently needs to change them at runtime.
 class NavRenderer {
 public:
     // display_diameter_px: the active display's pixel diameter (runtime lv_display resolution --
     // equal to BOARD_DISP_WIDTH on real hardware). Maneuver geometry
     // is authored against a fixed 600-unit circle (nav_icons_data.h); this is the only
-    // route-units -> pixels scale factor, matching Demo/demo.js's DESIGN_DIAMETER.
+    // route-units -> pixels scale factor, matching tools/maneuver_icons/renderer/demo.js's DESIGN_DIAMETER.
     explicit NavRenderer(int32_t display_diameter_px);
 
     // Appends a new maneuver to the route and starts (or mid-flight retargets) the reveal+camera
@@ -70,7 +70,7 @@ private:
         nav_pt_t base0;
     };
 
-    // -- route model (Demo/demo.js's routePoints/cumDist) ---------------------------------------
+    // -- route model (tools/maneuver_icons/renderer/demo.js's routePoints/cumDist) ---------------------------------------
     // The route is a chain of EXACT primitives, not sampled points: nav_icons_data.h ships each
     // maneuver as the straights/curves maneuvers.json declares, and each is drawn whole (one quad
     // per straight, one lv_draw_arc per curve). A curve therefore has no internal joints to seam,
@@ -147,7 +147,7 @@ private:
     nav_pt_t head_pivot_{0.0f, 0.0f};
     void build_arrowhead_mask();
 
-    // -- tween state (Demo/demo.js's cur/from/to/tick/retarget) ---------------------------------
+    // -- tween state (tools/maneuver_icons/renderer/demo.js's cur/from/to/tick/retarget) ---------------------------------
     Pose cur_;
     Pose from_;
     Pose to_;

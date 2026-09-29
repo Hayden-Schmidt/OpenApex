@@ -1,7 +1,7 @@
 """
 Rasterizes the SVG icons declared in design reference/nav_icons_svg/icons_manifest.json into per-screen-profile LVGL
 C arrays, one generated header per profile under firmware/gui/generated/. This is the SVG-to-device
-twin of Google Icons Archive/Icon JSON/build_icons.py (which handles the turn-by-turn maneuver
+twin of tools/maneuver_icons/build_icons.py (which handles the turn-by-turn maneuver
 arrows as *procedural vector* data, never bitmaps -- see docs/OpenApex_SPEC.md §16.6 for why
 that pair stays off this path). Anything with a shape that doesn't reduce to a handful of line/arc
 primitives (status glyphs, map pins, battery/bluetooth states, ...) belongs here instead.

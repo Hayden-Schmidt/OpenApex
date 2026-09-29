@@ -11,7 +11,7 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDesignDiameter = 600.0f; // maneuvers.json / nav_icons_data.h authoring circle
 
-// --- ported knobs (Demo/params.js) ----------------------------------------------------------
+// --- ported knobs (tools/maneuver_icons/renderer/params.js) ----------------------------------------------------------
 constexpr float kDisplayScale = 1.1f;
 constexpr float kLineThickness = 25.0f;     // route units, before displayScale
 constexpr float kArrowheadScale = 0.3f;
@@ -27,7 +27,7 @@ constexpr float kRevealSpeed = 0.9f;        // route units / ms
 constexpr uint32_t kMinRevealMs = 1000;
 constexpr uint32_t kMaxRevealMs = 1200;
 
-// HEAD_DEPTH (Demo/demo.js): how far back from the arrowhead's tip its glyph is already at full
+// HEAD_DEPTH (tools/maneuver_icons/renderer/demo.js): how far back from the arrowhead's tip its glyph is already at full
 // width -- the rendered line is trimmed short by this much so it tucks under the glyph.
 const float kHeadDepth = NAV_ARROWHEAD_HEAD_BASE_DEPTH * kArrowheadScale;
 
@@ -56,7 +56,7 @@ lv_point_precise_t to_lv(const nav_pt_t &p) {
     return {static_cast<lv_value_precise_t>(p.x), static_cast<lv_value_precise_t>(p.y)};
 }
 
-// -- LVGL-shaped drawing primitives (C++ twin of Demo/lvgl_shim.js) --------------------------
+// -- LVGL-shaped drawing primitives (C++ twin of tools/maneuver_icons/renderer/lvgl_shim.js) --------------------------
 
 constexpr int kMaxPolyVerts = 8;
 
@@ -316,7 +316,7 @@ NavRenderer::NavRenderer(int32_t display_diameter_px)
 // Rasterizes NAV_ARROWHEAD_PERIMETER into head_mask_ at its exact final on-screen size, in the
 // glyph's authored orientation (tip at origin, pointing "up"/-y). The size is the same product the
 // polygon fill used to apply per vertex -- kArrowheadScale (the authored glyph size knob, kept in
-// sync with arrowheadScale in Demo/params.js) x kDisplayScale x px_per_unit() -- so changing the
+// sync with arrowheadScale in tools/maneuver_icons/renderer/params.js) x kDisplayScale x px_per_unit() -- so changing the
 // authored scale still changes the rendered glyph, it just re-bakes the mask instead of re-scaling
 // vertices. Rotation is NOT baked in: that is the one thing that varies per frame, and
 // lv_draw_image applies it.
