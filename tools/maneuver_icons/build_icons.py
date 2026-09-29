@@ -52,7 +52,7 @@ FIRMWARE_C_OUT = os.path.join(HERE, "..", "..", "firmware", "gui", "nav_icons_da
 # roundabout_left: baked bbox centre (-101.4, -83.9) vs the tuned (-55, -136.6)). Kept in sync by
 # hand since it lives in a JS-only params file; update both if you retune framing there.
 FRAME_CENTER_OVERRIDES = {
-    "straight": [0.0, -137.0],
+    "straight": [0.0, -130.0],
     "turn_right": [70.0, -120.0],
     "turn_left": [-70.0, -120.0],
     "turn_slight_right": [34.6, -125.5],
