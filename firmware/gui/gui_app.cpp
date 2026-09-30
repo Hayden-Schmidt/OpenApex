@@ -65,13 +65,14 @@ SplashScreen &splash_screen(void) {
 uint32_t s_applied_generation = UINT32_MAX;
 uint8_t s_applied_dial_outer = GUI_DIAL_OUTER_COMPASS;
 
-// The avatar on show, drawn at an integer scale so the pixels stay crisp. A preset is full colour,
-// its themed palette entries resolved against the accent (avatars_data.h); the rider's upload is
-// 2-bit art in the accent alone. Both land in one RGB565A8 buffer: colour plane, then alpha plane.
-constexpr int kAvatarScale = BOARD_AVATAR_PX / AVATAR_ART_PX;
-static_assert(kAvatarScale * AVATAR_ART_PX == BOARD_AVATAR_PX, "avatar must be a whole multiple");
-constexpr int kAvatarPixels = BOARD_AVATAR_PX * BOARD_AVATAR_PX;
-uint8_t s_avatar_buf[kAvatarPixels * 3];
+// The avatar on show, drawn at 1x (AVATAR_ART_PX) and scaled to BOARD_AVATAR_PX by the splash's
+// lv_image with nearest-neighbour, which keeps pixel art identical to a pre-scaled copy. Drawing it
+// pre-scaled cost 27 KB of static RAM on the C3 for a screen shown only at boot. A preset is full
+// colour, its themed palette entries resolved against the accent (avatars_data.h); the rider's
+// upload is 2-bit art in the accent alone. Both land in one RGB565A8 buffer: colour plane, then
+// alpha plane.
+static_assert((BOARD_AVATAR_PX / AVATAR_ART_PX) * AVATAR_ART_PX == BOARD_AVATAR_PX, "avatar must be a whole multiple");
+uint8_t s_avatar_buf[avatar_art_bytes(AVATAR_ART_PX, AVATAR_ART_PX)];
 lv_image_dsc_t s_avatar;
 const void *s_avatar_shown = nullptr; // art currently drawn into s_avatar_buf
 lv_color_t s_avatar_accent;           // and the accent it was drawn with
@@ -188,9 +189,9 @@ const void *gui_logo_src(void) {
     const void *art = selected_avatar();
     const lv_color_t accent = s_theme.palette();
     if (art != s_avatar_shown || !lv_color_eq(accent, s_avatar_accent)) {
-        avatar_art_draw(s_avatar_buf, BOARD_AVATAR_PX, settings_get()->avatar,
+        avatar_art_draw(s_avatar_buf, AVATAR_ART_PX, settings_get()->avatar,
                         s_have_custom ? s_custom : nullptr, accent);
-        avatar_art_describe(&s_avatar, s_avatar_buf, BOARD_AVATAR_PX, BOARD_AVATAR_PX);
+        avatar_art_describe(&s_avatar, s_avatar_buf, AVATAR_ART_PX, AVATAR_ART_PX);
         s_avatar_shown = art;
         s_avatar_accent = accent;
     }

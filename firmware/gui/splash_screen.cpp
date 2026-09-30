@@ -1,12 +1,14 @@
 #include "splash_screen.hpp"
 
+#include "avatars_data.h"
+#include "board_profile.h"
 #include "gui_app.hpp"
 
 namespace {
 
-// "Boot Screen.svg": black field, logo dead-centred. The logo is the rider's avatar (gui_logo_src),
-// already drawn at its board size (BOARD_AVATAR_PX) in its own colours, so the only geometry here is
-// "centre it" and nothing is tinted.
+// "Boot Screen.svg": black field, logo dead-centred. The logo is the rider's avatar (gui_logo_src) at
+// 1x in its own colours; this page scales it to its board size (BOARD_AVATAR_PX) with nearest-
+// neighbour, so it stays pixel-exact, and nothing is tinted.
 constexpr uint32_t kFadeMs = 400;
 
 } // namespace
@@ -17,6 +19,10 @@ SplashScreen::SplashScreen() {
     lv_obj_set_scrollable(root_, false);
 
     logo_ = lv_image_create(root_);
+    lv_image_set_antialias(logo_, false);
+    lv_image_set_scale(logo_, static_cast<uint32_t>(BOARD_AVATAR_PX / AVATAR_ART_PX * LV_SCALE_NONE));
+    lv_obj_set_size(logo_, BOARD_AVATAR_PX, BOARD_AVATAR_PX);
+    lv_image_set_inner_align(logo_, LV_IMAGE_ALIGN_CENTER);
     set_logo(gui_logo_src());
 
     // The page doc allows a fade-in "maybe, if the C3 can handle it". It can: this is one whole-object

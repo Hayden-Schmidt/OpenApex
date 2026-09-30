@@ -98,5 +98,6 @@ const GuiTheme &gui_theme(void);
 lv_style_t *gui_accent_style(void);
 
 // Image source for the boot logo: the selected preset or uploaded avatar, else the default character.
+// It is AVATAR_ART_PX square at 1x; the caller scales it to BOARD_AVATAR_PX (nearest-neighbour).
 const void *gui_logo_src(void);
 #endif
