@@ -50,68 +50,75 @@ bool mesh_decode_header(const uint8_t *buf, size_t len, mesh_header_t *out) {
     return true;
 }
 
-// HELLO body: avatar | accent 3 | caps | name_len | name | has_custom | art 80 (if has_custom)
-size_t mesh_encode_hello(const mesh_header_t *h, const mesh_look_t *look, uint8_t caps, uint8_t *buf,
-                         size_t cap) {
+// Look block, shared by HELLO (clear) and LOOK (encrypted): avatar | accent 3 | name_len | name |
+// has_custom | art 80 (if has_custom).
+#define LOOK_MAX_LEN (6u + MESH_NAME_MAX + MESH_ART_BYTES)
+
+static size_t look_len(const mesh_look_t *look) {
+    return 6u + name_len(look->name) + (look->has_custom ? MESH_ART_BYTES : 0u);
+}
+
+static void put_look(uint8_t *p, const mesh_look_t *look) {
     const uint8_t n = name_len(look->name);
-    const size_t len = MESH_HEADER_LEN + 6u + n + 1u + (look->has_custom ? MESH_ART_BYTES : 0u);
-    if (cap < len) return 0;
-    put_header(h, buf);
-    uint8_t *p = &buf[MESH_HEADER_LEN];
     *p++ = look->avatar;
     put_rgb(p, look->accent_rgb);
     p += 3;
-    *p++ = caps;
     *p++ = n;
     memcpy(p, look->name, n);
     p += n;
     *p++ = look->has_custom ? 1 : 0;
     if (look->has_custom) memcpy(p, look->art, MESH_ART_BYTES);
-    return len;
 }
 
-bool mesh_decode_hello(const uint8_t *buf, size_t len, mesh_look_t *look, uint8_t *caps) {
-    if (len < MESH_HEADER_LEN + 7u) return false;
-    const uint8_t *p = &buf[MESH_HEADER_LEN];
-    const uint8_t n = p[5];
-    if (len < MESH_HEADER_LEN + 7u + n) return false;
+// `len` is exactly the bytes available; trailing bytes are malformed.
+static bool get_look(const uint8_t *p, size_t len, mesh_look_t *out) {
+    if (len < 6u) return false;
+    const uint8_t n = p[4];
+    if (len < 6u + n) return false;
     mesh_look_t l;
     memset(&l, 0, sizeof(l));
     l.avatar = p[0];
     l.accent_rgb = get_rgb(&p[1]);
-    if (!get_name(&p[6], n, l.name)) return false;
-    const uint8_t custom = p[6 + n];
+    if (!get_name(&p[5], n, l.name)) return false;
+    const uint8_t custom = p[5 + n];
     if (custom > 1) return false;
     l.has_custom = custom == 1;
-    if (l.has_custom) {
-        if (len < MESH_HEADER_LEN + 7u + n + MESH_ART_BYTES) return false;
-        memcpy(l.art, &p[7 + n], MESH_ART_BYTES);
-    }
-    *look = l;
-    *caps = p[4];
+    if (len != 6u + n + (l.has_custom ? MESH_ART_BYTES : 0u)) return false;
+    if (l.has_custom) memcpy(l.art, &p[6 + n], MESH_ART_BYTES);
+    *out = l;
     return true;
 }
 
-size_t mesh_encode_accept(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN],
-                          const uint8_t key[MESH_KEY_LEN], uint8_t *buf, size_t cap) {
-    const size_t len = MESH_HEADER_LEN + MESH_RIDER_ID_LEN + MESH_KEY_LEN;
+// HELLO body: caps | flags (bit0 look present) | [look block]
+#define HELLO_FLAG_LOOK 0x01u
+
+size_t mesh_encode_hello(const mesh_header_t *h, const mesh_look_t *look, uint8_t caps, uint8_t *buf,
+                         size_t cap) {
+    const size_t len = MESH_HEADER_LEN + 2u + (look ? look_len(look) : 0u);
     if (cap < len) return 0;
     put_header(h, buf);
-    memcpy(&buf[MESH_HEADER_LEN], target, MESH_RIDER_ID_LEN);
-    memcpy(&buf[MESH_HEADER_LEN + MESH_RIDER_ID_LEN], key, MESH_KEY_LEN);
+    buf[MESH_HEADER_LEN] = caps;
+    buf[MESH_HEADER_LEN + 1] = look ? HELLO_FLAG_LOOK : 0;
+    if (look) put_look(&buf[MESH_HEADER_LEN + 2], look);
     return len;
 }
 
-bool mesh_decode_accept(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN],
-                        uint8_t key[MESH_KEY_LEN]) {
-    if (len < MESH_HEADER_LEN + MESH_RIDER_ID_LEN + MESH_KEY_LEN) return false;
-    memcpy(target, &buf[MESH_HEADER_LEN], MESH_RIDER_ID_LEN);
-    memcpy(key, &buf[MESH_HEADER_LEN + MESH_RIDER_ID_LEN], MESH_KEY_LEN);
+bool mesh_decode_hello(const uint8_t *buf, size_t len, mesh_look_t *look, bool *has_look, uint8_t *caps) {
+    if (len < MESH_HEADER_LEN + 2u) return false;
+    const uint8_t flags = buf[MESH_HEADER_LEN + 1];
+    if (flags & ~HELLO_FLAG_LOOK) return false;
+    *has_look = (flags & HELLO_FLAG_LOOK) != 0;
+    if (*has_look) {
+        if (!get_look(&buf[MESH_HEADER_LEN + 2], len - MESH_HEADER_LEN - 2u, look)) return false;
+    } else if (len != MESH_HEADER_LEN + 2u) {
+        return false;
+    }
+    *caps = buf[MESH_HEADER_LEN];
     return true;
 }
 
-size_t mesh_encode_ack(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN], uint8_t *buf,
-                       size_t cap) {
+size_t mesh_encode_target(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN], uint8_t *buf,
+                          size_t cap) {
     const size_t len = MESH_HEADER_LEN + MESH_RIDER_ID_LEN;
     if (cap < len) return 0;
     put_header(h, buf);
@@ -119,29 +126,56 @@ size_t mesh_encode_ack(const mesh_header_t *h, const uint8_t target[MESH_RIDER_I
     return len;
 }
 
-bool mesh_decode_ack(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN]) {
+bool mesh_decode_target(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN]) {
     if (len < MESH_HEADER_LEN + MESH_RIDER_ID_LEN) return false;
     memcpy(target, &buf[MESH_HEADER_LEN], MESH_RIDER_ID_LEN);
     return true;
 }
 
-// POS body: session u32 (clear) | ciphertext 13 | tag 8. AAD is header + session, so neither can
-// be swapped onto another rider's ciphertext.
-#define POS_PLAIN_LEN 13u
-#define POS_BODY_LEN (4u + POS_PLAIN_LEN + MESH_CRYPTO_TAG_LEN)
+#define KEYS_BODY_LEN (MESH_RIDER_ID_LEN + MESH_RIDER_ID_LEN + MESH_KEY_LEN)
 
-static void pos_nonce(const uint8_t *frame, uint8_t nonce[MESH_CRYPTO_NONCE_LEN]) {
-    memcpy(nonce, &frame[4], MESH_RIDER_ID_LEN);                  // sender
-    memcpy(&nonce[8], &frame[MESH_HEADER_LEN], 3);                // low 3 bytes of session
-    memcpy(&nonce[11], &frame[12], 2);                            // seq
+size_t mesh_encode_keys(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN],
+                        const uint8_t rider_id[MESH_RIDER_ID_LEN], const uint8_t key[MESH_KEY_LEN], uint8_t *buf,
+                        size_t cap) {
+    const size_t len = MESH_HEADER_LEN + KEYS_BODY_LEN;
+    if (cap < len) return 0;
+    put_header(h, buf);
+    memcpy(&buf[MESH_HEADER_LEN], target, MESH_RIDER_ID_LEN);
+    memcpy(&buf[MESH_HEADER_LEN + MESH_RIDER_ID_LEN], rider_id, MESH_RIDER_ID_LEN);
+    memcpy(&buf[MESH_HEADER_LEN + 2u * MESH_RIDER_ID_LEN], key, MESH_KEY_LEN);
+    return len;
+}
+
+bool mesh_decode_keys(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN],
+                      uint8_t rider_id[MESH_RIDER_ID_LEN], uint8_t key[MESH_KEY_LEN]) {
+    if (len < MESH_HEADER_LEN + KEYS_BODY_LEN) return false;
+    memcpy(target, &buf[MESH_HEADER_LEN], MESH_RIDER_ID_LEN);
+    memcpy(rider_id, &buf[MESH_HEADER_LEN + MESH_RIDER_ID_LEN], MESH_RIDER_ID_LEN);
+    memcpy(key, &buf[MESH_HEADER_LEN + 2u * MESH_RIDER_ID_LEN], MESH_KEY_LEN);
+    return true;
+}
+
+// POS body: session u32 | age_ms u16 | ttl u8 | ciphertext 13 | tag 8. The AAD is header + session,
+// so neither can be swapped onto another rider's ciphertext; age_ms and ttl are outside it because
+// a 04.4 relay edits them.
+#define POS_PLAIN_LEN 13u
+#define AAD_LEN (MESH_HEADER_LEN + 4u) // header + session
+#define POS_FRAME_LEN (AAD_LEN + 3u + POS_PLAIN_LEN + MESH_CRYPTO_TAG_LEN)
+
+// Sender pseudonym | low 3 bytes of session | seq: unique per frame while a boot's session holds.
+static void frame_nonce(const uint8_t *frame, uint8_t nonce[MESH_CRYPTO_NONCE_LEN]) {
+    memcpy(nonce, &frame[4], MESH_RIDER_ID_LEN);
+    memcpy(&nonce[8], &frame[MESH_HEADER_LEN], 3);
+    memcpy(&nonce[11], &frame[12], 2);
 }
 
 size_t mesh_encode_pos(const mesh_header_t *h, const uint8_t key[MESH_KEY_LEN], uint32_t session,
-                       const mesh_pos_t *pos, uint8_t *buf, size_t cap) {
-    const size_t len = MESH_HEADER_LEN + POS_BODY_LEN;
-    if (cap < len) return 0;
+                       const mesh_pos_t *pos, uint16_t age_ms, uint8_t ttl, uint8_t *buf, size_t cap) {
+    if (cap < POS_FRAME_LEN) return 0;
     put_header(h, buf);
     put_u32(&buf[MESH_HEADER_LEN], session);
+    put_u16(&buf[AAD_LEN], age_ms);
+    buf[AAD_LEN + 2] = ttl;
     uint8_t pt[POS_PLAIN_LEN];
     put_u32(&pt[0], (uint32_t)pos->lat_e7);
     put_u32(&pt[4], (uint32_t)pos->lon_e7);
@@ -149,27 +183,57 @@ size_t mesh_encode_pos(const mesh_header_t *h, const uint8_t key[MESH_KEY_LEN], 
     put_u16(&pt[10], pos->heading_deg_x10);
     pt[12] = pos->acc_m;
     uint8_t nonce[MESH_CRYPTO_NONCE_LEN];
-    pos_nonce(buf, nonce);
-    uint8_t *ct = &buf[MESH_HEADER_LEN + 4u];
-    mesh_ccm_encrypt(key, nonce, buf, MESH_HEADER_LEN + 4u, pt, POS_PLAIN_LEN, ct, ct + POS_PLAIN_LEN);
-    return len;
+    frame_nonce(buf, nonce);
+    uint8_t *ct = &buf[AAD_LEN + 3u];
+    mesh_ccm_encrypt(key, nonce, buf, AAD_LEN, pt, POS_PLAIN_LEN, ct, ct + POS_PLAIN_LEN);
+    return POS_FRAME_LEN;
 }
 
-bool mesh_decode_pos(const uint8_t *buf, size_t len, const uint8_t key[MESH_KEY_LEN], mesh_pos_t *pos) {
-    if (len < MESH_HEADER_LEN + POS_BODY_LEN) return false;
+bool mesh_decode_pos(const uint8_t *buf, size_t len, const uint8_t key[MESH_KEY_LEN], mesh_pos_t *pos,
+                     uint16_t *age_ms, uint8_t *ttl) {
+    if (len < POS_FRAME_LEN) return false;
     uint8_t nonce[MESH_CRYPTO_NONCE_LEN];
-    pos_nonce(buf, nonce);
-    const uint8_t *ct = &buf[MESH_HEADER_LEN + 4u];
+    frame_nonce(buf, nonce);
+    const uint8_t *ct = &buf[AAD_LEN + 3u];
     uint8_t pt[POS_PLAIN_LEN];
-    if (!mesh_ccm_decrypt(key, nonce, buf, MESH_HEADER_LEN + 4u, ct, POS_PLAIN_LEN, pt, ct + POS_PLAIN_LEN)) {
-        return false;
-    }
+    if (!mesh_ccm_decrypt(key, nonce, buf, AAD_LEN, ct, POS_PLAIN_LEN, pt, ct + POS_PLAIN_LEN)) return false;
     pos->lat_e7 = (int32_t)get_u32(&pt[0]);
     pos->lon_e7 = (int32_t)get_u32(&pt[4]);
     pos->speed_kmh_x10 = get_u16(&pt[8]);
     pos->heading_deg_x10 = get_u16(&pt[10]);
     pos->acc_m = pt[12];
+    *age_ms = get_u16(&buf[AAD_LEN]);
+    *ttl = buf[AAD_LEN + 2];
     return true;
+}
+
+// LOOK body: session u32 | ciphertext (look block) | tag 8.
+size_t mesh_encode_look(const mesh_header_t *h, const uint8_t key[MESH_KEY_LEN], uint32_t session,
+                        const mesh_look_t *look, uint8_t *buf, size_t cap) {
+    const size_t plain = look_len(look);
+    const size_t len = AAD_LEN + plain + MESH_CRYPTO_TAG_LEN;
+    if (cap < len) return 0;
+    put_header(h, buf);
+    put_u32(&buf[MESH_HEADER_LEN], session);
+    uint8_t pt[LOOK_MAX_LEN];
+    put_look(pt, look);
+    uint8_t nonce[MESH_CRYPTO_NONCE_LEN];
+    frame_nonce(buf, nonce);
+    uint8_t *ct = &buf[AAD_LEN];
+    mesh_ccm_encrypt(key, nonce, buf, AAD_LEN, pt, plain, ct, ct + plain);
+    return len;
+}
+
+bool mesh_decode_look(const uint8_t *buf, size_t len, const uint8_t key[MESH_KEY_LEN], mesh_look_t *look) {
+    if (len < AAD_LEN + 6u + MESH_CRYPTO_TAG_LEN) return false;
+    const size_t plain = len - AAD_LEN - MESH_CRYPTO_TAG_LEN;
+    if (plain > LOOK_MAX_LEN) return false;
+    uint8_t nonce[MESH_CRYPTO_NONCE_LEN];
+    frame_nonce(buf, nonce);
+    uint8_t pt[LOOK_MAX_LEN];
+    const uint8_t *ct = &buf[AAD_LEN];
+    if (!mesh_ccm_decrypt(key, nonce, buf, AAD_LEN, ct, plain, pt, ct + plain)) return false;
+    return get_look(pt, plain, look);
 }
 
 bool mesh_identity_decode(const uint8_t *buf, size_t len, mesh_identity_t *out) {
@@ -223,8 +287,8 @@ bool mesh_friend_decode(const uint8_t in[MESH_FRIEND_RECORD_LEN], mesh_friend_t 
     return true;
 }
 
-void mesh_geo(int32_t a_lat_e7, int32_t a_lon_e7, int32_t b_lat_e7, int32_t b_lon_e7, float *bearing_deg,
-              float *dist_m) {
+void mesh_offset(int32_t a_lat_e7, int32_t a_lon_e7, int32_t b_lat_e7, int32_t b_lon_e7, float *east_m,
+                 float *north_m) {
     const double kEarthM = 6371000.0;
     const double kDeg = 3.14159265358979323846 / 180.0;
     const double lat_mid = ((double)a_lat_e7 + (double)b_lat_e7) * 0.5e-7 * kDeg;
@@ -232,10 +296,16 @@ void mesh_geo(int32_t a_lat_e7, int32_t a_lon_e7, int32_t b_lat_e7, int32_t b_lo
     double dlon = ((double)b_lon_e7 - (double)a_lon_e7) * 1e-7;
     if (dlon >= 180.0) dlon -= 360.0;
     if (dlon < -180.0) dlon += 360.0;
-    const double east = dlon * kDeg * cos(lat_mid) * kEarthM;
-    const double north = ((double)b_lat_e7 - (double)a_lat_e7) * 1e-7 * kDeg * kEarthM;
-    double b = atan2(east, north) / kDeg;
+    *east_m = (float)(dlon * kDeg * cos(lat_mid) * kEarthM);
+    *north_m = (float)(((double)b_lat_e7 - (double)a_lat_e7) * 1e-7 * kDeg * kEarthM);
+}
+
+void mesh_geo(int32_t a_lat_e7, int32_t a_lon_e7, int32_t b_lat_e7, int32_t b_lon_e7, float *bearing_deg,
+              float *dist_m) {
+    float east, north;
+    mesh_offset(a_lat_e7, a_lon_e7, b_lat_e7, b_lon_e7, &east, &north);
+    double b = atan2((double)east, (double)north) * 180.0 / 3.14159265358979323846;
     if (b < 0) b += 360.0;
     *bearing_deg = (float)b;
-    *dist_m = (float)sqrt(east * east + north * north);
+    *dist_m = hypotf(east, north);
 }

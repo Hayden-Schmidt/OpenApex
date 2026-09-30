@@ -140,3 +140,24 @@ bool mesh_ccm_decrypt(const uint8_t key[MESH_CRYPTO_KEY_LEN], const uint8_t nonc
     }
     return true;
 }
+
+void mesh_tag_key(const uint8_t rider_key[MESH_CRYPTO_KEY_LEN], uint8_t tag_key[MESH_CRYPTO_KEY_LEN]) {
+    static const uint8_t kLabel[16] = {'O', 'A', '-', 'T', 'A', 'G', 'K', 'E', 'Y'};
+    mesh_aes128_encrypt(rider_key, kLabel, tag_key);
+}
+
+void mesh_pseudonym_make(const uint8_t tag_key[MESH_CRYPTO_KEY_LEN], const uint8_t prand[4],
+                         uint8_t out[MESH_PSEUDONYM_LEN]) {
+    uint8_t block[16] = {0};
+    memcpy(block, prand, 4);
+    uint8_t enc[16];
+    mesh_aes128_encrypt(tag_key, block, enc);
+    memcpy(out, prand, 4);
+    memcpy(out + 4, enc, 4);
+}
+
+bool mesh_pseudonym_match(const uint8_t tag_key[MESH_CRYPTO_KEY_LEN], const uint8_t pseudonym[MESH_PSEUDONYM_LEN]) {
+    uint8_t want[MESH_PSEUDONYM_LEN];
+    mesh_pseudonym_make(tag_key, pseudonym, want);
+    return memcmp(want + 4, pseudonym + 4, 4) == 0;
+}

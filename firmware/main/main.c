@@ -235,6 +235,12 @@ static void countdown_task(void *argument) {
     }
 }
 
+// Set by gui_task once the display's DMA buffers exist. The C3 has almost no heap to spare, and those
+// two ~19 KB buffers need contiguous blocks: task stacks created before them fragment the pool and
+// display_driver_init fails with ESP_ERR_NO_MEM (seen at boot once mesh_task and countdown_task
+// raced ahead of it). app_main waits on this before creating them.
+static volatile bool s_display_ready;
+
 static void gui_task(void *argument) {
     (void)argument;
     // C++ screen classes (firmware/gui, docs/reference/gui_and_display.md) live behind gui_app_init/gui_app_update and must
@@ -244,6 +250,7 @@ static void gui_task(void *argument) {
     HEAPMARK("lv_init");
     lv_tick_set_cb(platform_now_ms);
     display_driver_init();
+    s_display_ready = true;
     HEAPMARK("display_driver");
     touch_driver_init();
     HEAPMARK("touch_driver");
@@ -353,6 +360,7 @@ void app_main(void) {
     }
     ble_link_init(raw_packet_queue, call_event_queue);
     HEAPMARK("ble_link");
+    for (int waited_ms = 0; !s_display_ready && waited_ms < 2000; waited_ms += 10) vTaskDelay(pdMS_TO_TICKS(10));
     mesh_start();
     HEAPMARK("mesh_start");
     mesh_console_start();

@@ -29,6 +29,7 @@ static const char *TAG = "mesh";
 
 #define RX_QUEUE_LEN 8
 #define ACCEPT_QUEUE_LEN 2
+#define REQUEST_QUEUE_LEN 2
 #define TASK_PERIOD_MS 50
 #define DEDUP_LEN 16 // BLE repeats each advert a few times, and dual-radio boards hear frames twice
 #define LOOK_REFRESH_MS 10000u // the avatar upload has no generation counter; re-read it this often
@@ -55,7 +56,9 @@ static mesh_core_t s_core;
 static SemaphoreHandle_t s_mutex;
 static QueueHandle_t s_rx_queue;
 static QueueHandle_t s_accept_queue;
+static QueueHandle_t s_request_queue;
 static volatile bool s_prompt_allowed;
+static volatile bool s_menu_open;
 static uint8_t s_friend_cursor; // NimBLE host task only
 static volatile bool s_ready; // a transport is up; set once by mesh_task
 
@@ -204,6 +207,10 @@ static void mesh_task(void *arg) {
     uint32_t look_gen = settings_generation() - 1u;
     uint32_t look_at = 0;
     uint32_t saved_gen = s_core.friends_generation;
+    bool menu_open = false;
+#if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
+    uint32_t stack_log_at = 0;
+#endif
     rx_frame_t f;
     for (;;) {
         const bool got = xQueueReceive(s_rx_queue, &f, pdMS_TO_TICKS(TASK_PERIOD_MS)) == pdTRUE;
@@ -225,6 +232,13 @@ static void mesh_task(void *arg) {
             } while (xQueueReceive(s_rx_queue, &f, 0) == pdTRUE);
         }
         uint8_t id[MESH_RIDER_ID_LEN];
+        if (s_menu_open != menu_open) {
+            menu_open = s_menu_open;
+            mesh_core_set_menu_open(&s_core, menu_open, now);
+        }
+        while (xQueueReceive(s_request_queue, id, 0) == pdTRUE) {
+            if (!mesh_core_request(&s_core, id, now, send_frame, NULL)) ESP_LOGW(TAG, "request refused");
+        }
         while (xQueueReceive(s_accept_queue, id, 0) == pdTRUE) {
             mesh_core_accept(&s_core, id, now, send_frame, NULL);
         }
@@ -257,6 +271,12 @@ static void mesh_task(void *arg) {
         }
         unlock();
         notify_friend_events();
+#if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
+        if (now - stack_log_at >= 10000u) {
+            stack_log_at = now;
+            ESP_LOGI(TAG, "mesh_task stack high-water %u bytes free", (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        }
+#endif
         for (size_t i = 0; i < TRANSPORT_COUNT; i++) {
             if (s_transport_up[i] && kTransports[i]->poll != NULL) kTransports[i]->poll(now);
         }
@@ -267,6 +287,7 @@ void mesh_init(void) {
     s_mutex = xSemaphoreCreateMutex();
     s_rx_queue = xQueueCreate(RX_QUEUE_LEN, sizeof(rx_frame_t));
     s_accept_queue = xQueueCreate(ACCEPT_QUEUE_LEN, MESH_RIDER_ID_LEN);
+    s_request_queue = xQueueCreate(REQUEST_QUEUE_LEN, MESH_RIDER_ID_LEN);
     mesh_core_init(&s_core, esp_random());
     load_stored();
 #ifdef MESH_BENCH_TEST
@@ -285,8 +306,18 @@ void mesh_start(void) { xTaskCreate(mesh_task, "mesh_task", 4096, NULL, 3, NULL)
 
 // -- public --------------------------------------------------------------------------------------
 
+static volatile bool s_pos_locked; // development console: a simulated position replaces the phone's
+
+void mesh_debug_set_pos(const mesh_pos_t *pos, bool lock_out_phone) {
+    s_pos_locked = lock_out_phone;
+    if (!s_ready || pos == NULL) return;
+    lock();
+    mesh_core_set_own_pos(&s_core, pos, now_ms());
+    unlock();
+}
+
 void mesh_set_own_pos(const mesh_pos_t *pos) {
-    if (!s_ready) return;
+    if (!s_ready || s_pos_locked) return;
     const uint32_t now = now_ms();
     lock();
     mesh_core_set_own_pos(&s_core, pos, now);
@@ -297,6 +328,50 @@ void mesh_set_prompt_allowed(bool allowed) { s_prompt_allowed = allowed; }
 
 void mesh_request_accept(const uint8_t id[MESH_RIDER_ID_LEN]) {
     if (s_ready) xQueueSend(s_accept_queue, id, 0);
+}
+
+void mesh_set_menu_open(bool open) { s_menu_open = open; }
+
+void mesh_request_friend(const uint8_t id[MESH_RIDER_ID_LEN]) {
+    if (s_ready) xQueueSend(s_request_queue, id, 0);
+}
+
+size_t mesh_get_nearby(mesh_nearby_t *out, size_t cap) {
+    if (!s_ready) return 0;
+    const mesh_peer_t *peers[MESH_MAX_PEERS];
+    if (cap > MESH_MAX_PEERS) cap = MESH_MAX_PEERS;
+    lock();
+    const size_t n = mesh_core_nearby(&s_core, now_ms(), peers, cap);
+    for (size_t i = 0; i < n; i++) {
+        memcpy(out[i].id, peers[i]->id, MESH_RIDER_ID_LEN);
+        out[i].look = peers[i]->look;
+    }
+    unlock();
+    return n;
+}
+
+bool mesh_debug_make_identity(void) {
+    mesh_identity_t id;
+    memset(&id, 0, sizeof(id));
+    lock();
+    const bool have = s_core.has_identity;
+    unlock();
+    if (have) return false;
+    esp_read_mac(id.id, ESP_MAC_WIFI_STA);
+    for (int i = 0; i < 16; i++) id.key[i] = (uint8_t)(id.id[i % 8] ^ (i * 37));
+    snprintf(id.name, sizeof(id.name), "C3-%02X", id.id[5]);
+    uint8_t buf[MESH_IDENTITY_MAX_LEN];
+    const size_t n = mesh_identity_encode(&id, buf, sizeof(buf));
+    lock();
+    mesh_core_set_identity(&s_core, &id);
+    unlock();
+    return n > 0 && nvs_put(IDENT_KEY, buf, n);
+}
+
+void mesh_forget_all_friends(void) {
+    lock();
+    mesh_core_friend_clear(&s_core);
+    unlock();
 }
 
 mesh_prompt_state_t mesh_get_prompt(uint8_t id[MESH_RIDER_ID_LEN], mesh_look_t *peer, mesh_look_t *self) {

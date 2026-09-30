@@ -1,5 +1,7 @@
 #include "heading_fusion.h"
 
+#include "ema.h"
+
 #include <math.h>
 
 // Speed tiers (docs/blueprints/02_heading_sensor_fusion.md §3). Above SPEED_TRUST_KMH, GPS course noise is
@@ -169,13 +171,13 @@ void heading_fusion_accept(const heading_input_t *input) {
     if (can_learn_offset && dt_s > 0.0f) {
         float sample_deg = wrap360(input->gps_course_deg - input->yaw_deg);
         vec2_t sample = vec_from_deg(sample_deg);
-        float alpha = 1.0f - expf(-dt_s / OFFSET_TIME_CONSTANT_S);
+        float alpha = ema_alpha(dt_s, OFFSET_TIME_CONSTANT_S);
         if (!s.have_offset) {
             s.offset_x = sample.x;
             s.offset_y = sample.y;
         } else {
-            s.offset_x = s.offset_x * (1.0f - alpha) + sample.x * alpha;
-            s.offset_y = s.offset_y * (1.0f - alpha) + sample.y * alpha;
+            s.offset_x = ema_blend(s.offset_x, sample.x, alpha);
+            s.offset_y = ema_blend(s.offset_y, sample.y, alpha);
         }
         s.have_offset = true;
         // Recompute the bike-frame yaw target with the just-updated offset for this same sample.
@@ -223,7 +225,7 @@ void heading_fusion_accept(const heading_input_t *input) {
             s.filtered_x = target.x;
             s.filtered_y = target.y;
         } else {
-            float alpha = (dt_s > 0.0f) ? (1.0f - expf(-dt_s / tau_s)) : 1.0f;
+            float alpha = ema_alpha(dt_s, tau_s);
             vec2_t blended = vec_add_scaled((vec2_t){s.filtered_x, s.filtered_y}, 1.0f - alpha, target, alpha);
             float len = hypotf(blended.x, blended.y);
             if (len < 1e-3f) {
