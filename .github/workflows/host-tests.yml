@@ -1,0 +1,25 @@
+name: Firmware host tests
+
+on:
+  push:
+    paths:
+      - 'firmware/main/**'
+      - 'firmware/test_host/**'
+      - 'scripts/run-host-tests.ps1'
+      - '.github/workflows/host-tests.yml'
+  pull_request:
+    paths:
+      - 'firmware/main/**'
+      - 'firmware/test_host/**'
+      - 'scripts/run-host-tests.ps1'
+      - '.github/workflows/host-tests.yml'
+
+jobs:
+  host-tests:
+    # The runner script is PowerShell with Windows paths; the Windows image ships MinGW gcc on PATH.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run host tests
+        shell: pwsh
+        run: ./scripts/run-host-tests.ps1

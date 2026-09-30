@@ -89,6 +89,9 @@ void pipeline_reset(void) {
     odometer_reset();
     s_have_time = false;
     s_eta_arrival[0] = '\0';
+    s_final_leg = false;
+    s_arrived = false;
+    s_arrived_ms = 0;
 }
 
 void pipeline_set_wall_clock(uint32_t local_epoch_s, uint32_t now_ms) {

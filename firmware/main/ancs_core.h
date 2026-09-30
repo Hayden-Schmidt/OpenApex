@@ -15,13 +15,13 @@ extern "C" {
 // is the protocol half of that: Notification Source events in, Control Point requests out, Data
 // Source bytes reassembled into attributes. No NimBLE, no clock, no NVS -- the caller passes bytes
 // in, time in, and a write callback out -- so the whole thing runs in host tests exactly like
-// mesh_core.c. ancs.c owns the only instance on the terminal and wires it to the real GATT client.
+// mesh_core.c. apple_client.c owns the only instance on the terminal and wires it to the real GATT client.
 //
 // Wire reference: Apple's "Apple Notification Center Service (ANCS) Specification". Multi-byte
 // fields are little-endian. Strings are UTF-8 and are NOT null-terminated on the wire; this layer
 // terminates them.
 
-// ANCS UUIDs, canonical (big-endian) text form. ancs.c byte-reverses these for NimBLE.
+// ANCS UUIDs, canonical (big-endian) text form. apple_client.c byte-reverses these for NimBLE.
 #define ANCS_SERVICE_UUID_STR "7905F431-B5CE-4E99-A40F-4B1E122D00D0"
 #define ANCS_CHR_NOTIFICATION_SOURCE_UUID_STR "9FBF120D-6301-42D9-8C58-25E699A21DBD"
 #define ANCS_CHR_CONTROL_POINT_UUID_STR "69D1D8F3-45E1-49A8-9821-9BBDFDAAD9D9"

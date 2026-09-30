@@ -50,11 +50,13 @@ void apple_client_on_encryption(uint16_t conn_handle, int status);
 struct ble_gap_event;
 bool apple_client_on_notify_rx(struct ble_gap_event *event);
 
-// Retries a discovery that failed or found nothing. Called from countdown_task; cheap when idle.
+// Retries a discovery that failed or found nothing. NimBLE host task only (ancs_bridge posts it
+// there); cheap when idle.
 void apple_client_tick(uint32_t now_ms);
 
 // Answers (POSITIVE) or declines (NEGATIVE) a notification. The call Accept hold goes here on
 // iOS: there is no CALL_ACTION characteristic in that direction, the phone is the server.
+// NimBLE host task only, like every other entry point that touches the client's state.
 bool apple_client_perform_action(uint32_t uid, ancs_action_id_t action);
 
 // True once ANCS is discovered and both its notify characteristics are subscribed.

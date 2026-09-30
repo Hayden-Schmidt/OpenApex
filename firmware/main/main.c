@@ -50,7 +50,7 @@ static const char *TAG = "openapex";
 //   task.
 // call_event_queue: NimBLE host task -> countdown_task, same bounded-wait rule as raw_packet_queue.
 // call_accept_queue: gui_task -> countdown_task. The Accept tap lands here rather than calling BLE
-//   from the GUI (ง346); countdown_task sends it on.
+//   from the GUI (ยง346); countdown_task sends it on.
 static QueueHandle_t raw_packet_queue;
 static QueueHandle_t call_event_queue;
 static QueueHandle_t call_accept_queue;
@@ -59,7 +59,8 @@ static terminal_view_state_t shared_view;
 
 // Copies the latest view state under view_mutex. This is the only sanctioned read path for
 // shared_view outside of countdown_task; gui_task and any future reader task must call this
-// instead of touching shared_view directly.
+// instead of touching shared_view directly. On a timeout `out` is left as it was, so callers must
+// pass a buffer that already holds a valid frame.
 static void view_state_snapshot(terminal_view_state_t *out) {
     if (xSemaphoreTake(view_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
         *out = shared_view;
@@ -266,8 +267,15 @@ static void gui_task(void *argument) {
     display_driver_backlight_on();
     HEAPMARK("gui first frame");
 
+    // Outlives each pass: view_state_snapshot() leaves it untouched when view_mutex is busy, and
+    // the page then redraws the previous frame rather than whatever was on the stack. Static
+    // because the view state is over 1 KB. The first copy waits for the mutex so there is always a
+    // real frame to fall back on.
+    static terminal_view_state_t frame;
+    xSemaphoreTake(view_mutex, portMAX_DELAY);
+    frame = shared_view;
+    xSemaphoreGive(view_mutex);
     for (;;) {
-        terminal_view_state_t frame;
         view_state_snapshot(&frame);
         if (avatar_store_take_changed()) {
             gui_app_set_avatar(avatar_store_read(avatar) ? avatar : NULL);

@@ -29,14 +29,17 @@ void ancs_bridge_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_q
 void ancs_bridge_on_notification(const ancs_notification_t *n, bool removed);
 void ancs_bridge_on_time(uint32_t local_epoch_s);
 
-// Periodic work, from countdown_task. Re-sends the ring that call_state expects every 5 s: on
+// Periodic work, from countdown_task. Applies any CTS time that arrived since the last tick (the
+// pipeline is countdown_task's), then posts the rest onto the NimBLE host task, which owns all
+// ANCS state: discovery retries, and re-sending the ring that call_state expects every 5 s: on
 // Android the phone re-posts it, but ANCS announces a notification once and then says nothing
 // until it changes, so without this a ring would time out at 12 s while the phone is still
 // ringing (call_state.h).
 void ancs_bridge_tick(uint32_t now_ms);
 
 // Answers the call currently on screen, if it came from ANCS. Returns false when it did not, so
-// the caller falls through to the Android CALL_ACTION notify path.
+// the caller falls through to the Android CALL_ACTION notify path. From countdown_task: the
+// answer itself is queued to the NimBLE host task and never blocks.
 bool ancs_bridge_accept_call(uint16_t call_id);
 
 #ifdef __cplusplus

@@ -2,26 +2,33 @@
 
 Phase 1 target: `PROTOTYPE_C3_GC9A01`.
 
-This skeleton includes:
+Layout:
 
-- ESP-IDF project structure targeting `esp32c3`.
-- FreeRTOS task placeholders for BLE, countdown processing, and GUI.
-- Pure C countdown processor with a host test.
-- No local maps, routing, GNSS dependency, or S3-only hardware assumptions.
+- `main/` -- ESP-IDF firmware. Pure-C, host-tested core (`packet`, `packet_merge`, `normalize`,
+  `pipeline`, `countdown`, `heading_fusion`, `ancs_core`, `settings`, `call_state`) plus the platform
+  glue around it: the NimBLE peripheral (`ble_link.c`), the iOS ANCS/CTS client (`apple_client.c`,
+  `ancs_bridge.c`), NVS stores, and the GC9A01 display and CST816 touch drivers. The rider mesh
+  (`mesh*.c`) is in development.
+- `gui/` -- the C++ LVGL GUI, reached only through `gui_app.hpp` and `terminal_view_state_t`.
+- `sim_lvgl/` -- the desktop simulator for visual work.
+- `test_host/` -- host tests, run by `scripts/run-host-tests.ps1`.
 
-Run from an ESP-IDF-exported terminal:
+Tasks, queues and the one-writer rule are described in
+[system_overview](../docs/reference/system_overview.md) and at the top of `main/main.c`.
+
+Build and flash with PlatformIO from the repo root:
+
+```powershell
+pio run -d firmware -e prototype_c3 -t upload
+```
+
+or from an ESP-IDF-exported terminal:
 
 ```powershell
 idf.py set-target esp32c3
 idf.py build
 idf.py flash monitor
 ```
-
-The GC9A01 driver, BLE packet decoder, and board pin profile are intentionally next work after the
-prototype board is physically verified.
-
-Until then, use `firmware/sim_lvgl` for visual work and `scripts/run-host-tests.ps1` for
-countdown/runtime host tests.
 
 ## Drive logging (development only)
 

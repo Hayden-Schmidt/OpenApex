@@ -12,6 +12,7 @@
 
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
@@ -37,7 +38,7 @@ static const ble_uuid128_t s_call_event_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x03, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 static const ble_uuid128_t s_call_action_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x04, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
-// Settings (ง5.6): read the full TLV, write a partial one. Device info: read-only capabilities the
+// Settings (ยง5.6): read the full TLV, write a partial one. Device info: read-only capabilities the
 // phone needs before it can build a settings screen or rasterise an avatar. Avatar: 80 B of A2 art.
 static const ble_uuid128_t s_settings_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x05, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
@@ -45,7 +46,7 @@ static const ble_uuid128_t s_info_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x06, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 static const ble_uuid128_t s_avatar_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x07, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
-// Rider mesh (ง5.7): the phone's rider identity, and the friend list with its completion notify.
+// Rider mesh (ยง5.7): the phone's rider identity, and the friend list with its completion notify.
 static const ble_uuid128_t s_identity_uuid =
     BLE_UUID128_INIT(0x4f, 0x3e, 0x2d, 0x1a, 0x6b, 0x2f, 0x8e, 0x9c, 0x0a, 0x4f, 0x08, 0x00, 0xa0, 0xd0, 0xc6, 0xc9);
 static const ble_uuid128_t s_friends_uuid =
@@ -153,6 +154,36 @@ uint16_t ble_link_negotiated_mtu(void) {
     return s_negotiated_mtu;
 }
 
+// Pairing window. Just Works has no way to confirm who is pairing, so without a window any phone
+// in range could bond whenever ours is not connected, then write nav, calls and settings. A new
+// bond is accepted only while none exists yet or for BLE_LINK_PAIRING_WINDOW_MS after boot; a
+// peer bonded before this connection reconnects at any time. Pairing a second phone therefore
+// means power-cycling the terminal first.
+#ifndef BLE_LINK_PAIRING_WINDOW_MS
+#define BLE_LINK_PAIRING_WINDOW_MS (5u * 60u * 1000u)
+#endif
+#define BLE_LINK_MAX_BONDS MYNEWT_VAL(BLE_STORE_MAX_BONDS)
+
+// Identity addresses bonded when the current link came up. NimBLE host task only.
+static ble_addr_t s_bonded_at_connect[BLE_LINK_MAX_BONDS];
+static int s_bonded_at_connect_count;
+
+static void snapshot_bonds(void) {
+    if (ble_store_util_bonded_peers(s_bonded_at_connect, &s_bonded_at_connect_count, BLE_LINK_MAX_BONDS) != 0) {
+        s_bonded_at_connect_count = 0;
+    }
+}
+
+// Whether the encrypted link to `peer` may stand. Keyed on the identity address, which is also what
+// NimBLE looks the stored keys up by, so a bonded phone reconnecting always matches.
+static bool pairing_allowed(const ble_addr_t *peer) {
+    for (int i = 0; i < s_bonded_at_connect_count; i++) {
+        if (ble_addr_cmp(&s_bonded_at_connect[i], peer) == 0) return true;
+    }
+    return s_bonded_at_connect_count == 0 ||
+           (uint64_t)esp_timer_get_time() < (uint64_t)BLE_LINK_PAIRING_WINDOW_MS * 1000u;
+}
+
 /**
  * Records a failed decode, WITHOUT letting a broken link eat the log partition.
  *
@@ -189,9 +220,14 @@ static void note_decode_failure(uint16_t out_len, uint16_t expected_len) {
     drive_log_ble(event, (int32_t)out_len);
 }
 
-static void reasm_reset(void) {
+// Nav and call packets reassemble independently: finishing one must not throw away a half-built
+// other, or a nav write landing between two call fragments drops the call until the next re-post.
+static void nav_reasm_reset(void) {
     s_reasm_active = false;
     s_reasm_have_mask = 0;
+}
+
+static void call_reasm_reset(void) {
     s_call_reasm_active = false;
     s_call_reasm_have_mask = 0;
 }
@@ -236,8 +272,7 @@ static int call_event_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     if (s_call_reasm_have_mask != (uint8_t)((1u << frag_count) - 1u)) {
         return 0;
     }
-    s_call_reasm_active = false;
-    s_call_reasm_have_mask = 0;
+    call_reasm_reset();
 
     call_event_t event;
     if (!call_event_decode(s_call_reasm_buf, CALL_EVENT_PACKET_SIZE, &event)) {
@@ -308,7 +343,7 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         }
         // A whole packet supersedes any half-finished fragmented one, and it has just
         // overwritten the buffer that one was accumulating into.
-        reasm_reset();
+        nav_reasm_reset();
         return deliver_reassembled();
     }
     uint8_t buf[BLE_FRAG_HEADER_BYTES + BLE_FRAG_CHUNK_BYTES];
@@ -354,7 +389,7 @@ static int chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     if (s_reasm_have_mask != full_mask) {
         return 0; // waiting on the rest of this packet's fragments
     }
-    reasm_reset();
+    nav_reasm_reset();
     return deliver_reassembled();
 }
 
@@ -490,7 +525,7 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
             {
                 // Same bonded-only rule as nav packets: settings and the avatar are the rider's.
                 // Writes are acknowledged so the app can show sync state (Phone_App_Architecture.md
-                // ง7) and a rejected value surfaces as an ATT error.
+                // ยง7) and a rejected value surfaces as an ATT error.
                 .uuid = &s_settings_uuid.u,
                 .access_cb = settings_access_cb,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE |
@@ -538,10 +573,12 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
             // reassembly say nothing about it.
             s_consecutive_decode_failures = 0;
             s_negotiated_mtu = BLE_ATT_MTU_DFLT;
-            reasm_reset();
+            nav_reasm_reset();
+            call_reasm_reset();
             s_conn_handle = event->connect.conn_handle;
             s_call_action_subscribed = false;
             s_friends_subscribed = false;
+            snapshot_bonds();
             s_connected = true;
             apple_client_on_connect(event->connect.conn_handle);
             // Ask for encryption rather than waiting to be asked. Every ANCS characteristic
@@ -622,6 +659,14 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg) {
                              desc.sec_state.encrypted;
             ESP_LOGI(TAG, "encryption change: status=%d encrypted=%d", event->enc_change.status,
                      (int)enc);
+            if (enc && !pairing_allowed(&desc.peer_id_addr)) {
+                // NimBLE persists the keys before this event and handles it before any ATT write
+                // on the new link, so dropping the bond here means the stranger never got to use it.
+                ESP_LOGW(TAG, "new bond outside the pairing window; dropping it");
+                ble_store_util_delete_peer(&desc.peer_id_addr);
+                ble_gap_terminate(event->enc_change.conn_handle, BLE_ERR_AUTH_FAIL);
+                return 0;
+            }
             apple_client_on_encryption(event->enc_change.conn_handle,
                                        enc ? 0 : (event->enc_change.status != 0
                                                       ? event->enc_change.status

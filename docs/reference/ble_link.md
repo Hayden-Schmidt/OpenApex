@@ -27,6 +27,12 @@ gives the "bike on -> terminal boots -> phone reconnects automatically" UX witho
 CDM observer mode wakes a `CompanionDeviceService` from a killed process when the terminal's
 advertisement is seen again, which starts the relay and connects.
 
+**Pairing window.** Pairing is Just Works, which cannot confirm who is pairing, so the terminal only
+accepts a *new* bond while it has none yet or during the first 5 minutes after boot
+(`BLE_LINK_PAIRING_WINDOW_MS` in `ble_link.c`). An already-bonded phone reconnects at any time. To
+pair a second phone, power-cycle the terminal and pair within the window; a bond made outside it is
+deleted and the link dropped as soon as encryption comes up.
+
 It also leaves room for a later ESP32-to-ESP32 link (e.g. a handlebar terminal and a helmet or TPMS
 sensor unit): with the terminal already acting as peripheral/GATT-server, a second ESP32 can attach
 as another BLE central against the same or a second service, with no role renegotiation on the

@@ -16,7 +16,7 @@
 // raw_packet_queue, and each incoming-call write into a call_event_t on call_event_queue. Board-specific BLE plumbing lives entirely in ble_link.c; the navigation
 // model and packet decoder stay hardware-agnostic (see board_profile.h comment on this boundary).
 //
-// Also serves the settings, device-info and avatar-upload characteristics (ง5.6). NVS must already
+// Also serves the settings, device-info and avatar-upload characteristics (ยง5.6). NVS must already
 // be initialised: main.c does it first, so saved settings are applied before the GUI starts.
 void ble_link_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queue);
 
@@ -35,6 +35,6 @@ uint16_t ble_link_negotiated_mtu(void);
 // down or the phone has not subscribed; the ring then simply plays out on the phone.
 bool ble_link_send_call_accept(uint16_t call_id);
 
-// Friends-characteristic notify ([op][record], ง5.7), sent when a friendship completes or a friend's
+// Friends-characteristic notify ([op][record], ยง5.7), sent when a friendship completes or a friend's
 // look changes. False when the link is down or the phone has not subscribed.
 bool ble_link_send_friend(const uint8_t *buf, uint16_t len);
