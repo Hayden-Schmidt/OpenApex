@@ -130,6 +130,10 @@ IdleScreen::IdleScreen() {
     lv_obj_set_style_text_color(clock_label_, lv_color_white(), 0);
     lv_obj_set_style_text_font(clock_label_, montserrat_at_most(px(kClockFontRef)), 0);
     lv_label_set_text(clock_label_, "--:--");
+    // Full width with centred text rather than centred by measured width: the digits are
+    // proportional, so a content-sized label pinned at one x drifts right as the time widens.
+    lv_obj_set_width(clock_label_, width_);
+    lv_obj_set_style_text_align(clock_label_, LV_TEXT_ALIGN_CENTER, 0);
 
     // --- Odometer bubble.
     bubble_ = lv_obj_create(root_);
@@ -268,7 +272,7 @@ void IdleScreen::apply_layout() {
     const int32_t battery_w = lv_obj_get_width(battery_icon_);
     lv_obj_set_pos(battery_icon_, (width_ - battery_w) / 2, px(kBatteryCy) - battery_h / 2 + rise);
 
-    place_centred(clock_label_, width_, px(kClockCy) - lv_obj_get_height(clock_label_) / 2 + rise);
+    lv_obj_set_pos(clock_label_, 0, px(kClockCy) - lv_obj_get_height(clock_label_) / 2 + rise);
 
     // The glyph starts tucked behind the bubble's centre and slides out to its resting place.
     const int32_t rest_link_cy = px(lerp(kLinkCyDisconnected, kLinkCyConnected, t)) + entry_dy;
@@ -298,7 +302,10 @@ void IdleScreen::update(const terminal_view_state_t &state) {
 
     // clock[0] == '\0' means no time source has reported yet (view_state.h) -- show placeholder
     // dashes rather than a fabricated time.
-    lv_label_set_text(clock_label_, state.clock[0] != '\0' ? state.clock : "--:--");
+    if (std::strncmp(state.clock, last_clock_, sizeof(last_clock_)) != 0) {
+        std::snprintf(last_clock_, sizeof(last_clock_), "%s", state.clock);
+        lv_label_set_text(clock_label_, state.clock[0] != '\0' ? state.clock : "--:--");
+    }
 
     // 0xFF = unknown (view_state.h): hide the icon outright rather than implying an empty battery.
     if (state.battery_percent != last_battery_percent_) {
