@@ -29,7 +29,8 @@ static void log_heap(void) {
 
 // Stand-ins for the terminal UI (U1-U5), so a board with no screen can drive the radio side of each
 // flow. One command per line:
-//   heap | menu on|off | nearby | req <n> | ok | status | friends | forget
+//   heap | menu on|off | nearby | req|hold <n> | ok | rssi <dBm> | status | friends | forget | id |
+//   pos <n> <e> | pos off | accent <hex>
 static void hex4(const uint8_t *id, char out[9]) {
     static const char *kHex = "0123456789abcdef";
     for (int i = 0; i < 4; i++) {
@@ -57,15 +58,16 @@ static void sim_tick(void) {
 }
 
 static void cmd_nearby(void) {
-    mesh_nearby_t near[3];
-    const size_t n = mesh_get_nearby(near, 3);
+    mesh_candidate_t cand[3];
+    const size_t n = mesh_get_candidates(cand, 3);
     for (size_t i = 0; i < n; i++) {
         char id[9];
-        hex4(near[i].id, id);
-        ESP_LOGI(TAG, "nearby %u: '%s' avatar=%u rgb=%06x id=%s", (unsigned)i, near[i].look.name, near[i].look.avatar,
-                 (unsigned)near[i].look.accent_rgb, id);
+        hex4(cand[i].id, id);
+        ESP_LOGI(TAG, "card %u: '%s' avatar=%u rgb=%06x rssi=%d%s id=%s", (unsigned)i, cand[i].look.name,
+                 cand[i].look.avatar, (unsigned)cand[i].look.accent_rgb, cand[i].rssi_dbm,
+                 cand[i].waiting ? " WAITING" : "", id);
     }
-    if (n == 0) ESP_LOGI(TAG, "nearby: none (both menus open? try `menu on`)");
+    if (n == 0) ESP_LOGI(TAG, "card: nobody (both in Add friend? close enough? try `menu on`, `rssi -90`)");
 }
 
 static void cmd_status(void) {
@@ -93,16 +95,20 @@ static void run_command(const char *line) {
         ESP_LOGI(TAG, "menu %s", line[6] == 'n' ? "open" : "closed");
     } else if (strcmp(line, "nearby") == 0) {
         cmd_nearby();
-    } else if (strncmp(line, "req ", 4) == 0) {
-        mesh_nearby_t near[3];
-        const size_t n = mesh_get_nearby(near, 3);
-        const long i = strtol(line + 4, NULL, 10);
+    } else if (strncmp(line, "req ", 4) == 0 || strncmp(line, "hold ", 5) == 0) {
+        mesh_candidate_t cand[3];
+        const size_t n = mesh_get_candidates(cand, 3);
+        const long i = strtol(strchr(line, ' ') + 1, NULL, 10);
         if (i >= 0 && (size_t)i < n) {
-            mesh_request_friend(near[i].id);
-            ESP_LOGI(TAG, "requested '%s'", near[i].look.name);
+            mesh_hold_friend(cand[i].id);
+            ESP_LOGI(TAG, "held on '%s'", cand[i].look.name);
         } else {
-            ESP_LOGW(TAG, "no nearby rider %ld", i);
+            ESP_LOGW(TAG, "no card %ld", i);
         }
+    } else if (strncmp(line, "rssi ", 5) == 0) {
+        const long dbm = strtol(line + 5, NULL, 10);
+        mesh_debug_set_pair_min_rssi((int8_t)dbm);
+        ESP_LOGI(TAG, "pair threshold %ld dBm", dbm);
     } else if (strcmp(line, "ok") == 0) {
         uint8_t pid[MESH_RIDER_ID_LEN];
         mesh_look_t peer, self;

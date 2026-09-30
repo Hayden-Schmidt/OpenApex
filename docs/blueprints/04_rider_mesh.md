@@ -83,11 +83,11 @@ owner designs (Figma) and fills in when it is needed. Implementation of a surfac
 
 | # | Surface | Stage | What the firmware provides | Flow (owner) | Design link (owner) |
 |---|---|---|---|---|---|
-| U1 | Open the friend menu | 1 | Entering the menu makes us discoverable (see "Discovery") | TBD | TBD |
-| U2 | Friend menu list | 1 | Discoverable riders in range: pseudonym + look | TBD | TBD |
-| U3 | Send a request | 1 | `mesh_core_request(pseudonym)` | TBD | TBD |
-| U4 | Incoming request prompt | 1 | Replaces today's automatic prompt; same prompt gate | TBD (hold ring today) | TBD |
-| U5 | "Now friends" / request lapsed | 1 | Handshake outcome events | TBD | TBD |
+| U1 | Enter / leave Add friend | 1 | `mesh_set_menu_open(true/false)`: our look is public only while open. Covers the whole flow (card, waiting, now friends), not just the first page | TBD | TBD |
+| U2 | Pair card with swipe (see "Pair card" below) | 1 | `mesh_get_candidates()`: index 0 in the centre, nearest first, riders asking us first, stable order; each with look and a `waiting` flag | TBD | TBD |
+| U3 | Hold to friend | 1 | `mesh_hold_friend(pseudonym)` on a completed hold; the card shows "waiting for Ben" (`mesh_get_prompt` = WAITING) | TBD | TBD |
+| U4 | "Ann is waiting" | 1 | The same card with `waiting` set; holding accepts. Outside Add friend (always-discoverable riders) the old prompt page still raises through the prompt gate | TBD (hold ring today) | TBD |
+| U5 | "Now friends" / request lapsed | 1 | Handshake outcome (`mesh_get_prompt` = DONE, or NONE when an unanswered request lapses) | TBD | TBD |
 | U6 | Start a ride, choose policy | 2 | `mesh_core_ride_start(policy)` | TBD | TBD |
 | U7 | Rides nearby / join | 2 | Ride adverts heard in range | TBD | TBD |
 | U8 | Approve a join (request policy) | 2 | Incoming join request, first approver wins | TBD | TBD |
@@ -99,6 +99,18 @@ owner designs (Figma) and fills in when it is needed. Implementation of a surfac
 Designs live under `design/screens/07-rider-mesh/`, one file or subfolder per U-number. Today's
 friend prompt is in `design/screens/06-add-friend/`.
 
+**Pair card (U2-U4), agreed 2026-09-30.** One rider in the centre at full size and opacity, the
+next rider on either side smaller and faded. Swiping moves the centre rider to the side (fading)
+and brings the next one to the centre (full opacity); a hold on the centre rider is the friend hold.
+
+- One flick per step (LVGL `LV_EVENT_GESTURE`), a 0.3 s transition on an S-curve (`ease.hpp`).
+  Tapping the left or right edge steps one rider too, for gloves.
+- Sizes are integer multiples of the 32×32 art so pixel art stays crisp, e.g. 96 px centre, 64 px
+  sides; in-between sizes only appear during the 0.3 s motion.
+- At most 3 riders drawn at once (centre and one each side), buffers recycled as the card moves.
+  Fade per image and per label, never a whole container (that needs a layer buffer every frame).
+- A flick is movement and a hold is stationary, so the two do not conflict.
+
 ---
 
 ## 04.1 — Private friending — Phase 1
@@ -106,18 +118,34 @@ friend prompt is in `design/screens/06-add-friend/`.
 Phase 1 is complete when two C3s pass this end to end: menu-only friending, the friend look
 rediscovered after going out of range and back, and a stable, correct bearing on the compass.
 
-### 04.1.1 Friending is menu-only
+### 04.1.1 Friending is pair mode (implemented 2026-09-30)
 
-The automatic prompt goes. Today `run_prompt` (`mesh_core.c:265`) offers the *first* unsuppressed
-stranger in `peers[]` on its own, which in a pack of strangers is effectively random. After this
-stage a friendship only starts from the menu (U1-U3):
+The automatic prompt is gone. A friendship starts only when both riders act:
 
-- Rider A opens the menu, sees B, selects B: A sends `FRIEND_REQUEST` to B's pseudonym.
-- B's terminal raises the incoming-request prompt (U4) for A, through the existing prompt gate
-  (`mesh_core_prompt_gate`: slow, far from the turn, or not navigating).
-- B consents: the key exchange below runs; both terminals store each other.
+1. Both open Add friend (U1).
+2. Each card shows the nearest rider also in Add friend (U2). Riders are ranked by smoothed signal
+   strength: only those at or above `MESH_PAIR_MIN_RSSI` (-70 dBm, bikes brought together; tune on
+   the road) are listed, and a rider moves ahead only when `MESH_PAIR_REORDER_DB` (6 dB) nearer, so
+   the card does not reshuffle on every wobble. A rider asking us is listed first, whatever the
+   signal.
+3. One rider holds (U3): `FRIEND_REQUEST`, which carries the requester's look so the other card can
+   show them even if none of their public HELLOs has landed yet.
+4. The other rider's card shows "Ann is waiting" (U4); holding accepts. If both hold on each other
+   at about the same time, each request is the other's consent and it completes with no accept.
+5. Both show "now friends" (U5).
 
-Consent is still mutual: A's selection is A's consent, B's accept is B's. The suppression list
+Holding on another rider replaces our own unanswered request (swiping to the right person). Measured
+on two C3s: the responder confirms 0.8-8.2 s after holding, usually under 4 s (10/10 runs).
+
+**Handshake robustness (found on hardware).** A C3 hears little while its own advert is on air, so
+replies are deferred past the other side's advert window (`MESH_REPLY_DELAY_MS`, 400 ms) and every
+retry and periodic frame is jittered (`MESH_RETRY_JITTER_MS`). One side always commits first, so
+the protocol also self-heals: the requester resends `FRIEND_KEYS` for longer
+(`MESH_KEYS_TRIES`) and the responder still takes `FRIEND_KEYS` from the rider it consented to
+after its own `FRIEND_ACCEPT` retries have run out, until it picks someone else. Without both, a
+burst of lost frames left one terminal a friend and the other not.
+
+Consent is still mutual: A's hold is A's consent, B's hold is B's. The suppression list
 (`suppressed[]`, `MESH_MAX_SUPPRESSED`) only existed so the automatic prompt did not nag; it is
 removed. A request that is not answered lapses silently (`MESH_PROMPT_TIMEOUT_MS`, on screen), as
 now. If A and B select each other at the same moment, each sees an incoming request from a rider it
@@ -131,20 +159,25 @@ sidelined to 04.4 (POC):** the handshake is symmetric, and an unanswered request
 Rotating the id alone does not help: that combination is a stable fingerprint, so a roadside logger
 tracks the look instead of the id.
 
-**Decision (owner confirmed, OQ1):** by default a terminal broadcasts its
-look in clear **only while its rider has the friend menu open**, plus a short grace after closing
-(`MESH_DISCOVERABLE_GRACE_MS`, 2 min) so the other rider has time to open theirs. The rest of the
-time HELLO carries no look at all, just the rotating pseudonym.
+**Decision (owner confirmed, OQ1; grace dropped 2026-09-30):** by default a terminal broadcasts its
+look in clear **only while its rider is in Add friend**. There is no grace period after closing:
+two riders adding each other open it together, and a look once received is kept, so the other card
+keeps showing a rider who has just left. The rest of the time HELLO carries no look at all, just
+the rotating pseudonym.
 
-- Friending needs both riders to open the menu. They are standing next to each other agreeing to
+- Friending needs both riders in Add friend. They are standing next to each other agreeing to
   friend, so that costs nothing.
 - Friends never need the public look: they get it encrypted (`LOOK`, below).
 - An opt-in **"always discoverable"** toggle keeps the look in HELLO at all times, for riders who
   want passive features ("riders you saw this week"). Default off. It is a stored setting
   (`SETTINGS_TAG_DISCOVERABLE = 0x0B`, the next free TLV tag after 04.2's 0x0A; same six-place
   checklist as §04.2.5). Built in Phase 3 with the phone UI; until then it is a compile-time constant
-  that a debug build or the serial console can override. While it is on, the pseudonym still changes on
+  that a debug build or the serial console can override (implemented: `MESH_ALWAYS_DISCOVERABLE`,
+  `mesh_core_set_always_discoverable`). While it is on, the pseudonym still changes on
   boot (§04.1.3), but the public look makes that moot for that rider; the toggle's description must say so.
+  With pair mode it matters only for passive features and for being found without opening Add
+  friend: an always-discoverable rider can appear on someone's card, and their hold raises the
+  normal prompt (U4) on that rider's terminal through the prompt gate.
 
 **Rejected: a shared rolling key published in GitHub releases.** This is an open-source project,
 so the key would be public. It stops nobody who wants to sniff, and it breaks discovery on any
@@ -279,7 +312,7 @@ and our own fix is up to 1 s old.
 | Type | Name | Body |
 |---|---|---|
 | 0x01 | HELLO | `caps` (1) \| `flags` (1: bit0 look present, bit1 ride advert present) \| [look, only while discoverable] \| [ride advert, 04.2] |
-| 0x02 | FRIEND_REQUEST | target pseudonym (8) \| [eph pub (32), X25519 only] |
+| 0x02 | FRIEND_REQUEST | target pseudonym (8) \| requester's look block (clear; public anyway while in Add friend) \| [eph pub (32), X25519 only] |
 | 0x03 | FRIEND_ACCEPT | target pseudonym (8) \| POC: `rider_id` 8 \| `rider_key` 16, in clear. With X25519: eph pub (32) \| CCM_K{rider_id 8, rider_key 16} + tag 8 |
 | 0x04 | POS | `age_ms` (2, clear) \| `ttl` (1, clear, always 0 until 04.4) \| CCM under own `rider_key`{`mesh_pos_t`} |
 | 0x05 | FRIEND_KEYS | target pseudonym (8) \| POC: `rider_id` 8 \| `rider_key` 16, in clear. With X25519: CCM_K{rider_id 8, rider_key 16} + tag 8 |

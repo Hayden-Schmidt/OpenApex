@@ -12,8 +12,10 @@
 // terminals can meet. ESP-NOW is an extra on boards with the RAM for Wi-Fi (not the C3), giving
 // S3-to-S3 more range and bandwidth; those boards run both.
 
-// Called from the transport's own task context: copy the frame out and return.
-typedef void (*mesh_rx_fn)(const uint8_t *frame, size_t len);
+// Called from the transport's own task context: copy the frame out and return. `rssi` is the
+// received signal strength in dBm, or MESH_RSSI_UNKNOWN; pair mode ranks nearby riders by it.
+#define MESH_RSSI_UNKNOWN INT8_MIN
+typedef void (*mesh_rx_fn)(const uint8_t *frame, size_t len, int8_t rssi);
 
 typedef struct {
     const char *name;

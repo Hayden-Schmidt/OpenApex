@@ -23,8 +23,7 @@ static mesh_rx_fn s_rx;
 
 // Wi-Fi task context.
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-    (void)info;
-    if (len > 0) s_rx(data, (size_t)len);
+    if (len > 0) s_rx(data, (size_t)len, info->rx_ctrl != NULL ? (int8_t)info->rx_ctrl->rssi : MESH_RSSI_UNKNOWN);
 }
 
 static bool espnow_start(mesh_rx_fn rx) {

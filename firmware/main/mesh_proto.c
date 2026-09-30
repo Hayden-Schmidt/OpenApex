@@ -128,6 +128,23 @@ bool mesh_decode_target(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDE
     return true;
 }
 
+size_t mesh_encode_request(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN], const mesh_look_t *look,
+                           uint8_t *buf, size_t cap) {
+    const size_t len = MESH_HEADER_LEN + MESH_RIDER_ID_LEN + look_len(look);
+    if (cap < len) return 0;
+    put_header(h, buf);
+    memcpy(&buf[MESH_HEADER_LEN], target, MESH_RIDER_ID_LEN);
+    put_look(&buf[MESH_HEADER_LEN + MESH_RIDER_ID_LEN], look);
+    return len;
+}
+
+bool mesh_decode_request(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN], mesh_look_t *look) {
+    if (len < MESH_HEADER_LEN + MESH_RIDER_ID_LEN) return false;
+    if (!get_look(&buf[MESH_HEADER_LEN + MESH_RIDER_ID_LEN], len - MESH_HEADER_LEN - MESH_RIDER_ID_LEN, look)) return false;
+    memcpy(target, &buf[MESH_HEADER_LEN], MESH_RIDER_ID_LEN);
+    return true;
+}
+
 #define KEYS_BODY_LEN (MESH_RIDER_ID_LEN + MESH_RIDER_ID_LEN + MESH_KEY_LEN)
 
 size_t mesh_encode_keys(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN],

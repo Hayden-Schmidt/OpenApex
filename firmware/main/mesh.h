@@ -34,20 +34,28 @@ void mesh_set_prompt_allowed(bool allowed);
 // Never blocks. `id` is the pseudonym from mesh_get_prompt().
 void mesh_request_accept(const uint8_t id[MESH_RIDER_ID_LEN]);
 
-// The friend menu is open (U1) or closed. While open, and for a grace after, our look is public so
-// nearby riders can list us. Never blocks.
+// Add friend is open (U1) or closed. Our look is public only while it is open. Call it for the
+// whole flow (the card, "waiting", "now friends"), not just the first page. Never blocks.
 void mesh_set_menu_open(bool open);
 
 typedef struct {
-    uint8_t id[MESH_RIDER_ID_LEN]; // pseudonym: what mesh_request_friend() takes
+    uint8_t id[MESH_RIDER_ID_LEN]; // pseudonym: what mesh_hold_friend() takes
     mesh_look_t look;
-} mesh_nearby_t;
+    bool waiting;                  // they are asking us: holding accepts ("Ann is waiting", U4)
+    int8_t rssi_dbm;               // smoothed signal, MESH_RSSI_UNKNOWN if none (diagnostics only)
+} mesh_candidate_t;
 
-// Copies of the riders in range with a public look who are not friends yet (U2). Returns the count.
-size_t mesh_get_nearby(mesh_nearby_t *out, size_t cap);
+// The pair card (U2): riders to show, index 0 in the centre, the rest reached by swiping. Riders
+// asking us come first, then the nearest; the order is stable against signal wobble. Returns the
+// count. Call it every frame while the card is up.
+size_t mesh_get_candidates(mesh_candidate_t *out, size_t cap);
 
-// The rider picked `id` from the list (U3). Queued; the mesh task sends FRIEND_REQUEST. Never blocks.
-void mesh_request_friend(const uint8_t id[MESH_RIDER_ID_LEN]);
+// The rider held the ring on `id`'s card (U3/U4): accepts if they are asking us, else asks them
+// (replacing our own unanswered request to someone else). Queued; never blocks.
+void mesh_hold_friend(const uint8_t id[MESH_RIDER_ID_LEN]);
+
+// Development console: the pair-card signal threshold in dBm (MESH_PAIR_MIN_RSSI by default).
+void mesh_debug_set_pair_min_rssi(int8_t dbm);
 
 // Development console: gives a board that has never met the phone a MAC-derived identity (stored in
 // NVS; the phone overwrites it on its first connect). False if one already exists.

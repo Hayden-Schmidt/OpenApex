@@ -135,6 +135,13 @@ static void test_target_and_keys_frames(void) {
     assert(memcmp(t2, target, 8) == 0 && memcmp(id2, id, 8) == 0 && memcmp(key2, key, 16) == 0);
     assert(!mesh_decode_keys(buf, n - 1, t2, id2, key2));
     assert(mesh_encode_keys(&h, target, id, key, buf, n - 1) == 0);
+    mesh_look_t l = look_of(7, 0x102030, false), r;
+    strcpy(l.name, "Jo");
+    n = mesh_encode_request(&h, target, &l, buf, sizeof(buf));
+    assert(n == MESH_HEADER_LEN + 8 + 6 + 2);
+    assert(mesh_decode_request(buf, n, t2, &r) && memcmp(t2, target, 8) == 0);
+    assert(r.avatar == 7 && r.accent_rgb == 0x102030 && strcmp(r.name, "Jo") == 0);
+    assert(!mesh_decode_request(buf, n - 1, t2, &r));
 }
 
 static void test_pos_auth(void) {
@@ -237,12 +244,17 @@ static void air_send(const uint8_t *f, size_t len, void *ctx) {
     a->lens[a->count++] = len;
 }
 
+// Signal strength every delivered frame arrives with; tests that care about pair-card order set it.
+static int8_t g_rssi = -40;
+
 // Delivers everything `from` sent to `to` (and to no one if `to` is NULL).
 static void deliver(air_t *from, mesh_core_t *to, air_t *to_air, uint32_t now) {
     static air_t pending;
     pending = *from;
     from->count = 0;
-    for (size_t i = 0; to && i < pending.count; i++) mesh_core_rx(to, pending.frames[i], pending.lens[i], now, air_send, to_air);
+    for (size_t i = 0; to && i < pending.count; i++) {
+        mesh_core_rx(to, pending.frames[i], pending.lens[i], g_rssi, now, air_send, to_air);
+    }
 }
 
 static void setup(mesh_core_t *c, uint8_t idbyte, const char *name, uint32_t rgb) {
@@ -289,8 +301,8 @@ static bool handshake_idle(const mesh_core_t *c) {
 // Ann requests Ben from the menu and Ben consents; both end up friends. Advances `*now_io`.
 static void befriend_by_menu(mesh_core_t *a, air_t *aa, mesh_core_t *b, air_t *ba, uint32_t *now_io) {
     const uint32_t now = *now_io;
-    mesh_core_set_menu_open(a, true, now);
-    mesh_core_set_menu_open(b, true, now);
+    mesh_core_set_menu_open(a, true);
+    mesh_core_set_menu_open(b, true);
     tick_both(a, aa, b, ba, now);
     assert(mesh_core_request(a, b->pseud, now, air_send, aa));
     exchange(a, aa, b, ba, now);
@@ -314,7 +326,7 @@ static void test_no_automatic_prompt(void) {
     for (uint32_t now = 1000; now < 30000; now += 500) tick_both(&a, &aa, &b, &ba, now);
     assert(mesh_core_prompt(&a, NULL, NULL) == MESH_PROMPT_NONE && mesh_core_prompt(&b, NULL, NULL) == MESH_PROMPT_NONE);
     const mesh_peer_t *np[4];
-    assert(mesh_core_nearby(&a, 30000, np, 4) == 0); // no public look to list
+    assert(mesh_core_candidates(&a, 30000, np, 4) == 0); // no public look to list
     // The wire carries no name: the HELLO is header + caps + flags.
     mesh_core_tick(&a, 40000, true, air_send, &aa);
     assert(aa.count == 1 && aa.lens[0] == MESH_HEADER_LEN + 2);
@@ -323,28 +335,163 @@ static void test_no_automatic_prompt(void) {
     assert(memcmp(a.pseud, a.self.id, 8) != 0 && memcmp(a.pseud, b.pseud, 8) != 0);
 }
 
-static void test_menu_discovery_and_grace(void) {
+static void test_menu_discovery(void) {
     static mesh_core_t a, b;
     air_t aa = {0}, ba = {0};
     setup(&a, 1, "Ann", 1);
     setup(&b, 2, "Ben", 0x0000FF);
-    mesh_core_set_menu_open(&b, true, 1000);
-    tick_both(&a, &aa, &b, &ba, 1000);
-    const mesh_peer_t *np[4];
-    assert(mesh_core_nearby(&a, 1000, np, 4) == 1 && strcmp(np[0]->look.name, "Ben") == 0);
-    assert(np[0]->look.accent_rgb == 0x0000FF && memcmp(np[0]->id, b.pseud, 8) == 0);
-    // Menu closes: still public for the grace period, then private again.
-    mesh_core_set_menu_open(&b, false, 3000);
-    tick_both(&a, &aa, &b, &ba, 5000);
-    assert(mesh_core_nearby(&a, 5000, np, 4) == 1);
-    uint32_t now = 3000 + MESH_DISCOVERABLE_GRACE_MS + 10;
-    tick_both(&a, &aa, &b, &ba, now - 2000); // keep the peer alive
+    mesh_core_set_menu_open(&b, true);
+    uint32_t now = 1000;
     tick_both(&a, &aa, &b, &ba, now);
-    assert(mesh_core_nearby(&a, now, np, 4) == 0);
-    // Always-discoverable overrides the menu.
+    const mesh_peer_t *np[4];
+    assert(mesh_core_candidates(&a, now, np, 4) == 1 && strcmp(np[0]->look.name, "Ben") == 0);
+    assert(np[0]->look.accent_rgb == 0x0000FF && memcmp(np[0]->id, b.pseud, 8) == 0);
+    // Ben leaves Add friend: private again from his next HELLO, and off Ann's card. No grace period.
+    mesh_core_set_menu_open(&b, false);
+    settle(&a, &aa, &b, &ba, &now, 2500);
+    assert(mesh_core_candidates(&a, now, np, 4) == 0);
+    // Always-discoverable keeps him public without the menu.
     mesh_core_set_always_discoverable(&b, true);
-    tick_both(&a, &aa, &b, &ba, now + 2000);
-    assert(mesh_core_nearby(&a, now + 2000, np, 4) == 1);
+    settle(&a, &aa, &b, &ba, &now, 2500);
+    assert(mesh_core_candidates(&a, now, np, 4) == 1);
+}
+
+// The card orders riders nearest first, drops those too far, puts a rider asking us first, and does
+// not reshuffle on small signal swings.
+static void test_pair_card_order(void) {
+    static mesh_core_t me, b, c, d;
+    air_t ma = {0}, ba = {0}, ca = {0}, da = {0};
+    setup(&me, 1, "Me", 1);
+    setup(&b, 2, "Ben", 2);
+    setup(&c, 3, "Cat", 3);
+    setup(&d, 4, "Dan", 4);
+    mesh_core_set_menu_open(&me, true);
+    mesh_core_set_menu_open(&b, true);
+    mesh_core_set_menu_open(&c, true);
+    mesh_core_set_menu_open(&d, true);
+    uint32_t now = 1000;
+    // Ben -60 dBm, Cat -45 (nearest), Dan -85 (across the car park: below the threshold).
+    for (int k = 0; k < 6; k++, now += 500) {
+        mesh_core_tick(&b, now, true, air_send, &ba);
+        mesh_core_tick(&c, now, true, air_send, &ca);
+        mesh_core_tick(&d, now, true, air_send, &da);
+        g_rssi = -60;
+        deliver(&ba, &me, &ma, now);
+        g_rssi = -45;
+        deliver(&ca, &me, &ma, now);
+        g_rssi = -85;
+        deliver(&da, &me, &ma, now);
+    }
+    g_rssi = -40;
+    const mesh_peer_t *np[4];
+    assert(mesh_core_candidates(&me, now, np, 4) == 2);
+    assert(strcmp(np[0]->look.name, "Cat") == 0 && strcmp(np[1]->look.name, "Ben") == 0);
+
+    // Ben drifts to -50: within MESH_PAIR_REORDER_DB of Cat, so the order holds. (HELLOs come every
+    // ~2 s, so the smoothed signal needs a few of them to settle.)
+    for (int k = 0; k < 20; k++, now += 500) {
+        mesh_core_tick(&b, now, true, air_send, &ba);
+        mesh_core_tick(&c, now, true, air_send, &ca); // Cat stays in range at -45
+        g_rssi = -50;
+        deliver(&ba, &me, &ma, now);
+        g_rssi = -45;
+        deliver(&ca, &me, &ma, now);
+    }
+    assert(mesh_core_candidates(&me, now, np, 4) == 2 && strcmp(np[0]->look.name, "Cat") == 0);
+    // Ben comes right up to -35: clearly nearer now, so he moves to the centre.
+    for (int k = 0; k < 30; k++, now += 500) {
+        mesh_core_tick(&b, now, true, air_send, &ba);
+        mesh_core_tick(&c, now, true, air_send, &ca); // Cat stays in range at -45
+        g_rssi = -35;
+        deliver(&ba, &me, &ma, now);
+        g_rssi = -45;
+        deliver(&ca, &me, &ma, now);
+    }
+    assert(mesh_core_candidates(&me, now, np, 4) == 2 && strcmp(np[0]->look.name, "Ben") == 0);
+
+    // Dan, far away, holds on me: a rider asking us goes first, whatever the signal.
+    g_rssi = -85;
+    for (int k = 0; k < 6; k++, now += 500) { // Dan is still around, far off
+        mesh_core_tick(&d, now, true, air_send, &da);
+        deliver(&da, &me, &ma, now);
+    }
+    mesh_core_tick(&me, now, true, air_send, &ma);
+    deliver(&ma, &d, &da, now); // Dan hears my HELLO
+    assert(mesh_core_hold(&d, me.pseud, now, air_send, &da));
+    deliver(&da, &me, &ma, now);
+    g_rssi = -40;
+    assert(mesh_core_candidates(&me, now, np, 4) == 3);
+    assert(strcmp(np[0]->look.name, "Dan") == 0 && mesh_core_peer_waiting(np[0]));
+    assert(!mesh_core_peer_waiting(np[1]));
+}
+
+// Holding on another rider replaces our own unanswered request, and holding on a waiting rider
+// accepts.
+static void test_hold_switches_and_accepts(void) {
+    static mesh_core_t a, b, c;
+    air_t aa = {0}, ba = {0}, ca = {0};
+    setup(&a, 1, "Ann", 1);
+    setup(&b, 2, "Ben", 2);
+    setup(&c, 3, "Cat", 3);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
+    mesh_core_set_menu_open(&c, true);
+    uint32_t now = 1000;
+    mesh_core_tick(&a, now, true, air_send, &aa);
+    mesh_core_tick(&b, now, true, air_send, &ba);
+    mesh_core_tick(&c, now, true, air_send, &ca);
+    static air_t a_hello;
+    a_hello = aa;
+    deliver(&ba, &a, &aa, now);
+    deliver(&ca, &a, &aa, now);
+    deliver(&aa, &b, &ba, now);
+    aa = a_hello;
+    deliver(&aa, &c, &ca, now);
+    aa.count = ba.count = ca.count = 0;
+    // Ann holds on Ben, then swipes to Cat and holds: the request to Ben is dropped.
+    assert(mesh_core_hold(&a, b.pseud, now, air_send, &aa));
+    aa.count = 0;
+    assert(mesh_core_hold(&a, c.pseud, now, air_send, &aa));
+    assert(!mesh_core_hold(&a, c.pseud, now, air_send, &aa)); // already asking Cat
+    uint8_t pid[8];
+    assert(mesh_core_prompt(&a, pid, NULL) == MESH_PROMPT_WAITING && memcmp(pid, c.pseud, 8) == 0);
+    for (size_t i = 0; i < MESH_MAX_PEERS; i++) {
+        if (a.peers[i].used && memcmp(a.peers[i].id, b.pseud, 8) == 0) assert(a.peers[i].hs == MESH_HS_NONE);
+    }
+    // Cat sees Ann waiting on her card and holds: that accepts, and both become friends.
+    deliver(&aa, &c, &ca, now);
+    const mesh_peer_t *np[4];
+    assert(mesh_core_candidates(&c, now, np, 4) >= 1 && mesh_core_peer_waiting(np[0]));
+    assert(memcmp(np[0]->id, a.pseud, 8) == 0);
+    assert(mesh_core_hold(&c, a.pseud, now, air_send, &ca));
+    deliver(&ca, &a, &aa, now);
+    settle(&a, &aa, &c, &ca, &now, 2000);
+    assert(mesh_core_friend_find(&a, c.self.id) && mesh_core_friend_find(&c, a.self.id));
+    assert(a.friend_count == 1);
+}
+
+// The request carries the requester's look, so the other card can show them even if none of their
+// public HELLOs has landed.
+static void test_request_carries_look(void) {
+    static mesh_core_t a, b;
+    air_t aa = {0}, ba = {0};
+    setup(&a, 1, "Ann", 0xFF0000);
+    setup(&b, 2, "Ben", 2);
+    mesh_core_set_menu_open(&b, true);
+    uint32_t now = 1000;
+    mesh_core_tick(&a, now, true, air_send, &aa); // private HELLO: Ben learns only Ann's pseudonym
+    mesh_core_tick(&b, now, true, air_send, &ba);
+    deliver(&aa, &b, &ba, now);
+    deliver(&ba, &a, &aa, now);
+    mesh_core_set_menu_open(&a, true);
+    assert(mesh_core_hold(&a, b.pseud, now, air_send, &aa));
+    deliver(&aa, &b, &ba, now);
+    uint8_t pid[8];
+    mesh_look_t pl;
+    assert(mesh_core_prompt(&b, pid, &pl) == MESH_PROMPT_OFFER);
+    assert(strcmp(pl.name, "Ann") == 0 && pl.accent_rgb == 0xFF0000);
+    const mesh_peer_t *np[2];
+    assert(mesh_core_candidates(&b, now, np, 2) == 1 && strcmp(np[0]->look.name, "Ann") == 0);
 }
 
 static void test_friending_from_menu(void) {
@@ -371,7 +518,7 @@ static void test_friending_from_menu(void) {
 
     // They no longer list each other as strangers.
     const mesh_peer_t *np[4];
-    assert(mesh_core_nearby(&a, now, np, 4) == 0);
+    assert(mesh_core_candidates(&a, now, np, 4) == 0);
 
     // Friends resolve each other's pseudonym on air: POS decrypts.
     mesh_pos_t pa = {0, 0, 0, 0, 3}, pb = {10000, 0, 0, 0, 3};
@@ -397,8 +544,8 @@ static void test_request_lapses_and_retries(void) {
     air_t aa = {0}, ba = {0};
     setup(&a, 1, "Ann", 1);
     setup(&b, 2, "Ben", 2);
-    mesh_core_set_menu_open(&a, true, 1000);
-    mesh_core_set_menu_open(&b, true, 1000);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
     tick_both(&a, &aa, &b, &ba, 1000);
     assert(mesh_core_request(&a, b.pseud, 1000, air_send, &aa));
     assert(!mesh_core_request(&a, b.pseud, 1000, air_send, &aa)); // slot is busy
@@ -428,8 +575,8 @@ static void test_mutual_request(void) {
     air_t aa = {0}, ba = {0};
     setup(&a, 1, "Ann", 1);
     setup(&b, 2, "Ben", 2);
-    mesh_core_set_menu_open(&a, true, 1000);
-    mesh_core_set_menu_open(&b, true, 1000);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
     tick_both(&a, &aa, &b, &ba, 1000);
     // Both pick each other at the same moment: each request is the other's consent.
     assert(mesh_core_request(&a, b.pseud, 1000, air_send, &aa));
@@ -449,11 +596,11 @@ static void test_request_ignored_when_busy_or_unknown(void) {
     setup(&b, 2, "Ben", 2);
     setup(&c, 3, "Cat", 3);
     // A request from a rider we never heard a HELLO from is dropped.
-    mesh_core_set_menu_open(&b, true, 1000);
+    mesh_core_set_menu_open(&b, true);
     assert(!mesh_core_request(&b, a.pseud, 1000, air_send, &ba)); // unknown peer
     // One slot: a second incoming request waits for the first to resolve.
-    mesh_core_set_menu_open(&a, true, 1000);
-    mesh_core_set_menu_open(&c, true, 1000);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&c, true);
     mesh_core_tick(&a, 1000, true, air_send, &aa);
     mesh_core_tick(&b, 1000, true, air_send, &ba);
     mesh_core_tick(&c, 1000, true, air_send, &ca);
@@ -494,7 +641,9 @@ static void radio_deliver(radio_t *from, mesh_core_t *to, radio_t *to_r, uint32_
     from->air.count = 0;
     if ((int32_t)(now - to_r->busy_until) < 0) return; // the receiver is advertising: all lost
     const size_t before = to_r->air.count;
-    for (size_t i = 0; i < pending.count; i++) mesh_core_rx(to, pending.frames[i], pending.lens[i], now, air_send, &to_r->air);
+    for (size_t i = 0; i < pending.count; i++) {
+        mesh_core_rx(to, pending.frames[i], pending.lens[i], g_rssi, now, air_send, &to_r->air);
+    }
     if (to_r->air.count != before) to_r->busy_until = now + 300;
 }
 
@@ -505,8 +654,8 @@ static void test_handshake_survives_own_advert_window(void) {
     memset(&rb, 0, sizeof(rb));
     setup(&a, 1, "Ann", 1);
     setup(&b, 2, "Ben", 2);
-    mesh_core_set_menu_open(&a, true, 1000);
-    mesh_core_set_menu_open(&b, true, 1000);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
     uint32_t now = 1000;
     for (; now < 5000; now += 50) { // B powered on 500 ms after A, so their HELLOs interleave
         radio_tick(&a, &ra, now);
@@ -534,6 +683,80 @@ static void test_handshake_survives_own_advert_window(void) {
     assert(handshake_idle(&a) && handshake_idle(&b));
 }
 
+// Seen on two C3s: the requester missed the first four ACCEPTs, took the fifth, and its KEYS only
+// arrived after the responder's ACCEPT retries had run out. The responder must still complete.
+static void test_keys_after_responder_gave_up(void) {
+    static mesh_core_t a, b;
+    air_t aa = {0}, ba = {0};
+    setup(&a, 1, "Ann", 1);
+    setup(&b, 2, "Ben", 2);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
+    uint32_t now = 1000;
+    tick_both(&a, &aa, &b, &ba, now);
+    assert(mesh_core_hold(&a, b.pseud, now, air_send, &aa));
+    deliver(&aa, &b, &ba, now);
+    assert(mesh_core_hold(&b, a.pseud, now, air_send, &ba)); // Ben holds: ACCEPT goes out
+    // Ben's ACCEPTs are lost until his retries run out; Ann hears only the last one.
+    static air_t last;
+    last.count = 0;
+    for (int k = 0; k < 120 && b.peers[0].hs != MESH_HS_NONE; k++) {
+        now += 100;
+        mesh_core_tick(&b, now, true, air_send, &ba);
+        for (size_t i = 0; i < ba.count; i++) {
+            if (ba.frames[i][3] == MESH_TYPE_FRIEND_ACCEPT) {
+                last.count = 1;
+                memcpy(last.frames[0], ba.frames[i], ba.lens[i]);
+                last.lens[0] = ba.lens[i];
+            }
+        }
+        ba.count = 0;
+    }
+    assert(b.peers[0].hs == MESH_HS_NONE && b.friend_count == 0); // Ben gave up waiting
+    deliver(&last, &a, &aa, now);
+    assert(mesh_core_friend_find(&a, b.self.id) != NULL);            // Ann committed
+    settle(&a, &aa, &b, &ba, &now, 2000);                            // Ann's KEYS now land
+    assert(mesh_core_friend_find(&b, a.self.id) != NULL);
+    assert(mesh_core_prompt(&b, NULL, NULL) == MESH_PROMPT_DONE);    // Ben still sees "now friends"
+    settle(&a, &aa, &b, &ba, &now, 3000);
+    assert(handshake_idle(&a) && handshake_idle(&b));
+}
+
+// Consent is withdrawn by choosing someone else: a late KEYS from the first rider is then ignored.
+static void test_late_keys_ignored_after_changing_mind(void) {
+    static mesh_core_t a, b, c;
+    air_t aa = {0}, ba = {0}, ca = {0};
+    setup(&a, 1, "Ann", 1);
+    setup(&b, 2, "Ben", 2);
+    setup(&c, 3, "Cat", 3);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
+    mesh_core_set_menu_open(&c, true);
+    uint32_t now = 1000;
+    mesh_core_tick(&a, now, true, air_send, &aa);
+    mesh_core_tick(&c, now, true, air_send, &ca);
+    deliver(&aa, &b, &ba, now);
+    deliver(&ca, &b, &ba, now);
+    mesh_core_tick(&b, now, true, air_send, &ba);
+    deliver(&ba, &a, &aa, now);
+    assert(mesh_core_hold(&a, b.pseud, now, air_send, &aa));
+    deliver(&aa, &b, &ba, now);
+    assert(mesh_core_hold(&b, a.pseud, now, air_send, &ba)); // Ben consents to Ann...
+    static air_t accept;
+    accept = ba;
+    ba.count = 0;
+    for (int k = 0; k < 120 && b.prompt != MESH_PROMPT_NONE; k++) { // ...his retries run out unheard
+        now += 100;
+        mesh_core_tick(&b, now, true, air_send, &ba);
+        ba.count = 0;
+    }
+    assert(mesh_core_hold(&b, c.pseud, now, air_send, &ba)); // ...and he picks Cat instead
+    ba.count = 0;
+    deliver(&accept, &a, &aa, now); // Ann finally hears the old ACCEPT and sends KEYS
+    settle(&a, &aa, &b, &ba, &now, 2000);
+    assert(mesh_core_friend_find(&b, a.self.id) == NULL);
+}
+
 static void test_gate_holds_prompt_and_timeout(void) {
     assert(mesh_core_prompt_gate(false, 0, 1000));
     assert(mesh_core_prompt_gate(true, 51, 1000));
@@ -545,8 +768,8 @@ static void test_gate_holds_prompt_and_timeout(void) {
     air_t aa = {0}, ba = {0};
     setup(&a, 1, "Ann", 1);
     setup(&b, 2, "Ben", 2);
-    mesh_core_set_menu_open(&a, true, 1000);
-    mesh_core_set_menu_open(&b, true, 1000);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
     tick_both(&a, &aa, &b, &ba, 1000);
     assert(mesh_core_request(&a, b.pseud, 1000, air_send, &aa));
     deliver(&aa, &b, &ba, 1000);
@@ -581,7 +804,7 @@ static void test_refriend_after_lost_list(void) {
     memcpy(f.key, b.self.key, 16);
     mesh_core_friend_upsert(&a, &f);
     uint32_t now = 1000;
-    mesh_core_set_menu_open(&b, true, now);
+    mesh_core_set_menu_open(&b, true);
     tick_both(&a, &aa, &b, &ba, now);
     // Ben asks Ann from his menu. Ann already consented once: she answers without a prompt.
     assert(mesh_core_request(&b, a.pseud, now, air_send, &ba));
@@ -599,8 +822,8 @@ static void test_stranger_cannot_read_position(void) {
     setup(&a, 1, "Ann", 1);
     setup(&b, 2, "Ben", 2);
     setup(&c, 3, "Cat", 3);
-    mesh_core_set_menu_open(&a, true, 1000);
-    mesh_core_set_menu_open(&b, true, 1000);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
     tick_both(&a, &aa, &b, &ba, 1000);
     uint32_t t0 = 1000;
     befriend_by_menu(&a, &aa, &b, &ba, &t0);
@@ -628,8 +851,8 @@ static void test_look_on_rediscovery_and_change(void) {
     befriend_by_menu(&a, &aa, &b, &ba, &now);
     mesh_friend_event_t ev;
     while (mesh_core_take_friend_event(&a, &ev)) {}
-    mesh_core_set_menu_open(&a, false, now);
-    mesh_core_set_menu_open(&b, false, now);
+    mesh_core_set_menu_open(&a, false);
+    mesh_core_set_menu_open(&b, false);
 
     // Ben changes his look while in range: pushed to Ann, encrypted.
     mesh_look_t nl = look_of(9, 0x00FF00, true);
@@ -774,7 +997,10 @@ int main(void) {
     test_identity_and_record();
     test_geo();
     test_no_automatic_prompt();
-    test_menu_discovery_and_grace();
+    test_menu_discovery();
+    test_pair_card_order();
+    test_hold_switches_and_accepts();
+    test_request_carries_look();
     test_friending_from_menu();
     test_request_lapses_and_retries();
     test_mutual_request();
@@ -782,6 +1008,8 @@ int main(void) {
     test_gate_holds_prompt_and_timeout();
     test_refriend_after_lost_list();
     test_handshake_survives_own_advert_window();
+    test_keys_after_responder_gave_up();
+    test_late_keys_ignored_after_changing_mind();
     test_stranger_cannot_read_position();
     test_look_on_rediscovery_and_change();
     test_bearing_aligned_in_time();

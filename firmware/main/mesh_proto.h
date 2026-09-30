@@ -82,8 +82,14 @@ size_t mesh_encode_hello(const mesh_header_t *h, const mesh_look_t *look, uint8_
                          size_t cap);
 bool mesh_decode_hello(const uint8_t *buf, size_t len, mesh_look_t *look, bool *has_look, uint8_t *caps);
 
-// A frame that is only a target pseudonym: FRIEND_REQUEST ("I want to friend you") and FRIEND_ACK
-// ("I received your keys"). The header's type says which.
+// FRIEND_REQUEST: the target, then the requester's look, so the other rider's card can show who is
+// asking even if no public HELLO from them has landed yet. The look is public anyway while the
+// requester is in Add friend.
+size_t mesh_encode_request(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN], const mesh_look_t *look,
+                           uint8_t *buf, size_t cap);
+bool mesh_decode_request(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN], mesh_look_t *look);
+
+// A frame that is only a target pseudonym: FRIEND_ACK ("I received your keys").
 size_t mesh_encode_target(const mesh_header_t *h, const uint8_t target[MESH_RIDER_ID_LEN], uint8_t *buf,
                           size_t cap);
 bool mesh_decode_target(const uint8_t *buf, size_t len, uint8_t target[MESH_RIDER_ID_LEN]);

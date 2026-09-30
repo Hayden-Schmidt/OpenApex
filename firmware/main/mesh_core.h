@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "mesh_proto.h"
+#include "mesh_transport.h" // MESH_RSSI_UNKNOWN
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,9 +37,20 @@ extern "C" {
 #define MESH_REPLY_DELAY_MS 400u
 #define MESH_RETRY_JITTER_MS 400u
 #define MESH_ACCEPT_TRIES 5u
+// The requester commits on ACCEPT and then resends KEYS until the ACK. It keeps going longer than the
+// responder's ACCEPT retries, and the responder still takes KEYS from a rider it consented to after
+// its own retries end (`consented`), so a burst of lost frames cannot leave one side a friend and the
+// other not.
+#define MESH_KEYS_TRIES 12u
 #define MESH_LOOK_PUSH_MS 1000u
 #define MESH_LOOK_PUSH_TRIES 3u
-#define MESH_DISCOVERABLE_GRACE_MS 120000u // look stays public this long after the friend menu closes
+// Pair mode (U1-U5): the card lists riders also in Add friend, nearest first. Only riders whose
+// smoothed signal is at least MESH_PAIR_MIN_RSSI dBm (bikes brought together) are listed, and the
+// order changes only when one rider is clearly nearer than the one ahead of it, so the card does not
+// reshuffle on every RSSI wobble. The threshold is a starting value to tune on hardware.
+#define MESH_PAIR_MIN_RSSI (-70)
+#define MESH_PAIR_REORDER_DB 6
+#define MESH_RSSI_ALPHA 0.3f
 #define MESH_FRIEND_EVENTS 2u // the phone re-reads the whole list on connect, so a lost event is harmless
 
 // Compile-time until the phone setting lands (Phase 3): the look is public in HELLO at all times.
@@ -71,7 +83,10 @@ typedef struct {
     uint8_t id[MESH_RIDER_ID_LEN]; // the peer's pseudonym as heard on air
     uint32_t heard_ms;             // last frame of any kind
     bool has_look;                 // `look` is valid: their public look, or a friend's LOOK
+    bool public_look;              // their latest HELLO carried a look: they are in Add friend
     mesh_look_t look;
+    bool has_rssi;
+    float rssi_dbm;                // smoothed over the frames heard from them
     // Friend link, resolved from the pseudonym and cached until the friend list changes.
     uint8_t friend_idx;            // index into friends[], or MESH_NO_FRIEND
     uint32_t resolved_gen;
@@ -83,6 +98,7 @@ typedef struct {
     uint32_t off_ms;
     // Handshake.
     uint8_t hs;                    // mesh_hs_t
+    bool consented;                // our rider held on them (or asked them); their KEYS is welcome
     uint8_t tries;
     uint32_t next_try_ms;          // when the next handshake frame is due
     bool ack_due;                  // a FRIEND_ACK is owed at ack_at_ms
@@ -124,9 +140,11 @@ typedef struct {
     uint32_t rng;                           // retry jitter only; not security-relevant
 
     bool always_discoverable;
-    bool menu_open;
-    bool grace;                             // menu closed recently: still discoverable
-    uint32_t grace_until_ms;
+    bool menu_open;                         // in Add friend (U1): our look is public
+    int8_t pair_min_rssi;
+    // Pair-mode card order: pseudonyms, nearest first, kept between calls for hysteresis.
+    uint8_t cand[MESH_MAX_PEERS][MESH_RIDER_ID_LEN];
+    uint8_t cand_n;
 
     bool has_own_pos;
     mesh_pos_t own_pos;
@@ -166,9 +184,10 @@ void mesh_core_set_identity(mesh_core_t *c, const mesh_identity_t *id); // NULL:
 void mesh_core_set_look(mesh_core_t *c, const mesh_look_t *look);
 void mesh_core_set_own_pos(mesh_core_t *c, const mesh_pos_t *pos, uint32_t now_ms);
 
-// The friend menu is open (U1): our look is public while it is, and for a grace after it closes.
-void mesh_core_set_menu_open(mesh_core_t *c, bool open, uint32_t now_ms);
+// Add friend is open (U1): our look is public only while it is.
+void mesh_core_set_menu_open(mesh_core_t *c, bool open);
 void mesh_core_set_always_discoverable(mesh_core_t *c, bool on);
+void mesh_core_set_pair_min_rssi(mesh_core_t *c, int8_t dbm);
 
 // Friend list (phone sync and NVS load). Upsert fails only when the list is full.
 bool mesh_core_friend_upsert(mesh_core_t *c, const mesh_friend_t *f);
@@ -179,20 +198,29 @@ const mesh_friend_t *mesh_core_friend_find(const mesh_core_t *c, const uint8_t i
 // Next friend event for the phone, oldest first. False when none are queued.
 bool mesh_core_take_friend_event(mesh_core_t *c, mesh_friend_event_t *out);
 
-void mesh_core_rx(mesh_core_t *c, const uint8_t *frame, size_t len, uint32_t now_ms, mesh_send_fn send,
-                  void *ctx);
+// `rssi` is the frame's signal strength in dBm, or MESH_RSSI_UNKNOWN.
+void mesh_core_rx(mesh_core_t *c, const uint8_t *frame, size_t len, int8_t rssi, uint32_t now_ms,
+                  mesh_send_fn send, void *ctx);
 // `prompt_allowed` is mesh_core_prompt_gate() for the current nav view.
 void mesh_core_tick(mesh_core_t *c, uint32_t now_ms, bool prompt_allowed, mesh_send_fn send, void *ctx);
 
-// Riders in range whose look is public and who are not friends yet: the friend menu list (U2).
-// Pointers are into the peer table; valid until the next call into the core.
-size_t mesh_core_nearby(const mesh_core_t *c, uint32_t now_ms, const mesh_peer_t **out, size_t cap);
+// The pair card (U2): riders who are not friends yet and are either in Add friend and close enough,
+// or already asking us (waiting riders come first, whatever their signal). Nearest first, with
+// hysteresis. Pointers are into the peer table; valid until the next call into the core.
+size_t mesh_core_candidates(mesh_core_t *c, uint32_t now_ms, const mesh_peer_t **out, size_t cap);
 
-// The rider chose `pseudonym` in the menu (U3). False if the slot is busy, the list is full, the
-// peer is unknown or already a friend.
+// True when `p` is asking us to be friends (U4, "Ann is waiting").
+bool mesh_core_peer_waiting(const mesh_peer_t *p);
+
+// The rider held the ring on `pseudonym`'s card (U3/U4): accepts if they are asking us, otherwise
+// asks them, replacing any request of ours still unanswered. False if nothing could be sent.
+bool mesh_core_hold(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN], uint32_t now_ms, mesh_send_fn send,
+                    void *ctx);
+
+// The two halves of mesh_core_hold. `request` fails if the slot is busy with another rider, the
+// list is full, or the peer is unknown or already a friend.
 bool mesh_core_request(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN], uint32_t now_ms,
                        mesh_send_fn send, void *ctx);
-// The rider held the ring on the incoming-request prompt for `pseudonym` (U4).
 void mesh_core_accept(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN], uint32_t now_ms,
                       mesh_send_fn send, void *ctx);
 

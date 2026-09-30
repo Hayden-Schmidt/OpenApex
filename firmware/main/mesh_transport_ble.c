@@ -40,7 +40,7 @@ static uint32_t s_frame_until_ms;
 
 // -- receive (NimBLE host task) ------------------------------------------------------------------
 
-static void on_report(const uint8_t *data, uint8_t len) {
+static void on_report(const uint8_t *data, uint8_t len, int8_t rssi) {
     // Walk the AD structures for our manufacturer data.
     for (size_t i = 0; i + 1 < len;) {
         const uint8_t ad_len = data[i];
@@ -48,7 +48,7 @@ static void on_report(const uint8_t *data, uint8_t len) {
         const uint8_t *ad = &data[i + 1];
         if (ad[0] == BLE_HS_ADV_TYPE_MFG_DATA && ad_len > AD_HEADER_LEN - 1 &&
             (ad[1] | ad[2] << 8) == MESH_COMPANY_ID) {
-            s_rx(&ad[3], (size_t)ad_len - 3u);
+            s_rx(&ad[3], (size_t)ad_len - 3u, rssi);
             return;
         }
         i += 1u + ad_len;
@@ -59,7 +59,7 @@ static int gap_cb(struct ble_gap_event *event, void *arg) {
     (void)arg;
     if (event->type == BLE_GAP_EVENT_EXT_DISC) {
         const struct ble_gap_ext_disc_desc *d = &event->ext_disc;
-        if (d->data_status == BLE_GAP_EXT_ADV_DATA_STATUS_COMPLETE) on_report(d->data, d->length_data);
+        if (d->data_status == BLE_GAP_EXT_ADV_DATA_STATUS_COMPLETE) on_report(d->data, d->length_data, d->rssi);
     }
     // DISC_COMPLETE / ADV_COMPLETE need nothing: poll() restarts whatever stopped.
     return 0;

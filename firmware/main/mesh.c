@@ -37,6 +37,7 @@ enum { OP_UPSERT = 1, OP_REMOVE = 2, OP_CLEAR = 3, OP_CURSOR = 4 };
 
 typedef struct {
     uint8_t len;
+    int8_t rssi;
     uint8_t data[MESH_FRAME_MAX];
 } rx_frame_t;
 
@@ -136,10 +137,11 @@ static void send_frame(const uint8_t *frame, size_t len, void *ctx) {
 }
 
 // Transport context: copy out and return.
-static void on_recv(const uint8_t *data, size_t len) {
+static void on_recv(const uint8_t *data, size_t len, int8_t rssi) {
     if (len == 0 || len > MESH_FRAME_MAX) return;
     rx_frame_t f;
     f.len = (uint8_t)len;
+    f.rssi = rssi;
     memcpy(f.data, data, len);
     xQueueSend(s_rx_queue, &f, 0);
 }
@@ -231,23 +233,23 @@ static void mesh_task(void *arg) {
 #ifdef MESH_BENCH_TEST
                 ESP_LOGI(TAG, "rx type %u seq %u len %u%s", f.data[3], f.data[12] | f.data[13] << 8, f.len,
                          first_sighting(f.data, f.len) ? "" : " dup");
-                if (1) mesh_core_rx(&s_core, f.data, f.len, now, send_frame, NULL); else
+                if (1) mesh_core_rx(&s_core, f.data, f.len, f.rssi, now, send_frame, NULL); else
 #endif
 #if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
                 if (f.len > 13 && is_handshake(f.data[3])) {
                     ESP_LOGI(TAG, "hs rx type %u seq %u", f.data[3], f.data[12] | f.data[13] << 8);
                 }
 #endif
-                if (first_sighting(f.data, f.len)) mesh_core_rx(&s_core, f.data, f.len, now, send_frame, NULL);
+                if (first_sighting(f.data, f.len)) mesh_core_rx(&s_core, f.data, f.len, f.rssi, now, send_frame, NULL);
             } while (xQueueReceive(s_rx_queue, &f, 0) == pdTRUE);
         }
         uint8_t id[MESH_RIDER_ID_LEN];
         if (s_menu_open != menu_open) {
             menu_open = s_menu_open;
-            mesh_core_set_menu_open(&s_core, menu_open, now);
+            mesh_core_set_menu_open(&s_core, menu_open);
         }
         while (xQueueReceive(s_request_queue, id, 0) == pdTRUE) {
-            if (!mesh_core_request(&s_core, id, now, send_frame, NULL)) ESP_LOGW(TAG, "request refused");
+            if (!mesh_core_hold(&s_core, id, now, send_frame, NULL)) ESP_LOGW(TAG, "hold refused");
         }
         while (xQueueReceive(s_accept_queue, id, 0) == pdTRUE) {
             mesh_core_accept(&s_core, id, now, send_frame, NULL);
@@ -342,22 +344,30 @@ void mesh_request_accept(const uint8_t id[MESH_RIDER_ID_LEN]) {
 
 void mesh_set_menu_open(bool open) { s_menu_open = open; }
 
-void mesh_request_friend(const uint8_t id[MESH_RIDER_ID_LEN]) {
+void mesh_hold_friend(const uint8_t id[MESH_RIDER_ID_LEN]) {
     if (s_ready) xQueueSend(s_request_queue, id, 0);
 }
 
-size_t mesh_get_nearby(mesh_nearby_t *out, size_t cap) {
+size_t mesh_get_candidates(mesh_candidate_t *out, size_t cap) {
     if (!s_ready) return 0;
     const mesh_peer_t *peers[MESH_MAX_PEERS];
     if (cap > MESH_MAX_PEERS) cap = MESH_MAX_PEERS;
     lock();
-    const size_t n = mesh_core_nearby(&s_core, now_ms(), peers, cap);
+    const size_t n = mesh_core_candidates(&s_core, now_ms(), peers, cap);
     for (size_t i = 0; i < n; i++) {
         memcpy(out[i].id, peers[i]->id, MESH_RIDER_ID_LEN);
         out[i].look = peers[i]->look;
+        out[i].waiting = mesh_core_peer_waiting(peers[i]);
+        out[i].rssi_dbm = peers[i]->has_rssi ? (int8_t)peers[i]->rssi_dbm : MESH_RSSI_UNKNOWN;
     }
     unlock();
     return n;
+}
+
+void mesh_debug_set_pair_min_rssi(int8_t dbm) {
+    lock();
+    mesh_core_set_pair_min_rssi(&s_core, dbm);
+    unlock();
 }
 
 bool mesh_debug_make_identity(void) {
