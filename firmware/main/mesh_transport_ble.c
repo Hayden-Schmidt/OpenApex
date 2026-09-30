@@ -115,6 +115,7 @@ static void ble_send(const uint8_t *frame, size_t len) {
     if (len > MESH_FRAME_MAX || len > 251u - AD_HEADER_LEN) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (s_count == OUTBOX_LEN) { // drop the oldest: every frame type is re-sent periodically
+        ESP_LOGW(TAG, "outbox full: dropped type %u", s_outbox[s_head].data[3]);
         s_head = (s_head + 1u) % OUTBOX_LEN;
         s_count--;
     }

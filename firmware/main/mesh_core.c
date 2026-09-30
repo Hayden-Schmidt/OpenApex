@@ -18,6 +18,7 @@ void mesh_core_init(mesh_core_t *c, uint32_t session_seed) {
     memset(c, 0, sizeof(*c));
     c->enabled = true;
     c->session = session_seed;
+    c->rng = session_seed ^ 0xA5A5A5A5u;
     c->always_discoverable = MESH_ALWAYS_DISCOVERABLE != 0;
     // The pseudonym's random half is drawn once per boot (04.1.3); a distinct mix from `session` so the
     // two are not the same number on air.
@@ -225,10 +226,31 @@ static void send_keys(mesh_core_t *c, uint8_t type, const uint8_t target[MESH_RI
     if (n) send(buf, n, ctx);
 }
 
-static void set_hs(mesh_peer_t *p, mesh_hs_t hs, uint32_t now_ms) {
+static uint32_t jitter(mesh_core_t *c) {
+    c->rng = c->rng * 1664525u + 1013904223u;
+    return (c->rng >> 16) % MESH_RETRY_JITTER_MS;
+}
+
+static bool due(uint32_t now_ms, uint32_t at_ms) { return (int32_t)(now_ms - at_ms) >= 0; }
+
+// The rider acted (menu pick, hold ring): the caller sends the first frame now, retries follow.
+static void set_hs(mesh_core_t *c, mesh_peer_t *p, mesh_hs_t hs, uint32_t base_retry_ms, uint32_t now_ms) {
     p->hs = hs;
     p->tries = 1;
-    p->last_try_ms = now_ms;
+    p->next_try_ms = now_ms + base_retry_ms + jitter(c);
+}
+
+// A frame from the peer triggered this step: the first frame goes out from the tick, after the
+// peer's own advert window (MESH_REPLY_DELAY_MS).
+static void defer_hs(mesh_peer_t *p, mesh_hs_t hs, uint32_t now_ms) {
+    p->hs = hs;
+    p->tries = 0;
+    p->next_try_ms = now_ms + MESH_REPLY_DELAY_MS;
+}
+
+static void defer_ack(mesh_peer_t *p, uint32_t now_ms) {
+    p->ack_due = true;
+    p->ack_at_ms = now_ms + MESH_REPLY_DELAY_MS;
 }
 
 static void close_prompt(mesh_core_t *c) {
@@ -320,21 +342,17 @@ static void update_offset(mesh_core_t *c, mesh_peer_t *p, const mesh_pos_t *pos,
     p->off_ms = now_ms;
 }
 
-static void on_request(mesh_core_t *c, mesh_peer_t *p, uint32_t now_ms, mesh_send_fn send, void *ctx) {
+static void on_request(mesh_core_t *c, mesh_peer_t *p, uint32_t now_ms) {
     if (peer_friend(c, p) != MESH_NO_FRIEND) {
         // Already friends here but not there (their list was lost): our earlier consent stands, so
         // answer and let their side complete.
-        if (p->hs == MESH_HS_NONE) {
-            set_hs(p, MESH_HS_ACCEPT_SENT, now_ms);
-            send_keys(c, MESH_TYPE_FRIEND_ACCEPT, p->id, send, ctx);
-        }
+        if (p->hs == MESH_HS_NONE) defer_hs(p, MESH_HS_ACCEPT_SENT, now_ms);
         return;
     }
     switch (p->hs) {
     case MESH_HS_REQ_SENT:
         // Both riders picked each other at the same moment: each request is the other's consent.
-        set_hs(p, MESH_HS_ACCEPT_SENT, now_ms);
-        send_keys(c, MESH_TYPE_FRIEND_ACCEPT, p->id, send, ctx);
+        defer_hs(p, MESH_HS_ACCEPT_SENT, now_ms);
         break;
     case MESH_HS_NONE:
         if (c->prompt != MESH_PROMPT_NONE || c->friend_count >= MESH_MAX_FRIENDS) return; // they retry
@@ -351,6 +369,10 @@ static void on_request(mesh_core_t *c, mesh_peer_t *p, uint32_t now_ms, mesh_sen
 
 void mesh_core_rx(mesh_core_t *c, const uint8_t *frame, size_t len, uint32_t now_ms, mesh_send_fn send,
                   void *ctx) {
+    // Nothing is sent from here: every reply waits for the tick (MESH_REPLY_DELAY_MS). The
+    // parameters stay so a later frame type can answer inline if it ever needs to.
+    (void)send;
+    (void)ctx;
     mesh_header_t h;
     if (!c->enabled || !c->has_identity || !mesh_decode_header(frame, len, &h)) return;
     if (id_eq(h.sender, c->pseud)) return; // an echo of our own frame
@@ -375,7 +397,7 @@ void mesh_core_rx(mesh_core_t *c, const uint8_t *frame, size_t len, uint32_t now
         mesh_peer_t *p = peer_find(c, h.sender);
         if (p == NULL) return; // not heard a HELLO yet: stay silent, their retries will land
         p->heard_ms = now_ms;
-        on_request(c, p, now_ms, send, ctx);
+        on_request(c, p, now_ms);
         break;
     }
     case MESH_TYPE_FRIEND_ACCEPT: {
@@ -391,21 +413,31 @@ void mesh_core_rx(mesh_core_t *c, const uint8_t *frame, size_t len, uint32_t now
             lapse(c, p); // list full
             return;
         }
-        set_hs(p, MESH_HS_KEYS_SENT, now_ms);
-        send_keys(c, MESH_TYPE_FRIEND_KEYS, p->id, send, ctx);
+        // Their repeated ACCEPT means our KEYS has not landed: answer again, after their window.
+        defer_hs(p, MESH_HS_KEYS_SENT, now_ms);
         break;
     }
     case MESH_TYPE_FRIEND_KEYS: {
         uint8_t target[MESH_RIDER_ID_LEN], rider_id[MESH_RIDER_ID_LEN], key[MESH_KEY_LEN];
         if (!mesh_decode_keys(frame, len, target, rider_id, key) || !id_eq(target, c->pseud)) return;
         mesh_peer_t *p = peer_find(c, h.sender);
-        if (p == NULL || (p->hs != MESH_HS_ACCEPT_SENT && p->hs != MESH_HS_KEYS_SENT)) return;
+        if (p == NULL) return;
+        if (p->hs != MESH_HS_ACCEPT_SENT && p->hs != MESH_HS_KEYS_SENT) {
+            // Already done here and our ACK was lost: they keep resending KEYS until it lands. Only
+            // a friend we already hold, with the same key, gets an answer; nothing is changed.
+            const mesh_friend_t *f = mesh_core_friend_find(c, rider_id);
+            if (p->hs == MESH_HS_NONE && f != NULL && memcmp(f->key, key, MESH_KEY_LEN) == 0) {
+                p->heard_ms = now_ms;
+                defer_ack(p, now_ms);
+            }
+            return;
+        }
         p->heard_ms = now_ms;
         if (!complete(c, p, rider_id, key)) {
             lapse(c, p);
             return;
         }
-        send_target(c, MESH_TYPE_FRIEND_ACK, p->id, send, ctx);
+        defer_ack(p, now_ms);
         if (p->hs == MESH_HS_ACCEPT_SENT) p->hs = MESH_HS_NONE; // KEYS_SENT keeps retrying until their ACK
         break;
     }
@@ -474,7 +506,7 @@ bool mesh_core_request(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN
         peer_friend(c, p) != MESH_NO_FRIEND) {
         return false;
     }
-    set_hs(p, MESH_HS_REQ_SENT, now_ms);
+    set_hs(c, p, MESH_HS_REQ_SENT, MESH_REQUEST_RETRY_MS, now_ms);
     c->prompt = MESH_PROMPT_WAITING;
     memcpy(c->prompt_id, p->id, MESH_RIDER_ID_LEN);
     c->prompt_look = p->look;
@@ -488,7 +520,7 @@ void mesh_core_accept(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN]
     if (c->prompt != MESH_PROMPT_OFFER || !id_eq(pseudonym, c->prompt_id)) return;
     mesh_peer_t *p = peer_find(c, pseudonym);
     if (p == NULL || p->hs != MESH_HS_REQ_RECV) return;
-    set_hs(p, MESH_HS_ACCEPT_SENT, now_ms);
+    set_hs(c, p, MESH_HS_ACCEPT_SENT, MESH_ACCEPT_RETRY_MS, now_ms);
     c->prompt = MESH_PROMPT_WAITING;
     send_keys(c, MESH_TYPE_FRIEND_ACCEPT, p->id, send, ctx);
 }
@@ -539,36 +571,41 @@ void mesh_core_tick(mesh_core_t *c, uint32_t now_ms, bool prompt_allowed, mesh_s
 
     uint8_t buf[MESH_FRAME_MAX];
     mesh_look_t look;
-    if (now_ms - c->last_hello_ms >= MESH_HELLO_PERIOD_MS || c->last_hello_ms == 0) {
-        c->last_hello_ms = now_ms ? now_ms : 1;
+    if (!c->hello_started || due(now_ms, c->next_hello_ms)) {
+        c->hello_started = true;
+        c->next_hello_ms = now_ms + MESH_HELLO_PERIOD_MS - MESH_RETRY_JITTER_MS / 2 + jitter(c);
         own_look(c, &look);
         const mesh_header_t h = next_header(c, MESH_TYPE_HELLO);
         const size_t n = mesh_encode_hello(&h, discoverable(c, now_ms) ? &look : NULL, 0, buf, sizeof(buf));
         if (n) send(buf, n, ctx);
     }
 
-    // Handshake retries: frames are adverts and can be lost.
+    // Handshake frames: deferred replies and retries (frames are adverts and can be lost).
     for (size_t i = 0; i < MESH_MAX_PEERS; i++) {
         mesh_peer_t *p = &c->peers[i];
         if (!p->used) continue;
+        if (p->ack_due && due(now_ms, p->ack_at_ms)) {
+            p->ack_due = false;
+            send_target(c, MESH_TYPE_FRIEND_ACK, p->id, send, ctx);
+        }
         switch (p->hs) {
         case MESH_HS_REQ_SENT:
             if (c->prompt != MESH_PROMPT_WAITING || !id_eq(c->prompt_id, p->id)) {
                 p->hs = MESH_HS_NONE; // the page closed: the request lapsed
-            } else if (now_ms - p->last_try_ms >= MESH_REQUEST_RETRY_MS) {
-                p->last_try_ms = now_ms;
+            } else if (due(now_ms, p->next_try_ms)) {
+                p->next_try_ms = now_ms + MESH_REQUEST_RETRY_MS + jitter(c);
                 send_target(c, MESH_TYPE_FRIEND_REQUEST, p->id, send, ctx);
             }
             break;
         case MESH_HS_ACCEPT_SENT:
         case MESH_HS_KEYS_SENT:
-            if (now_ms - p->last_try_ms < MESH_ACCEPT_RETRY_MS) break;
+            if (!due(now_ms, p->next_try_ms)) break;
             if (p->tries >= MESH_ACCEPT_TRIES) {
                 lapse(c, p);
                 break;
             }
             p->tries++;
-            p->last_try_ms = now_ms;
+            p->next_try_ms = now_ms + MESH_ACCEPT_RETRY_MS + jitter(c);
             send_keys(c, p->hs == MESH_HS_ACCEPT_SENT ? MESH_TYPE_FRIEND_ACCEPT : MESH_TYPE_FRIEND_KEYS, p->id, send,
                       ctx);
             break;
@@ -589,8 +626,8 @@ void mesh_core_tick(mesh_core_t *c, uint32_t now_ms, bool prompt_allowed, mesh_s
 
     // Position only while a friend is actually listening, and only a fix we'd trust ourselves.
     if (!c->has_own_pos || !fresh(now_ms, c->own_pos_ms, MESH_OWN_POS_MAX_AGE_MS)) return;
-    if (now_ms - c->last_pos_ms < MESH_POS_PERIOD_MS || !friend_near) return;
-    c->last_pos_ms = now_ms;
+    if (!due(now_ms, c->next_pos_ms) || !friend_near) return;
+    c->next_pos_ms = now_ms + MESH_POS_PERIOD_MS - MESH_RETRY_JITTER_MS / 2 + jitter(c);
     const mesh_header_t h = next_header(c, MESH_TYPE_POS);
     const size_t n = mesh_encode_pos(&h, c->self.key, c->session, &c->own_pos, (uint16_t)(now_ms - c->own_pos_ms), 0,
                                      buf, sizeof(buf));

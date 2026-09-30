@@ -117,8 +117,16 @@ static void save_friends(void) {
 
 // -- radio ---------------------------------------------------------------------------------------
 
+#if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
+// Handshake frames only (REQUEST, ACCEPT, KEYS, ACK): the rest are periodic and would flood the log.
+static bool is_handshake(uint8_t type) { return type == 2 || type == 3 || type == 5 || type == 6; }
+#endif
+
 static void send_frame(const uint8_t *frame, size_t len, void *ctx) {
     (void)ctx;
+#if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
+    if (is_handshake(frame[3])) ESP_LOGI(TAG, "hs tx type %u seq %u", frame[3], frame[12] | frame[13] << 8);
+#endif
 #ifdef MESH_BENCH_TEST
     ESP_LOGI(TAG, "tx type %u seq %u len %u", frame[3], frame[12] | frame[13] << 8, (unsigned)len);
 #endif
@@ -224,6 +232,11 @@ static void mesh_task(void *arg) {
                 ESP_LOGI(TAG, "rx type %u seq %u len %u%s", f.data[3], f.data[12] | f.data[13] << 8, f.len,
                          first_sighting(f.data, f.len) ? "" : " dup");
                 if (1) mesh_core_rx(&s_core, f.data, f.len, now, send_frame, NULL); else
+#endif
+#if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
+                if (f.len > 13 && is_handshake(f.data[3])) {
+                    ESP_LOGI(TAG, "hs rx type %u seq %u", f.data[3], f.data[12] | f.data[13] << 8);
+                }
 #endif
                 if (first_sighting(f.data, f.len)) mesh_core_rx(&s_core, f.data, f.len, now, send_frame, NULL);
             } while (xQueueReceive(s_rx_queue, &f, 0) == pdTRUE);

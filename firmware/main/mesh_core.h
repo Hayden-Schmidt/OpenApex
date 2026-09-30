@@ -29,6 +29,12 @@ extern "C" {
 #define MESH_PROMPT_DONE_MS 3000u     // "now friends" confirmation before the page closes
 #define MESH_REQUEST_RETRY_MS 2000u
 #define MESH_ACCEPT_RETRY_MS 1000u
+// A reply is never sent the moment its trigger arrives: the sender is still advertising that
+// frame for up to 300 ms (FRAME_WINDOW_MS, mesh_transport_ble.c), and a C3 hears little while its
+// own advert is on air. Replies wait past that window, and retries and periodic frames (HELLO, POS)
+// get jitter so two terminals on the same period cannot stay phase-locked onto each other's adverts.
+#define MESH_REPLY_DELAY_MS 400u
+#define MESH_RETRY_JITTER_MS 400u
 #define MESH_ACCEPT_TRIES 5u
 #define MESH_LOOK_PUSH_MS 1000u
 #define MESH_LOOK_PUSH_TRIES 3u
@@ -78,7 +84,9 @@ typedef struct {
     // Handshake.
     uint8_t hs;                    // mesh_hs_t
     uint8_t tries;
-    uint32_t last_try_ms;
+    uint32_t next_try_ms;          // when the next handshake frame is due
+    bool ack_due;                  // a FRIEND_ACK is owed at ack_at_ms
+    uint32_t ack_at_ms;
 } mesh_peer_t;
 
 typedef enum {
@@ -113,6 +121,7 @@ typedef struct {
     mesh_look_t look;                       // our own; name comes from `self`
     uint32_t session;
     uint16_t seq;
+    uint32_t rng;                           // retry jitter only; not security-relevant
 
     bool always_discoverable;
     bool menu_open;
@@ -142,8 +151,9 @@ typedef struct {
     uint32_t last_look_ms;
 
     uint32_t last_tick_ms;
-    uint32_t last_hello_ms;
-    uint32_t last_pos_ms;
+    bool hello_started;
+    uint32_t next_hello_ms;      // periodic frames are jittered too (MESH_RETRY_JITTER_MS)
+    uint32_t next_pos_ms;
     bool ticked;
 
     mesh_friend_event_t events[MESH_FRIEND_EVENTS];
