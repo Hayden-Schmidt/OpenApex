@@ -1,6 +1,5 @@
 #include "mesh.h"
 
-#include "avatar_store.h"
 #include "ble_link.h"
 #include "settings.h"
 
@@ -32,7 +31,6 @@ static const char *TAG = "mesh";
 #define REQUEST_QUEUE_LEN 2
 #define TASK_PERIOD_MS 50
 #define DEDUP_LEN 16 // BLE repeats each advert a few times, and dual-radio boards hear frames twice
-#define LOOK_REFRESH_MS 10000u // the avatar upload has no generation counter; re-read it this often
 
 // Friends characteristic ops (docs/reference/rider_mesh_v1.md).
 enum { OP_UPSERT = 1, OP_REMOVE = 2, OP_CLEAR = 3, OP_CURSOR = 4 };
@@ -91,28 +89,30 @@ static size_t nvs_get(const char *key, void *buf, size_t cap) {
     return err == ESP_OK ? len : 0;
 }
 
+// Scratch for the whole friend list as NVS records. Shared by load (mesh_init, before any task runs)
+// and save (mesh task, mutex held), which never overlap.
+static uint8_t s_list_buf[MESH_MAX_FRIENDS * MESH_FRIEND_RECORD_LEN];
+
 static void load_stored(void) {
     uint8_t buf[MESH_IDENTITY_MAX_LEN];
     mesh_identity_t id;
     const size_t len = nvs_get(IDENT_KEY, buf, sizeof(buf));
     if (len > 0 && mesh_identity_decode(buf, len, &id)) mesh_core_set_identity(&s_core, &id);
 
-    static uint8_t list[MESH_MAX_FRIENDS * MESH_FRIEND_RECORD_LEN];
-    const size_t n = nvs_get(FRIENDS_KEY, list, sizeof(list)) / MESH_FRIEND_RECORD_LEN;
+    const size_t n = nvs_get(FRIENDS_KEY, s_list_buf, sizeof(s_list_buf)) / MESH_FRIEND_RECORD_LEN;
     for (size_t i = 0; i < n; i++) {
         mesh_friend_t f;
-        if (mesh_friend_decode(&list[i * MESH_FRIEND_RECORD_LEN], &f)) mesh_core_friend_upsert(&s_core, &f);
+        if (mesh_friend_decode(&s_list_buf[i * MESH_FRIEND_RECORD_LEN], &f)) mesh_core_friend_upsert(&s_core, &f);
     }
     ESP_LOGI(TAG, "loaded identity=%d friends=%u", s_core.has_identity, (unsigned)s_core.friend_count);
 }
 
 // Called with the mutex held; the list is at most ~2 KB, so one blob write.
 static void save_friends(void) {
-    static uint8_t list[MESH_MAX_FRIENDS * MESH_FRIEND_RECORD_LEN];
     for (size_t i = 0; i < s_core.friend_count; i++) {
-        mesh_friend_encode(&s_core.friends[i], &list[i * MESH_FRIEND_RECORD_LEN]);
+        mesh_friend_encode(&s_core.friends[i], &s_list_buf[i * MESH_FRIEND_RECORD_LEN]);
     }
-    nvs_put(FRIENDS_KEY, list, s_core.friend_count * MESH_FRIEND_RECORD_LEN);
+    nvs_put(FRIENDS_KEY, s_list_buf, s_core.friend_count * MESH_FRIEND_RECORD_LEN);
 }
 
 // -- radio ---------------------------------------------------------------------------------------
@@ -161,6 +161,7 @@ static bool first_sighting(const uint8_t *frame, size_t len) {
 }
 
 // -- own look ------------------------------------------------------------------------------------
+// Avatar number and accent only: custom art stays on this terminal (POC, blueprint D1).
 
 static void refresh_look(void) {
     const terminal_settings_t *s = settings_get();
@@ -168,8 +169,6 @@ static void refresh_look(void) {
     memset(&look, 0, sizeof(look));
     look.avatar = s->avatar;
     look.accent_rgb = s->accent_rgb;
-    look.has_custom = s->avatar == SETTINGS_AVATAR_CUSTOM && avatar_store_read(look.art);
-    if (!look.has_custom) memset(look.art, 0, sizeof(look.art));
     lock();
     mesh_core_set_look(&s_core, &look);
     mesh_core_set_enabled(&s_core, s->mesh_enabled != 0);
@@ -205,7 +204,6 @@ static void mesh_task(void *arg) {
     if (!any) vTaskDelete(NULL);
     s_ready = true;
     uint32_t look_gen = settings_generation() - 1u;
-    uint32_t look_at = 0;
     uint32_t saved_gen = s_core.friends_generation;
     bool menu_open = false;
 #if defined(OPENAPEX_MESH_CONSOLE) && OPENAPEX_MESH_CONSOLE
@@ -215,9 +213,8 @@ static void mesh_task(void *arg) {
     for (;;) {
         const bool got = xQueueReceive(s_rx_queue, &f, pdMS_TO_TICKS(TASK_PERIOD_MS)) == pdTRUE;
         const uint32_t now = now_ms();
-        if (settings_generation() != look_gen || now - look_at >= LOOK_REFRESH_MS) {
+        if (settings_generation() != look_gen) {
             look_gen = settings_generation();
-            look_at = now;
             refresh_look();
         }
         lock();

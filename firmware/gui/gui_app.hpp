@@ -76,6 +76,9 @@ void gui_app_set_friend_accept_handler(gui_friend_accept_cb_t cb);
 #define GUI_AVATAR_BYTES 80
 void gui_app_set_avatar(const uint8_t *a2);
 
+// The uploaded avatar set above, or NULL. For drawing our own character on other screens.
+const uint8_t *gui_app_custom_avatar(void);
+
 #ifdef __cplusplus
 }
 

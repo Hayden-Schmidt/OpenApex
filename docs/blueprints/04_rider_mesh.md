@@ -216,8 +216,10 @@ friendship.
 ### 04.1.5 LOOK frame: look on rediscovery or change, friends only
 
 A friend's look used to come from their public HELLO (`MESH_FRIEND_EVENT_UPDATED`). It now comes
-from `LOOK` (0x07): avatar, accent and name (about 17 bytes), plus the 80-byte custom art only when
-the look has it, under AES-CCM with our own `rider_key`, so only friends can read it.
+from `LOOK` (0x07): avatar, accent and name (about 17 bytes), under AES-CCM with our own `rider_key`,
+so only friends can read it. **POC: no custom art on the mesh** (deferred feature D1): the look
+block's `has_custom` byte is always 0, and a rider who chose a custom avatar appears to others as
+the default preset in their accent.
 
 **Event-driven, no periodic send and no request frame:**
 
@@ -610,6 +612,89 @@ can be shown a replayed older instruction until the leader's next resend superse
 
 ---
 
+## Deferred features
+
+Cut from the POC to get a working product, but wanted in the finished one. Each entry records what
+is known so it can be picked up without re-deriving it.
+
+### D1 — Custom avatar art on the mesh (later dev; plan it with the S3)
+
+**Status (2026-09-30): removed from the mesh for the POC.** Friends, nearby riders, the friend prompt
+and compass markers show stock characters only. A rider who chose "custom" appears to everyone
+else as the default preset (`SETTINGS_AVATAR_DEFAULT_PRESET`) in their own accent.
+
+**What still exists, untouched:**
+
+- The rider's own upload: `avatar_store` (80 bytes in NVS), the avatar BLE characteristic, and the
+  phone's editor. The terminal still draws the rider's own custom avatar on its splash and on its
+  own side of the friend prompt (`gui_app_custom_avatar()`).
+- Wire and record space kept so the feature can return without a protocol version bump:
+  - Look block (HELLO and `LOOK`): the `has_custom` byte is always sent as 0. On receipt a 1 is
+    accepted and the 80 art bytes that follow are skipped (`get_look` in `mesh_proto.c`, covered by
+    `mesh_test`).
+  - 122-byte friend record: flags bit0 and bytes 42-121 are written as zero and ignored on decode,
+    so the phone's Kotlin `RiderMesh` record is unchanged.
+
+**Why it was cut.**
+
+1. **RAM.** Every `mesh_look_t` carried 80 bytes of art whether or not it was used: 16 friend slots,
+   8 peer slots, the event queue, the prompt and our own look. Removing it took `s_core` from 4,268
+   to 2,040 bytes (`sizeof(mesh_core_t)`, measured on the host). With about 7 KB of free heap on the
+   C3 that was the largest single saving available.
+2. **Resolution mismatch.** Stock characters are 32×32 at 4 bits per pixel with a themed palette
+   (512 bytes each, in flash, `gui/avatars_data.h`), plus a 12×8 marker version. Custom uploads are
+   16×16 at 2 bits per pixel (64 bytes), drawn scaled ×2, plus an 8×8 marker (16 bytes). A custom
+   rider looks coarser than everyone else, which the owner does not want. The 80-byte size was most
+   likely chosen so the whole look fitted one frame in the v1 public HELLO; no document records why.
+
+**Target for the finished feature.**
+
+- **Match stock resolution:** 32×32 main art plus a 12×8 marker, the same sizes as the presets.
+  - 2 bpp, single tint (today's custom format, scaled up): 256 + 24 = **280 bytes**.
+  - 4 bpp with a small palette (like the presets): 512 + 48 + palette, about **570 bytes**.
+  - Open decision for the owner: 2 bpp is enough for a tinted silhouette and costs half.
+- **Art travels only encrypted to friends**, never in the clear HELLO. Art is a stable fingerprint
+  (§04.1.2), so a stranger's art is fetched only while both menus are open, and only for the rider
+  selected.
+
+**Issues to solve, with a proposed answer to each.**
+
+| # | Issue | Proposed answer |
+|---|---|---|
+| 1 | Does not fit one frame. `MESH_FRAME_MAX` is 250 bytes; a `LOOK` with 280 bytes of art is about 330. | Keep `LOOK` small and add a 4-byte **art hash** to it. A receiver whose cached hash differs asks for the art, which comes as 2 `ART` fragments (a new type, encrypted like `LOOK`, fragment index in the body). Art changes rarely, so it is almost never sent. |
+| 2 | Lost fragments. | Reassemble into one ~300-byte buffer per terminal (one peer at a time is enough). Retry the missing fragment on the `MESH_ACCEPT_TRIES` shape; drop a half-assembled set after a timeout. |
+| 3 | RAM for friends and peers. | RAM holds **marker art only** (24 bytes at 2 bpp) per friend and per peer. Full art lives in NVS per friend and is read when a full-size surface draws (the prompt, a future "friend nearby" popup). One full-art RAM slot for the rider on the prompt. |
+| 4 | NVS space. The `nvs` partition is 20 KB (`partitions.csv`, 0x5000), shared with settings, identity, heading and odometer. 16 × 280 bytes is 4.5 KB more. | One blob per friend (`fa00`..`fa15`) rather than a bigger friend-list blob, so rewriting the list does not rewrite the art. Measure NVS use first; if the partition must grow, that is a flash re-layout, so decide before shipping. |
+| 5 | The friend record has no version byte, so changing its 122-byte length breaks the phone. | Leave the 122-byte record alone and sync art to the phone on a separate path, or define record v2 with a leading version byte and bump the friends characteristic. Decide with the Phase 3 phone work. |
+| 6 | Upload path: 280 bytes exceeds a default 23-byte ATT MTU in one write. | Check the phone negotiates MTU ≥ 283, else use prepared (long) writes. The phone editor must produce 32×32. |
+| 7 | GUI. | `avatar_art_draw` gains a 32×32 A2 path at ×1 and `avatar_art_draw_small` a 12×8 A2 path, replacing the scaled 16×16 and the centred 8×8. `friend_markers.cpp` compares an art hash instead of bytes. |
+| 8 | Airtime on the C3 (about 3.3 frames/s budget). | With the hash scheme, art costs 2 frames per friend per art change, not per rediscovery. Negligible. |
+
+**The S3.** Most of the pressure above is a C3 problem.
+
+- The S3 has 512 KB of SRAM, and PSRAM if the chosen module has it (for example N16R8), so holding
+  full art for every friend and peer in RAM is trivial.
+- ESP-NOW v2 carries up to 1,470 bytes per frame (ESP-IDF 5.4 and later; confirm on the IDF in
+  use), so on an all-S3 path the full art fits one frame and issues 1 and 2 disappear. A mixed fleet
+  still has C3 leaves on BLE, so the fragmented `ART` path is still needed; build it once and let
+  ESP-NOW v2 carry the same content as a single frame.
+- Recommendation: implement D1 as part of the 04.4 / S3 work, with the phone editor change in
+  Phase 3 or alongside it.
+
+**Starting point.**
+
+1. Owner decides 2 bpp or 4 bpp, and whether stock and custom share one 32×32 format end to end.
+2. Change the phone editor and `avatar_store` to the new size (`AVATAR_STORE_BYTES`,
+   `GUI_AVATAR_BYTES`, `docs/reference/settings_and_avatar.md`) and the GUI draw paths (issue 7).
+   This alone fixes the rider's own splash and prompt, with no mesh change.
+3. Add the art hash to the `LOOK` body and the `ART` fragment type, with host tests in `mesh_test.c`
+   for fragmenting, a lost fragment and a hash mismatch.
+4. Per-friend art blobs in NVS, marker art in `mesh_look_t` (24 bytes), one full-art RAM slot.
+5. Phone sync of friends' art (issue 5), then the Kotlin fixtures.
+6. Measure heap and NVS on the C3 after each step. On the S3, re-run the boot heap probes first.
+
+---
+
 ## C3 airtime budget (04.1-04.3)
 
 About 3.3 frames/s total on BLE-only boards. Per terminal:
@@ -652,6 +737,7 @@ The mesh is a proof of concept: a working two-C3 demo beats a finished design. S
 | 5 | `close` flag and "alongside" marker (U12) | **Applied, replaced** | Nothing; the compass smooths in firmware instead (§04.1.6) | One field and one design surface |
 | 6 | 04.3 nav share | **Kept, but split into phases** | Nothing | Phase 1 (friending) is verified e2e before Phase 2 (group rides, then nav share) |
 | 7 | Simultaneous-request tie-break, the one-shot `RIDE_END` forward, and the other mesh edge cases | **Applied, sidelined to 04.4** (S3 hardware) | Edge-case handling | Two small special cases |
+| 8 | Custom avatar art on the mesh (deferred feature D1) | **Applied, flagged for later** (with the S3) | Other riders see a custom avatar as the default preset in the rider's accent; the rider's own terminal still shows it | 2,228 bytes of static RAM on the C3 (`s_core` 4,268 → 2,040), and the look always fits one frame |
 
 ## Decisions log
 

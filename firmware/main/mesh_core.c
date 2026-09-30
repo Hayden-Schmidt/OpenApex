@@ -9,8 +9,7 @@
 static bool id_eq(const uint8_t *a, const uint8_t *b) { return memcmp(a, b, MESH_RIDER_ID_LEN) == 0; }
 
 static bool look_eq(const mesh_look_t *a, const mesh_look_t *b) {
-    return a->avatar == b->avatar && a->accent_rgb == b->accent_rgb && strcmp(a->name, b->name) == 0 &&
-           a->has_custom == b->has_custom && (!a->has_custom || memcmp(a->art, b->art, MESH_ART_BYTES) == 0);
+    return a->avatar == b->avatar && a->accent_rgb == b->accent_rgb && strcmp(a->name, b->name) == 0;
 }
 
 static bool fresh(uint32_t now_ms, uint32_t at_ms, uint32_t max_age_ms) { return (now_ms - at_ms) <= max_age_ms; }

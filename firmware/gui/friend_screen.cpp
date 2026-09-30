@@ -212,12 +212,10 @@ void FriendScreen::set_prompt(const terminal_view_state_t &state) {
     const lv_color_t peer_accent = lv_color_hex(peer_.accent_rgb);
     const lv_color_t self_accent = lv_color_hex(self_.accent_rgb);
 
-    avatar_art_draw(peer_buf_, AVATAR_ART_PX, peer_.avatar, peer_.has_custom ? peer_.art : nullptr,
-                    peer_accent);
+    avatar_art_draw(peer_buf_, AVATAR_ART_PX, peer_.avatar, nullptr, peer_accent); // no mesh art (POC)
     avatar_art_describe(&peer_dsc_, peer_buf_, AVATAR_ART_PX, AVATAR_ART_PX);
     lv_image_set_src(peer_img_, &peer_dsc_);
-    avatar_art_draw(self_buf_, AVATAR_ART_PX, self_.avatar, self_.has_custom ? self_.art : nullptr,
-                    self_accent);
+    avatar_art_draw(self_buf_, AVATAR_ART_PX, self_.avatar, gui_app_custom_avatar(), self_accent);
     avatar_art_describe(&self_dsc_, self_buf_, AVATAR_ART_PX, AVATAR_ART_PX);
     lv_image_set_src(self_img_, &self_dsc_);
 

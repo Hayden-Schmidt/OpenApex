@@ -197,6 +197,8 @@ const void *gui_logo_src(void) {
     return &s_avatar;
 }
 
+const uint8_t *gui_app_custom_avatar(void) { return s_have_custom ? s_custom : nullptr; }
+
 void gui_app_set_avatar(const uint8_t *a2) {
     s_have_custom = a2 != nullptr;
     if (s_have_custom) memcpy(s_custom, a2, sizeof(s_custom));

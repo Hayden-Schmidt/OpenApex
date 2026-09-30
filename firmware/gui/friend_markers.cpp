@@ -23,8 +23,6 @@ struct Marker {
     int16_t bearing_deg;  // whole degrees, true
     uint8_t avatar;
     uint32_t accent;
-    bool has_custom;
-    uint8_t art8[MESH_ART8_BYTES];
     uint8_t buf[avatar_art_bytes(AVATAR_SMALL_W, AVATAR_SMALL_H)];
     lv_image_dsc_t img;
 };
@@ -35,8 +33,7 @@ bool s_show = false;
 bool s_dot = false;
 
 bool same_look(const Marker &m, const mesh_look_t &l) {
-    return m.avatar == l.avatar && m.accent == l.accent_rgb && m.has_custom == l.has_custom &&
-           (!l.has_custom || std::memcmp(m.art8, &l.art[MESH_ART8_OFFSET], MESH_ART8_BYTES) == 0);
+    return m.avatar == l.avatar && m.accent == l.accent_rgb;
 }
 
 } // namespace
@@ -61,10 +58,8 @@ bool friend_markers_update(const terminal_view_state_t &state) {
         if (same_look(m, f.look) && m.img.data != nullptr) continue;
         m.avatar = f.look.avatar;
         m.accent = f.look.accent_rgb;
-        m.has_custom = f.look.has_custom;
-        if (m.has_custom) std::memcpy(m.art8, &f.look.art[MESH_ART8_OFFSET], MESH_ART8_BYTES);
-        avatar_art_draw_small(m.buf, m.avatar, m.has_custom ? f.look.art : nullptr,
-                              lv_color_hex(m.accent));
+        // Friends carry no custom art in the POC: an uploaded avatar draws as the default preset.
+        avatar_art_draw_small(m.buf, m.avatar, nullptr, lv_color_hex(m.accent));
         avatar_art_describe(&m.img, m.buf, AVATAR_SMALL_W, AVATAR_SMALL_H);
         changed = true;
     }

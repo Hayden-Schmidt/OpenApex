@@ -51,12 +51,11 @@ bool mesh_decode_header(const uint8_t *buf, size_t len, mesh_header_t *out) {
 }
 
 // Look block, shared by HELLO (clear) and LOOK (encrypted): avatar | accent 3 | name_len | name |
-// has_custom | art 80 (if has_custom).
+// has_custom | art 80 (if has_custom). The POC always sends has_custom = 0 and skips art it
+// receives, so a later sender that includes art still decodes here.
 #define LOOK_MAX_LEN (6u + MESH_NAME_MAX + MESH_ART_BYTES)
 
-static size_t look_len(const mesh_look_t *look) {
-    return 6u + name_len(look->name) + (look->has_custom ? MESH_ART_BYTES : 0u);
-}
+static size_t look_len(const mesh_look_t *look) { return 6u + name_len(look->name); }
 
 static void put_look(uint8_t *p, const mesh_look_t *look) {
     const uint8_t n = name_len(look->name);
@@ -66,8 +65,7 @@ static void put_look(uint8_t *p, const mesh_look_t *look) {
     *p++ = n;
     memcpy(p, look->name, n);
     p += n;
-    *p++ = look->has_custom ? 1 : 0;
-    if (look->has_custom) memcpy(p, look->art, MESH_ART_BYTES);
+    *p = 0; // has_custom: no art in the POC
 }
 
 // `len` is exactly the bytes available; trailing bytes are malformed.
@@ -82,9 +80,7 @@ static bool get_look(const uint8_t *p, size_t len, mesh_look_t *out) {
     if (!get_name(&p[5], n, l.name)) return false;
     const uint8_t custom = p[5 + n];
     if (custom > 1) return false;
-    l.has_custom = custom == 1;
-    if (len != 6u + n + (l.has_custom ? MESH_ART_BYTES : 0u)) return false;
-    if (l.has_custom) memcpy(l.art, &p[6 + n], MESH_ART_BYTES);
+    if (len != 6u + n + (custom ? MESH_ART_BYTES : 0u)) return false;
     *out = l;
     return true;
 }
@@ -267,10 +263,9 @@ void mesh_friend_encode(const mesh_friend_t *f, uint8_t out[MESH_FRIEND_RECORD_L
     memcpy(&out[8], f->key, MESH_KEY_LEN);
     out[24] = f->look.avatar;
     put_rgb(&out[25], f->look.accent_rgb);
-    out[28] = f->look.has_custom ? MESH_FRIEND_FLAG_CUSTOM : 0;
+    out[28] = 0; // flags: never custom in the POC; the art bytes stay zero
     out[29] = name_len(f->look.name);
     memcpy(&out[30], f->look.name, out[29]);
-    if (f->look.has_custom) memcpy(&out[42], f->look.art, MESH_ART_BYTES);
 }
 
 bool mesh_friend_decode(const uint8_t in[MESH_FRIEND_RECORD_LEN], mesh_friend_t *out) {
@@ -280,9 +275,7 @@ bool mesh_friend_decode(const uint8_t in[MESH_FRIEND_RECORD_LEN], mesh_friend_t 
     memcpy(f.key, &in[8], MESH_KEY_LEN);
     f.look.avatar = in[24];
     f.look.accent_rgb = get_rgb(&in[25]);
-    f.look.has_custom = (in[28] & MESH_FRIEND_FLAG_CUSTOM) != 0;
-    if (!get_name(&in[30], in[29], f.look.name)) return false;
-    if (f.look.has_custom) memcpy(f.look.art, &in[42], MESH_ART_BYTES);
+    if (!get_name(&in[30], in[29], f.look.name)) return false; // flags and art are ignored (POC)
     *out = f;
     return true;
 }

@@ -40,12 +40,11 @@ static void test_ccm_rfc3610(void) {
 }
 
 static mesh_look_t look_of(uint8_t avatar, uint32_t rgb, bool custom) {
+    (void)custom; // no custom art on the mesh in the POC (blueprint D1)
     mesh_look_t l;
     memset(&l, 0, sizeof(l));
     l.avatar = avatar;
     l.accent_rgb = rgb;
-    l.has_custom = custom;
-    for (int i = 0; custom && i < (int)MESH_ART_BYTES; i++) l.art[i] = (uint8_t)i;
     return l;
 }
 
@@ -82,12 +81,13 @@ static void test_pseudonym(void) {
 
 static void test_hello_round_trip(void) {
     mesh_header_t h = {MESH_TYPE_HELLO, {1, 2, 3, 4, 5, 6, 7, 8}, 0x1234};
-    for (int custom = 0; custom < 2; custom++) {
-        mesh_look_t l = look_of(0xFF, 0x00FFE8, custom);
+    {
+        mesh_look_t l = look_of(0xFF, 0x00FFE8, false);
         strcpy(l.name, "Hayden");
         uint8_t buf[MESH_FRAME_MAX];
         const size_t n = mesh_encode_hello(&h, &l, 0, buf, sizeof(buf));
-        assert(n == MESH_HEADER_LEN + 2 + 6 + 6 + (custom ? MESH_ART_BYTES : 0));
+        assert(n == MESH_HEADER_LEN + 2 + 6 + 6);
+        assert(buf[n - 1] == 0); // has_custom is always 0
         mesh_header_t h2;
         mesh_look_t l2;
         bool has;
@@ -96,8 +96,12 @@ static void test_hello_round_trip(void) {
         assert(memcmp(h2.sender, h.sender, 8) == 0);
         assert(mesh_decode_hello(buf, n, &l2, &has, &caps) && has && caps == 0);
         assert(l2.avatar == l.avatar && l2.accent_rgb == l.accent_rgb && strcmp(l2.name, "Hayden") == 0);
-        assert(l2.has_custom == l.has_custom && (!custom || memcmp(l2.art, l.art, MESH_ART_BYTES) == 0));
         assert(!mesh_decode_hello(buf, n - 1, &l2, &has, &caps)); // truncated
+        // A later sender that includes art still decodes: the art is skipped.
+        buf[n - 1] = 1;
+        memset(&buf[n], 0x5A, MESH_ART_BYTES);
+        assert(mesh_decode_hello(buf, n + MESH_ART_BYTES, &l2, &has, &caps) && has && strcmp(l2.name, "Hayden") == 0);
+        assert(!mesh_decode_hello(buf, n + MESH_ART_BYTES - 1, &l2, &has, &caps));
     }
     // Not discoverable: header, caps and flags only.
     uint8_t buf[MESH_FRAME_MAX];
@@ -156,14 +160,13 @@ static void test_pos_auth(void) {
 static void test_look_frame(void) {
     uint8_t key[16] = {3}, other[16] = {4}, buf[MESH_FRAME_MAX];
     mesh_header_t h = {MESH_TYPE_LOOK, {2, 2, 2, 2, 2, 2, 2, 2}, 11};
-    for (int custom = 0; custom < 2; custom++) {
-        mesh_look_t l = look_of(5, 0xABCDEF, custom), r;
+    {
+        mesh_look_t l = look_of(5, 0xABCDEF, false), r;
         strcpy(l.name, "Ann");
         const size_t n = mesh_encode_look(&h, key, 77, &l, buf, sizeof(buf));
-        assert(n == MESH_HEADER_LEN + 4 + 6 + 3 + (custom ? MESH_ART_BYTES : 0) + 8);
+        assert(n == MESH_HEADER_LEN + 4 + 6 + 3 + 8);
         assert(mesh_decode_look(buf, n, key, &r) && r.avatar == 5 && r.accent_rgb == 0xABCDEF);
-        assert(strcmp(r.name, "Ann") == 0 && r.has_custom == (custom == 1));
-        assert(!custom || memcmp(r.art, l.art, MESH_ART_BYTES) == 0);
+        assert(strcmp(r.name, "Ann") == 0);
         assert(!mesh_decode_look(buf, n, other, &r)); // only friends can read it
         assert(!mesh_decode_look(buf, n - 1, key, &r));
         buf[MESH_HEADER_LEN + 4] ^= 1; // ciphertext bit
@@ -186,14 +189,17 @@ static void test_identity_and_record(void) {
     memset(&f, 0, sizeof(f));
     f.id[0] = 5;
     f.key[15] = 6;
-    f.look = look_of(3, 0x123456, true);
+    f.look = look_of(3, 0x123456, false);
     strcpy(f.look.name, "Twelve_chars");
     uint8_t rec[MESH_FRIEND_RECORD_LEN];
     mesh_friend_encode(&f, rec);
+    assert(rec[28] == 0 && rec[42] == 0 && rec[121] == 0); // flags and art reserved, zero
     mesh_friend_t g;
     assert(mesh_friend_decode(rec, &g));
     assert(memcmp(&g.id, &f.id, 8) == 0 && g.key[15] == 6 && strcmp(g.look.name, "Twelve_chars") == 0);
-    assert(g.look.has_custom && memcmp(g.look.art, f.look.art, MESH_ART_BYTES) == 0);
+    rec[28] = MESH_FRIEND_FLAG_CUSTOM; // a phone record with art: accepted, art ignored
+    memset(&rec[42], 0x77, MESH_ART_BYTES);
+    assert(mesh_friend_decode(rec, &g) && g.look.avatar == 3);
     rec[29] = 13; // name too long
     assert(!mesh_friend_decode(rec, &g));
 }
@@ -549,7 +555,7 @@ static void test_look_on_rediscovery_and_change(void) {
     mesh_core_set_look(&b, &nl);
     for (int i = 0; i < 6; i++, now += MESH_LOOK_PUSH_MS) tick_both(&a, &aa, &b, &ba, now);
     const mesh_friend_t *fa = mesh_core_friend_find(&a, b.self.id);
-    assert(fa && fa->look.avatar == 9 && fa->look.accent_rgb == 0x00FF00 && fa->look.has_custom);
+    assert(fa && fa->look.avatar == 9 && fa->look.accent_rgb == 0x00FF00);
     assert(strcmp(fa->look.name, "Ben") == 0);
     assert(mesh_core_take_friend_event(&a, &ev) && ev.kind == MESH_FRIEND_EVENT_UPDATED);
     assert(a.look_push_left == 0 && b.look_push_left == 0); // bounded: no repeating traffic

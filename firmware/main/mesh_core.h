@@ -33,7 +33,7 @@ extern "C" {
 #define MESH_LOOK_PUSH_MS 1000u
 #define MESH_LOOK_PUSH_TRIES 3u
 #define MESH_DISCOVERABLE_GRACE_MS 120000u // look stays public this long after the friend menu closes
-#define MESH_FRIEND_EVENTS 4u
+#define MESH_FRIEND_EVENTS 2u // the phone re-reads the whole list on connect, so a lost event is harmless
 
 // Compile-time until the phone setting lands (Phase 3): the look is public in HELLO at all times.
 #ifndef MESH_ALWAYS_DISCOVERABLE

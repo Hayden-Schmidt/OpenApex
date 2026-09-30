@@ -28,9 +28,10 @@ extern "C" {
 #define MESH_RIDER_ID_LEN 8u
 #define MESH_KEY_LEN MESH_CRYPTO_KEY_LEN
 #define MESH_NAME_MAX 12u   // bytes of UTF-8, not characters
-#define MESH_ART_BYTES 80u  // custom avatar: 16x16 then 8x8, 2 bpp (avatar_store.h)
-#define MESH_ART8_OFFSET 64u
-#define MESH_ART8_BYTES 16u
+// Custom avatar art is not carried by the mesh in the POC (docs/blueprints/04_rider_mesh.md, D1): a
+// rider with an uploaded avatar appears to others as the default preset in their accent. These
+// bytes stay reserved in the friend record and are skipped on receipt, so art can return later.
+#define MESH_ART_BYTES 80u
 
 enum {
     MESH_TYPE_HELLO = 0x01,
@@ -54,13 +55,12 @@ typedef struct {
     uint16_t seq;
 } mesh_header_t;
 
-// How a rider appears to others: the same fields the settings TLV and avatar store hold.
+// How a rider appears to others: the same fields the settings TLV holds. No custom art (see above);
+// SETTINGS_AVATAR_CUSTOM draws as the default preset on every other terminal.
 typedef struct {
     uint8_t avatar;       // settings_avatar_t
     uint32_t accent_rgb;  // 0xRRGGBB
     char name[MESH_NAME_MAX + 1];
-    bool has_custom;      // `art` is valid (avatar == custom and art was uploaded)
-    uint8_t art[MESH_ART_BYTES];
 } mesh_look_t;
 
 typedef struct {
