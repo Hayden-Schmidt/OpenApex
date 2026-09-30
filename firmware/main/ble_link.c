@@ -1,4 +1,5 @@
 #include "ble_link.h"
+#include "mesh_console.h"
 
 #include "call_packet.h"
 #include "apple_client.h"
@@ -782,7 +783,9 @@ void ble_link_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queu
     s_raw_packet_queue = raw_packet_queue;
     s_call_event_queue = call_event_queue;
 
+    HEAPMARK("ble start");
     ESP_ERROR_CHECK(nimble_port_init());
+    HEAPMARK("nimble_port_init");
 
     ble_hs_cfg.reset_cb = on_reset;
     ble_hs_cfg.sync_cb = on_sync;
@@ -808,6 +811,8 @@ void ble_link_init(QueueHandle_t raw_packet_queue, QueueHandle_t call_event_queu
     ESP_ERROR_CHECK(rc == 0 ? ESP_OK : ESP_FAIL);
 
     ble_svc_gap_device_name_set("OpenApex");
+    HEAPMARK("gatt services");
 
     nimble_port_freertos_init(host_task);
+    HEAPMARK("host task");
 }

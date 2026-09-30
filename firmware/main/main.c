@@ -10,6 +10,7 @@
 #include "gui_app.hpp"
 #include "heading_store.h"
 #include "mesh.h"
+#include "mesh_console.h"
 #include "odometer_store.h"
 #include "packet.h"
 #include "packet_merge.h"
@@ -238,16 +239,21 @@ static void gui_task(void *argument) {
     (void)argument;
     // C++ screen classes (firmware/gui, docs/reference/gui_and_display.md) live behind gui_app_init/gui_app_update and must
     // only ever see the local snapshot below, never shared_view or view_mutex directly.
+    HEAPMARK("gui start");
     lv_init();
+    HEAPMARK("lv_init");
     lv_tick_set_cb(platform_now_ms);
     display_driver_init();
+    HEAPMARK("display_driver");
     touch_driver_init();
+    HEAPMARK("touch_driver");
 
     // The avatar is read here, on the one task that hands it to LVGL. Settings are already loaded (app_main), so gui_app_init draws the splash in
     // the rider's colour with their avatar from the very first frame, phone or no phone.
     uint8_t avatar[AVATAR_STORE_BYTES];
     gui_app_set_avatar(avatar_store_read(avatar) ? avatar : NULL);
     gui_app_init();
+    HEAPMARK("gui_app_init");
     gui_app_set_call_accept_handler(on_call_accept);
     gui_app_set_friend_accept_handler(on_friend_accept);
 
@@ -258,6 +264,7 @@ static void gui_task(void *argument) {
     // happen before the first snapshot below.
     lv_refr_now(NULL);
     display_driver_backlight_on();
+    HEAPMARK("gui first frame");
 
     for (;;) {
         terminal_view_state_t frame;
@@ -278,6 +285,7 @@ static void gui_task(void *argument) {
 }
 
 void app_main(void) {
+    HEAPMARK("app_main");
     display_driver_hold_dark();
     ESP_LOGI(TAG, "OpenApex terminal boot: PROTOTYPE_C3_GC9A01");
     pipeline_reset();
@@ -296,6 +304,7 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(nvs_err);
     settings_store_load();
+    HEAPMARK("nvs+settings");
 
     raw_packet_queue = xQueueCreate(RAW_PACKET_QUEUE_LEN, sizeof(raw_notif_t));
     call_event_queue = xQueueCreate(CALL_EVENT_QUEUE_LEN, sizeof(call_event_t));
@@ -316,6 +325,7 @@ void app_main(void) {
     // hardware and its stack use went unnoticed until the first live packet with a known distance
     // caused a stack protection fault here.
     xTaskCreate(gui_task, "gui_task", 8192, NULL, 5, NULL);
+    HEAPMARK("gui_task");
 
     // ble_link_init spawns NimBLE's own host task (single-producer into raw_packet_queue); there
     // is no separate ble_handler_task to create. NVS (for BLE bonding, and heading_store_load()
@@ -325,6 +335,7 @@ void app_main(void) {
     // Before ble_link_init: the identity and friends characteristics call into mesh.c as soon as a
     // phone connects.
     mesh_init();
+    HEAPMARK("mesh_init");
     // The iOS path. apple_client is the terminal's GATT-CLIENT role on the same link where
     // ble_link is the server: ANCS supplies notifications and calls, CTS the wall clock, and
     // both keep working with no phone app running -- which on iOS they have to, because iOS
@@ -338,10 +349,15 @@ void app_main(void) {
         };
         ancs_bridge_init(raw_packet_queue, call_event_queue);
         apple_client_init(&apple_cfg);
+    HEAPMARK("apple_client");
     }
     ble_link_init(raw_packet_queue, call_event_queue);
+    HEAPMARK("ble_link");
     mesh_start();
+    HEAPMARK("mesh_start");
+    mesh_console_start();
     heading_store_load();
     odometer_store_load();
     xTaskCreate(countdown_task, "countdown_task", 4096, NULL, 4, NULL);
+    HEAPMARK("countdown");
 }
