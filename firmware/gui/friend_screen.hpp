@@ -8,7 +8,8 @@
 // gui_app.cpp decides when the page is up (double tap, an incoming request, the exits); this page
 // draws the card and turns touches into holds.
 //
-//   searching  nobody in range yet: our character, a pulse in our colour, "Looking for riders..."
+//   searching  nobody in range yet: our character, a pulse in our colour, "Looking for riders..." (no
+//              title)
 //   card       the rider in the centre at 2x the 32px art with their name over them, the next rider
 //              either side at 1x and faded. A drag follows the finger; letting go snaps to the
 //              nearest rider on an S curve (0.3 s), a flick steps one. Tapping the left or right

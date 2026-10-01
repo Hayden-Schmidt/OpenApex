@@ -425,7 +425,7 @@ void FriendScreen::set_texts(const terminal_view_state_t &state) {
         set_text(title_, title_text_, sizeof(title_text_), "Added!");
         hint[0] = '\0';
     } else if (n_ == 0) {
-        set_text(title_, title_text_, sizeof(title_text_), "Add friend");
+        set_text(title_, title_text_, sizeof(title_text_), "");
         if (no_answer_) {
             std::snprintf(hint, sizeof(hint), "%s didn't answer", no_answer_name_);
         } else {
