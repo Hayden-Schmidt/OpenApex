@@ -19,6 +19,9 @@ namespace {
 constexpr float kTitleCy = 78.0f;
 constexpr float kAvatarCy = 127.0f;
 constexpr float kHintCy = 180.0f;
+// Searching has no title, so our character and its line are centred on the panel as a group.
+constexpr float kSearchAvatarCy = 106.0f;
+constexpr float kSearchHintCy = 160.0f;
 constexpr float kHintW = 176.0f;         // two lines at most inside the round panel
 constexpr float kStep = 78.0f;           // centre to side rider
 constexpr float kPairGap = 8.0f;         // between the two characters when side by side
@@ -480,10 +483,11 @@ void FriendScreen::apply_layout() {
     const int32_t page = 255 * in_ / 1000 * fade_ / 1000;
     const int32_t cx = width_ / 2;
     const int32_t acy = px(kAvatarCy) + dy;
+    const int32_t scy_rest = px(kSearchAvatarCy) + dy;
     const bool done = prompt_ == MESH_PROMPT_DONE;
 
     place_centred(title_, cx, px(kTitleCy) + dy);
-    place_centred(hint_, cx, px(kHintCy) + dy);
+    place_centred(hint_, cx, px(searching_ ? kSearchHintCy : kHintCy) + dy);
     for (lv_obj_t *obj : {title_, hint_}) lv_obj_set_style_opa(obj, static_cast<lv_opa_t>(page), 0);
     lv_obj_set_style_opa(ring_.obj(), static_cast<lv_opa_t>(page), 0);
 
@@ -491,10 +495,12 @@ void FriendScreen::apply_layout() {
     const int32_t centre_px = AVATAR_ART_PX * avatar_zoom_;
     const float reveal = static_cast<float>(reveal_) / 1000.0f;
     const bool revealing = !searching_ && !done && reveal_ < 1000;
+    // Riders arriving: our character glides down to where the card's centre rider stands as it fades.
+    const int32_t scy = revealing ? static_cast<int32_t>(std::lround(lerp(scy_rest, acy, reveal))) : scy_rest;
     if (searching_ || revealing) {
         const float t = static_cast<float>(pulse_t_) / 1000.0f;
         const int32_t d = static_cast<int32_t>(std::lround(lerp(static_cast<float>(centre_px), px(kPulseMax), t)));
-        place_sized(pulse_, cx, acy, d, d);
+        place_sized(pulse_, cx, scy, d, d);
         lv_obj_set_style_border_opa(pulse_, static_cast<lv_opa_t>(page * (1.0f - t) * 0.8f * (1.0f - reveal)), 0);
         lv_obj_remove_flag(pulse_, LV_OBJ_FLAG_HIDDEN);
     } else {
@@ -506,7 +512,7 @@ void FriendScreen::apply_layout() {
     if (searching_ || done || revealing) {
         const int32_t sx = done ? static_cast<int32_t>(std::lround(lerp(cx, cx - half, pair))) : cx;
         const float so = searching_ ? 1.0f : done ? pair : 1.0f - reveal;
-        place_centred(self_img_, sx, acy);
+        place_centred(self_img_, sx, done ? acy : scy);
         lv_obj_set_style_opa(self_img_, static_cast<lv_opa_t>(page * so), 0);
         lv_obj_remove_flag(self_img_, LV_OBJ_FLAG_HIDDEN);
     } else {
