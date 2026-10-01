@@ -498,6 +498,8 @@ void mesh_core_rx(mesh_core_t *c, const uint8_t *frame, size_t len, int8_t rssi,
             p->look = c->friends[idx].look;
             p->has_look = true;
         }
+        c->friend_fix = pos;
+        c->has_friend_fix = true;
         update_offset(c, p, &pos, age_ms, now_ms);
         break;
     }

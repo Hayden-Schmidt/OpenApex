@@ -11,11 +11,11 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-// Centre of a marker as a fraction of the ring radius: inside the major ticks (0.10, see
-// compass_ring.cpp) with room for the marker's own half-height.
-constexpr float kRadiusFrac = 0.80f;
+// Markers sit on the tick ring, their outer edge kRimGapPer240 inside the panel edge, under the north
+// marker (compass_ring.cpp draws ticks, then these, then north).
+constexpr float kRimGapPer240 = 2.0f;
 // Character markers are drawn this many times their 1x art per 240px of panel.
-constexpr float kCharScalePer240 = 2.0f;
+constexpr float kCharScalePer240 = 4.0f;
 constexpr float kDotDiameterPer240 = 10.0f;
 constexpr float kDotOutlinePer240 = 2.0f;
 
@@ -70,17 +70,23 @@ void friend_markers_draw(lv_layer_t *layer, float cx, float cy, float half, floa
                          float scale) {
     if (!s_show) return;
     const float per240 = half / 120.0f;
-    const float r = half * kRadiusFrac;
+    const float zoom = std::round(kCharScalePer240 * per240 / scale) * scale;
+    const int32_t d = static_cast<int32_t>(std::lround(kDotDiameterPer240 * per240));
+    const int32_t o = static_cast<int32_t>(std::lround(kDotOutlinePer240 * per240));
     for (int i = 0; i < s_count; ++i) {
         const Marker &m = s_markers[i];
         // Heading-up, as the north marker: screen angle is bearing minus heading, clockwise from up.
         const float a = static_cast<float>(m.bearing_deg) * kPi / 180.0f - heading_rad - kPi / 2.0f;
-        const int32_t x = static_cast<int32_t>(std::lround(cx + std::cos(a) * r));
-        const int32_t y = static_cast<int32_t>(std::lround(cy + std::sin(a) * r));
+        const float c = std::cos(a), sn = std::sin(a);
+        // The marker stays upright, so how far it reaches toward the rim depends on the angle: its
+        // half-width at three and nine o'clock, its half-height at twelve and six.
+        const float reach = s_dot ? d / 2.0f + o
+                                  : (std::fabs(c) * AVATAR_SMALL_W + std::fabs(sn) * AVATAR_SMALL_H) * zoom / 2.0f;
+        const float r = half - reach - kRimGapPer240 * per240;
+        const int32_t x = static_cast<int32_t>(std::lround(cx + c * r));
+        const int32_t y = static_cast<int32_t>(std::lround(cy + sn * r));
 
         if (s_dot) {
-            const int32_t d = static_cast<int32_t>(std::lround(kDotDiameterPer240 * per240));
-            const int32_t o = static_cast<int32_t>(std::lround(kDotOutlinePer240 * per240));
             lv_draw_rect_dsc_t dsc;
             lv_draw_rect_dsc_init(&dsc);
             dsc.radius = LV_RADIUS_CIRCLE;
@@ -98,7 +104,6 @@ void friend_markers_draw(lv_layer_t *layer, float cx, float cy, float half, floa
         dsc.src = &m.img;
         dsc.antialias = false;
         dsc.pivot = {AVATAR_SMALL_W / 2, AVATAR_SMALL_H / 2};
-        const float zoom = std::round(kCharScalePer240 * per240 / scale) * scale;
         dsc.scale_x = dsc.scale_y = static_cast<int32_t>(std::lround(zoom * LV_SCALE_NONE));
         const lv_area_t area = {x - AVATAR_SMALL_W / 2, y - AVATAR_SMALL_H / 2,
                                 x - AVATAR_SMALL_W / 2 + AVATAR_SMALL_W - 1,

@@ -174,6 +174,10 @@ typedef struct {
     uint32_t next_pos_ms;
     bool ticked;
 
+    // Last position a friend sent, decrypted (development: `pos follow` places a phoneless board by it).
+    bool has_friend_fix;
+    mesh_pos_t friend_fix;
+
     mesh_friend_event_t events[MESH_FRIEND_EVENTS];
     size_t event_head, event_count;
 } mesh_core_t;

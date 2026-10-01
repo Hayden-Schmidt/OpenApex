@@ -76,6 +76,7 @@ private:
     static void set_view(void *var, int32_t value);
     static void set_wiggle(void *var, int32_t value);
     static void set_pulse(void *var, int32_t value);
+    static void set_reveal(void *var, int32_t value);
     static FriendScreen *from_anim(lv_anim_t *a);
     void tween(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t ms,
                lv_anim_completed_cb_t completed, lv_anim_path_cb_t path = lv_anim_path_ease_in_out);
@@ -138,6 +139,7 @@ private:
     int32_t fade_ = 1000;
     int32_t wiggle_ = 0;  // 0..1000 through the wiggle; 0 and 1000 are at rest
     int32_t pulse_t_ = 0;
+    int32_t reveal_ = 1000;  // 0..1000, searching .. the card, as riders first arrive
     bool searching_ = false;
     bool landed_ = false;
     bool leaving_ = false;

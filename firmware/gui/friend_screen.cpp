@@ -39,6 +39,7 @@ constexpr uint32_t kFadeMs = 300;
 constexpr uint32_t kStepMs = 300;        // one rider along, on an S curve
 constexpr uint32_t kWiggleMs = 600;
 constexpr uint32_t kPulseMs = 1600;
+constexpr uint32_t kRevealMs = 450;      // searching to the card: riders grow out of our character
 constexpr uint32_t kNoAnswerMs = 2000;
 constexpr uint32_t kHeldGraceMs = 1500;  // a completed hold keeps the ring full until the mesh says WAITING
 
@@ -46,6 +47,13 @@ float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
 void place_centred(lv_obj_t *obj, int32_t cx, int32_t cy) {
     lv_obj_set_pos(obj, cx - lv_obj_get_width(obj) / 2, cy - lv_obj_get_height(obj) / 2);
+}
+
+// For an object resized this frame: lv_obj_get_width() still returns the old size until LVGL's next
+// layout pass, which put the pulse in the corner for a frame each time it restarted small.
+void place_sized(lv_obj_t *obj, int32_t cx, int32_t cy, int32_t w, int32_t h) {
+    lv_obj_set_size(obj, w, h);
+    lv_obj_set_pos(obj, cx - w / 2, cy - h / 2);
 }
 
 bool id_eq(const uint8_t *a, const uint8_t *b) { return std::memcmp(a, b, MESH_RIDER_ID_LEN) == 0; }
@@ -180,6 +188,12 @@ void FriendScreen::set_view(void *var, int32_t value) {
 void FriendScreen::set_wiggle(void *var, int32_t value) {
     auto *self = static_cast<FriendScreen *>(var);
     self->wiggle_ = value;
+    self->apply_layout();
+}
+
+void FriendScreen::set_reveal(void *var, int32_t value) {
+    auto *self = static_cast<FriendScreen *>(var);
+    self->reveal_ = value;
     self->apply_layout();
 }
 
@@ -440,9 +454,12 @@ void FriendScreen::set_searching(bool on) {
     searching_ = on;
     if (!on) {
         lv_anim_delete(this, set_pulse);
-        pulse_t_ = 0;
+        // Riders arrived: our character fades as they grow out of the centre and fan out.
+        if (n_ > 0 && landed_) tween(set_reveal, 0, 1000, kRevealMs, nullptr, anim_path<ease_out_expo>);
         return;
     }
+    lv_anim_delete(this, set_reveal);
+    reveal_ = 1000;
     lv_image_set_src(self_img_, gui_logo_src());
     lv_obj_set_style_border_color(pulse_, gui_theme().palette(), 0);
     lv_anim_t a;
@@ -472,12 +489,13 @@ void FriendScreen::apply_layout() {
 
     // Searching: our character with a pulse in our colour beating out from it.
     const int32_t centre_px = AVATAR_ART_PX * avatar_zoom_;
-    if (searching_) {
+    const float reveal = static_cast<float>(reveal_) / 1000.0f;
+    const bool revealing = !searching_ && !done && reveal_ < 1000;
+    if (searching_ || revealing) {
         const float t = static_cast<float>(pulse_t_) / 1000.0f;
         const int32_t d = static_cast<int32_t>(std::lround(lerp(static_cast<float>(centre_px), px(kPulseMax), t)));
-        lv_obj_set_size(pulse_, d, d);
-        place_centred(pulse_, cx, acy);
-        lv_obj_set_style_border_opa(pulse_, static_cast<lv_opa_t>(page * (1.0f - t) * 0.8f), 0);
+        place_sized(pulse_, cx, acy, d, d);
+        lv_obj_set_style_border_opa(pulse_, static_cast<lv_opa_t>(page * (1.0f - t) * 0.8f * (1.0f - reveal)), 0);
         lv_obj_remove_flag(pulse_, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(pulse_, LV_OBJ_FLAG_HIDDEN);
@@ -485,10 +503,11 @@ void FriendScreen::apply_layout() {
 
     // Done: theirs moves right, ours slides in on the left.
     const float half = (static_cast<float>(centre_px) + px(kPairGap)) / 2.0f;
-    if (searching_ || done) {
-        const int32_t sx = searching_ ? cx : static_cast<int32_t>(std::lround(lerp(cx, cx - half, pair)));
+    if (searching_ || done || revealing) {
+        const int32_t sx = done ? static_cast<int32_t>(std::lround(lerp(cx, cx - half, pair))) : cx;
+        const float so = searching_ ? 1.0f : done ? pair : 1.0f - reveal;
         place_centred(self_img_, sx, acy);
-        lv_obj_set_style_opa(self_img_, static_cast<lv_opa_t>(searching_ ? page : page * pair_ / 1000), 0);
+        lv_obj_set_style_opa(self_img_, static_cast<lv_opa_t>(page * so), 0);
         lv_obj_remove_flag(self_img_, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(self_img_, LV_OBJ_FLAG_HIDDEN);
@@ -506,15 +525,16 @@ void FriendScreen::apply_layout() {
             lv_obj_add_flag(s.img, LV_OBJ_FLAG_HIDDEN);
             continue;
         }
-        const float z = lerp(static_cast<float>(avatar_zoom_), avatar_zoom_ / 2.0f, ad < 1.0f ? ad : 1.0f);
+        float z = lerp(static_cast<float>(avatar_zoom_), avatar_zoom_ / 2.0f, ad < 1.0f ? ad : 1.0f);
+        if (revealing) z *= lerp(0.5f, 1.0f, reveal);
         const int32_t size = static_cast<int32_t>(std::lround(AVATAR_ART_PX * z));
         lv_image_set_scale(s.img, static_cast<uint32_t>(std::lround(z * LV_SCALE_NONE)));
-        lv_obj_set_size(s.img, size, size);
-        float x = cx + d * px(kStep);
+        float x = cx + d * px(kStep) * (revealing ? reveal : 1.0f);
         if (ad < 0.5f) x += wiggle_dx;
         if (done) x += half * pair;
-        const float o = ad <= 1.0f ? lerp(255.0f, kSideOpa, ad) : kSideOpa * (1.0f - (ad - 1.0f) * 2.0f);
-        place_centred(s.img, static_cast<int32_t>(std::lround(x)), acy);
+        float o = ad <= 1.0f ? lerp(255.0f, kSideOpa, ad) : kSideOpa * (1.0f - (ad - 1.0f) * 2.0f);
+        if (revealing) o *= reveal;
+        place_sized(s.img, static_cast<int32_t>(std::lround(x)), acy, size, size);
         lv_obj_set_style_opa(s.img, static_cast<lv_opa_t>(o * page / 255.0f), 0);
         lv_obj_remove_flag(s.img, LV_OBJ_FLAG_HIDDEN);
     }
@@ -647,6 +667,7 @@ void FriendScreen::enter() {
     wiggle_ = 0;
     searching_ = false;
     pulse_t_ = 0;
+    reveal_ = 1000;
     ring_.reset();
     ring_target_ = 0;
     last_touch_ms_ = lv_tick_get();

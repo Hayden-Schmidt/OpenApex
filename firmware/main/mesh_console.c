@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <math.h>
 #include <stdlib.h>
 
 #include "hal/usb_serial_jtag_ll.h"
@@ -31,7 +32,7 @@ static void log_heap(void) {
 // Stand-ins for the terminal UI (U1-U5), so a board with no screen can drive the radio side of each
 // flow. One command per line:
 //   add (open Add friend on screen) | heap | menu on|off | nearby | req|hold <n> | ok | rssi <dBm> | status | friends | forget | id |
-//   pos <n> <e> | pos off | accent <hex>
+//   pos [follow] <n> <e> | pos off | accent <hex>
 static void hex4(const uint8_t *id, char out[9]) {
     static const char *kHex = "0123456789abcdef";
     for (int i = 0; i < 4; i++) {
@@ -43,7 +44,9 @@ static void hex4(const uint8_t *id, char out[9]) {
 
 // `pos <north_m> <east_m>` feeds mesh_set_own_pos once a second from a fixed origin, so two boards on a
 // desk can be placed relative to each other; `pos off` stops.
-static bool s_sim_on;
+// `pos follow <north_m> <east_m>` uses the last fix a friend sent as the origin instead, so a board with
+// no phone shows up beside a friend riding with real GPS.
+static bool s_sim_on, s_sim_follow;
 static double s_sim_n, s_sim_e;
 
 static void sim_tick(void) {
@@ -52,8 +55,16 @@ static void sim_tick(void) {
     if (!s_sim_on || now - at < 1000u) return;
     at = now;
     const double e7_per_m = 89.9322;
-    const mesh_pos_t p = {.lat_e7 = -338688000 + (int32_t)(s_sim_n * e7_per_m),
-                          .lon_e7 = 1512093000 + (int32_t)(s_sim_e * e7_per_m),
+    int32_t lat0 = -338688000, lon0 = 1512093000;
+    if (s_sim_follow) {
+        mesh_pos_t f;
+        if (!mesh_debug_friend_fix(&f)) return; // nothing heard yet
+        lat0 = f.lat_e7;
+        lon0 = f.lon_e7;
+    }
+    const double lon_e7_per_m = e7_per_m / cos((double)lat0 * 1e-7 * 3.14159265358979 / 180.0);
+    const mesh_pos_t p = {.lat_e7 = lat0 + (int32_t)(s_sim_n * e7_per_m),
+                          .lon_e7 = lon0 + (int32_t)(s_sim_e * lon_e7_per_m),
                           .speed_kmh_x10 = 0xFFFF, .heading_deg_x10 = 0xFFFF, .acc_m = 3};
     mesh_debug_set_pos(&p, true);
 }
@@ -126,11 +137,15 @@ static void run_command(const char *line) {
         cmd_status();
     } else if (strncmp(line, "pos ", 4) == 0) {
         char *end;
-        s_sim_n = strtod(line + 4, &end);
+        const char *args = line + 4;
+        s_sim_follow = strncmp(args, "follow", 6) == 0;
+        if (s_sim_follow) args += 6;
+        s_sim_n = strtod(args, &end);
         s_sim_e = strtod(end, NULL);
         s_sim_on = strncmp(line + 4, "off", 3) != 0;
         if (!s_sim_on) mesh_debug_set_pos(NULL, false);
-        ESP_LOGI(TAG, "sim position %s (%.0f m N, %.0f m E)", s_sim_on ? "on" : "off", s_sim_n, s_sim_e);
+        ESP_LOGI(TAG, "sim position %s (%.0f m N, %.0f m E of %s)", s_sim_on ? "on" : "off", s_sim_n, s_sim_e,
+                 s_sim_follow ? "a friend" : "the desk origin");
     } else if (strncmp(line, "accent ", 7) == 0) {
         terminal_settings_t st = *settings_get();
         st.accent_rgb = (uint32_t)strtoul(line + 7, NULL, 16) & 0xFFFFFFu;

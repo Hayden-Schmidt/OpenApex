@@ -65,6 +65,9 @@ bool mesh_debug_make_identity(void);
 // ignored, so a simulated position is not interleaved with the real one. Pass false (and a NULL `pos`) to release.
 void mesh_debug_set_pos(const mesh_pos_t *pos, bool lock_out_phone);
 
+// Development console: the last position any friend sent us. False if none yet.
+bool mesh_debug_friend_fix(mesh_pos_t *out);
+
 // Drops every friend on this terminal (development console; the phone list is untouched).
 void mesh_forget_all_friends(void);
 

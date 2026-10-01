@@ -328,6 +328,15 @@ void mesh_debug_set_pos(const mesh_pos_t *pos, bool lock_out_phone) {
     unlock();
 }
 
+bool mesh_debug_friend_fix(mesh_pos_t *out) {
+    if (!s_ready) return false;
+    lock();
+    const bool have = s_core.has_friend_fix;
+    if (have) *out = s_core.friend_fix;
+    unlock();
+    return have;
+}
+
 void mesh_set_own_pos(const mesh_pos_t *pos) {
     if (!s_ready || s_pos_locked) return;
     const uint32_t now = now_ms();
