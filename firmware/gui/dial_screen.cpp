@@ -125,6 +125,7 @@ DialScreen::DialScreen()
     // The entry slides text below the panel edge; a scrollable root would flash a scrollbar for it.
     lv_obj_set_scrollable(root_, false);
     lv_obj_add_event_cb(root_, on_long_press, LV_EVENT_LONG_PRESSED, this);
+    lv_obj_add_event_cb(root_, on_touch, LV_EVENT_ALL, this);
 
     // NavRenderer strokes straight into this object's LV_EVENT_DRAW_MAIN layer. An lv_canvas was
     // tried here instead, on the theory that compositing the arrow's overlapping strokes onto one
@@ -347,11 +348,24 @@ void DialScreen::set_outer(gui_dial_outer_t outer) {
     lv_obj_invalidate(canvas_obj_);
 }
 
-// The hold time is the input device's long-press time (touch_driver.c). The outgoing element
-// plays the entry zoom in reverse (out past the edge, ease-in so it mirrors the ease-out arrival),
-// then the new one arrives with the entry zoom itself.
+// The hold time is the input device's long-press time (touch_driver.c), but the swap runs when the
+// finger lifts: a hold that carries on to 5 s opens Add friend instead (gui_app.cpp), which cancels
+// the press, so this page never sees the release and the ring stays put.
 void DialScreen::on_long_press(lv_event_t *e) {
+    static_cast<DialScreen *>(lv_event_get_user_data(e))->swap_armed_ = true;
+}
+
+// The outgoing element plays the entry zoom in reverse (out past the edge, ease-in so it mirrors
+// the ease-out arrival), then the new one arrives with the entry zoom itself.
+void DialScreen::on_touch(lv_event_t *e) {
     auto *self = static_cast<DialScreen *>(lv_event_get_user_data(e));
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESS_LOST || code == LV_EVENT_INDEV_RESET) {
+        self->swap_armed_ = false;
+        return;
+    }
+    if (code != LV_EVENT_RELEASED || !self->swap_armed_) return;
+    self->swap_armed_ = false;
     if (self->outer_swapping_) return;
     self->outer_swapping_ = true;
 

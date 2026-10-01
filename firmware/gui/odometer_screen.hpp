@@ -16,9 +16,24 @@ class OdometerScreen : public Screen {
 public:
     OdometerScreen();
     void update(const terminal_view_state_t &state) override;
+    // As the nav page ("design/SCREEN_TRANSITIONS.md"): the text slides up from the bottom, then the
+    // compass ring zooms in from beyond the edge. Leaving plays it backwards.
+    void enter() override;
+    void leave(LeaveDone done, void *ctx) override;
+    bool entered() const override { return landed_; }
 
 private:
     static void draw_event_cb(lv_event_t *e);
+    static void set_text_in(void *var, int32_t value);
+    static void set_ring_in(void *var, int32_t value);
+    void run(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t delay_ms, uint32_t ms,
+             lv_anim_path_cb_t path, lv_anim_completed_cb_t completed);
+
+    int32_t text_in_ = 1000;  // 0..1000: off the bottom .. in place
+    int32_t ring_in_ = 1000;  // 0..1000: oversized past the edge .. at rest
+    bool landed_ = true;
+    LeaveDone done_ = nullptr;
+    void *done_ctx_ = nullptr;
 
     // Reference-design pixels (the 240px frame the SVG is authored at) scaled to the live panel.
     int32_t px(float ref_240) const;

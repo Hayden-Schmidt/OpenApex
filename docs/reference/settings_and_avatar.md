@@ -34,10 +34,11 @@ no phone in range. The default ATT MTU is 23, so settings writes stay at 20 byte
 | 0x07 | 1 | Friends on the compass | 0 hidden, 1 shown | 1 |
 | 0x08 | 1 | Friend marker style | 0 their character, 1 a dot | 0 |
 | 0x09 | 1 | Rider mesh radio | 0 silent, 1 on | 1 |
+| 0x0A | 1 | Odometer page once riding | 1: over 5 km/h with no navigation the odometer page comes up; after 3 min stopped it goes back to idle | 1 |
 
-- A read returns every field. Golden fixture for the defaults (30 bytes):
-  `01 01 03 00 FF E8 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00 07 01 01 08 01 00 09 01 01`.
-  Tags 0x07-0x09 push the read past the 20-byte default MTU, so a full read needs a negotiated
+- A read returns every field. Golden fixture for the defaults (33 bytes):
+  `01 01 03 00 FF E8 02 01 00 03 01 01 04 01 00 05 01 00 06 01 00 07 01 01 08 01 00 09 01 01 0A 01 01`.
+  Tags 0x07-0x0A push the read past the 20-byte default MTU, so a full read needs a negotiated
   MTU or an ATT read-blob. A phone that sees only the first 20 bytes still parses the records it
   did get, which is the reason this is a record stream and not a fixed struct.
 - A write may carry any subset of records; untouched fields keep their value. Split a full config

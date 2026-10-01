@@ -41,8 +41,10 @@ private:
     static void set_ring_in(void *var, int32_t value);
     // Test control: a 2 s press-and-hold swaps the compass ring for the Maps trip arc and back.
     static void on_long_press(lv_event_t *e);
+    static void on_touch(lv_event_t *e);
     static void set_swap_in(void *var, int32_t value);  // ring zoom + ETA slide, for the swap
     bool outer_swapping_ = false;       // outgoing ring is zooming out; ignore further holds
+    bool swap_armed_ = false;           // held past the long-press time; the swap runs on release
     static void set_text_in(void *var, int32_t value);
     // Page exit (see leave()): the arrow drops off the bottom, then the text, then the ring.
     int32_t arrow_out_ = 0;             // 0..1000, at rest .. below the panel

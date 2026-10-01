@@ -21,9 +21,8 @@ void gui_app_update(const terminal_view_state_t *state);
 // (design/screens/04-odometer) is not a view_state_t -- no packet or countdown result can
 // ever produce it, it is chosen. GUI_PAGE_AUTO hands routing back to view_state_t.
 //
-// BACKEND GAP: nothing on the device calls this yet. Touch is live on the C3 (touch_driver.c), but
-// its only gesture so far is the nav page's hold-to-swap ring; firmware/sim_lvgl's --page flag is
-// the only caller today. This is the seam that page-switching input lands on.
+// The device reaches the odometer page by double tap and by speed (gui_app.cpp); firmware/sim_lvgl's
+// --page flag sets it directly.
 typedef enum {
     GUI_PAGE_AUTO = 0,
     GUI_PAGE_ODOMETER,
@@ -65,9 +64,14 @@ typedef void (*gui_call_accept_cb_t)(uint16_t call_id);
 void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb);
 
 // Add friend (docs/blueprints/04_rider_mesh.md U1-U5). The GUI owns whether the menu is open: a
-// double tap opens it (not in or near a turn: terminal_view_state_t::friend_menu_allowed), an
-// incoming request opens it, and it closes on a double tap, 3 s after "Added!", when a request that
-// opened it lapses, or after a minute with nothing happening. Both callbacks run on gui_task; as with
+// finger held still for 5 s on any page but a call opens it (not in or near a turn:
+// terminal_view_state_t::friend_menu_allowed; the hold is cancelled once it opens, so it cannot run
+// on into the friend ring), an incoming request opens it, and it closes on a double tap, 3 s after
+// "Added!", when a request that opened it lapses, or after a minute with nothing happening.
+//
+// Double tap elsewhere toggles the odometer page from the idle or nav page (over navigation only
+// until a turn is near). With setting 0x0A on, riding over 5 km/h with no navigation brings the
+// odometer page up and 3 min stopped takes it back to idle. Both callbacks run on gui_task; as with
 // calls, main.c hands them to the mesh task and the GUI never touches a radio.
 //   hold: the rider filled the ring on a rider's card (mesh_hold_friend).
 //   menu: Add friend opened or closed (mesh_set_menu_open).

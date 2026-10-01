@@ -18,6 +18,8 @@ data class TerminalSettings(
     val friendMarkerDot: Boolean = false,
     /** Rider mesh radio; off makes the terminal silent to other riders. */
     val meshEnabled: Boolean = true,
+    /** Odometer page comes up by itself once riding (over 5 km/h) without navigation. */
+    val autoOdometer: Boolean = true,
 ) {
     companion object {
         const val AVATAR_DEFAULT = 0
@@ -38,6 +40,7 @@ object SettingsTlv {
     const val TAG_FRIENDS_ON_COMPASS = 0x07
     const val TAG_FRIEND_MARKER = 0x08
     const val TAG_MESH_ENABLED = 0x09
+    const val TAG_AUTO_ODOMETER = 0x0A
 
     /** Largest single write: payload of the BLE-spec default 23-byte ATT MTU. */
     const val MAX_WRITE_BYTES = 20
@@ -45,7 +48,7 @@ object SettingsTlv {
     val DEFAULTS_FIXTURE: ByteArray = bytes(
         0x01, 0x01, 0x03, 0x00, 0xFF, 0xE8, 0x02, 0x01, 0x00, 0x03, 0x01, 0x01,
         0x04, 0x01, 0x00, 0x05, 0x01, 0x00, 0x06, 0x01, 0x00, 0x07, 0x01, 0x01,
-        0x08, 0x01, 0x00, 0x09, 0x01, 0x01,
+        0x08, 0x01, 0x00, 0x09, 0x01, 0x01, 0x0A, 0x01, 0x01,
     )
 
     private fun records(s: TerminalSettings): List<ByteArray> = listOf(
@@ -58,6 +61,7 @@ object SettingsTlv {
         bytes(TAG_FRIENDS_ON_COMPASS, 1, s.friendsOnCompass.bit()),
         bytes(TAG_FRIEND_MARKER, 1, s.friendMarkerDot.bit()),
         bytes(TAG_MESH_ENABLED, 1, s.meshEnabled.bit()),
+        bytes(TAG_AUTO_ODOMETER, 1, s.autoOdometer.bit()),
     )
 
     /** Full config, as the terminal returns it from a read. */
@@ -99,7 +103,7 @@ object SettingsTlv {
                 s = s.copy(accentRgb = (buf[v].u() shl 16) or (buf[v + 1].u() shl 8) or buf[v + 2].u())
                 continue
             }
-            if (tag !in TAG_AVATAR..TAG_MESH_ENABLED) continue // unknown: skip, like the terminal
+            if (tag !in TAG_AVATAR..TAG_AUTO_ODOMETER) continue // unknown: skip, like the terminal
             if (n != 1) return null
             val b = buf[v].u()
             if (tag == TAG_AVATAR) {
@@ -116,7 +120,8 @@ object SettingsTlv {
                 TAG_DIAL_OUTER -> s.copy(dialOuterTrip = on)
                 TAG_FRIENDS_ON_COMPASS -> s.copy(friendsOnCompass = on)
                 TAG_FRIEND_MARKER -> s.copy(friendMarkerDot = on)
-                else -> s.copy(meshEnabled = on)
+                TAG_MESH_ENABLED -> s.copy(meshEnabled = on)
+                else -> s.copy(autoOdometer = on)
             }
         }
         return s

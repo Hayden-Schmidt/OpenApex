@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "ease.hpp"
 #include "gui_app.hpp"
 #include "gui_font.hpp"
 #include "units.hpp"
@@ -61,6 +62,12 @@ constexpr float kDot2R = 4.5f;
 constexpr float kDotStroke = 2.0f;
 
 constexpr float kPi = 3.14159265358979323846f;
+
+// Entry, matching the nav page's timings (dial_screen.cpp): text first, the ring overlapping its end.
+constexpr uint32_t kTextInMs = 600;
+constexpr uint32_t kRingInDelayMs = 300;
+constexpr uint32_t kRingInMs = 700;
+constexpr float kRingEntryScale = 1.6f;
 
 // #969696 in the SVG: the boxes and dots are deliberately dimmer than the white digits inside them,
 // so the numbers read first at a glance.
@@ -206,7 +213,68 @@ void OdometerScreen::draw_event_cb(lv_event_t *e) {
     auto *obj = static_cast<lv_obj_t *>(lv_event_get_target(e));
     lv_area_t coords;
     lv_obj_get_coords(obj, &coords);
-    self->compass_.draw(layer, coords);
+    const float ring = kRingEntryScale + (1.0f - kRingEntryScale) * static_cast<float>(self->ring_in_) / 1000.0f;
+    self->compass_.draw(layer, coords, ring);
+}
+
+// Translation, not position, as the nav page's labels: the resting layout is never touched.
+void OdometerScreen::set_text_in(void *var, int32_t value) {
+    auto *self = static_cast<OdometerScreen *>(var);
+    self->text_in_ = value;
+    const int32_t travel = lv_display_get_vertical_resolution(lv_display_get_default()) * (1000 - value) / 1000;
+    for (lv_obj_t *obj : {self->heading_label_, self->cardinal_label_, self->km_label_, self->clock_label_,
+                          self->dot_[0], self->dot_[1]}) {
+        lv_obj_set_style_translate_y(obj, travel, 0);
+    }
+    for (lv_obj_t *box : self->digit_box_) lv_obj_set_style_translate_y(box, travel, 0);
+}
+
+void OdometerScreen::set_ring_in(void *var, int32_t value) {
+    auto *self = static_cast<OdometerScreen *>(var);
+    self->ring_in_ = value;
+    lv_obj_invalidate(self->compass_obj_);
+}
+
+void OdometerScreen::run(lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t delay_ms, uint32_t ms,
+                         lv_anim_path_cb_t path, lv_anim_completed_cb_t completed) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, this);
+    lv_anim_set_exec_cb(&a, exec);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_delay(&a, delay_ms);
+    lv_anim_set_duration(&a, ms);
+    lv_anim_set_path_cb(&a, path);
+    lv_anim_set_early_apply(&a, true);
+    lv_anim_set_completed_cb(&a, completed);
+    lv_anim_start(&a);
+}
+
+void OdometerScreen::enter() {
+    lv_anim_delete(this, nullptr);
+    landed_ = false;
+    set_text_in(this, 0);
+    set_ring_in(this, 0);
+    run(set_text_in, 0, 1000, 0, kTextInMs, lv_anim_path_ease_in_out, nullptr);
+    run(set_ring_in, 0, 1000, kRingInDelayMs, kRingInMs, anim_path<ease_out_expo>,
+        [](lv_anim_t *a) { static_cast<OdometerScreen *>(a->var)->landed_ = true; });
+}
+
+// Backwards from wherever the entry got to: the ring zooms out past the edge, then the text drops.
+void OdometerScreen::leave(LeaveDone done, void *ctx) {
+    lv_anim_delete(this, nullptr);
+    done_ = done;
+    done_ctx_ = ctx;
+    run(set_ring_in, ring_in_, 0, 0, kRingInMs * static_cast<uint32_t>(ring_in_) / 1000u, anim_path<ease_in_expo>,
+        [](lv_anim_t *a) {
+            auto *s = static_cast<OdometerScreen *>(a->var);
+            s->run(set_text_in, s->text_in_, 0, 0, kTextInMs * static_cast<uint32_t>(s->text_in_) / 1000u,
+                   lv_anim_path_ease_in_out, [](lv_anim_t *a2) {
+                       auto *s2 = static_cast<OdometerScreen *>(a2->var);
+                       s2->landed_ = true;
+                       s2->done_(s2->done_ctx_);
+                   });
+        });
 }
 
 void OdometerScreen::update(const terminal_view_state_t &state) {

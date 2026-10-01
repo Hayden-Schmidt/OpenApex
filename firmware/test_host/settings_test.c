@@ -20,6 +20,7 @@ static const uint8_t kDefaultsTlv[] = {
     0x07, 0x01, 0x01,             // friends on compass: shown
     0x08, 0x01, 0x00,             // friend marker: character
     0x09, 0x01, 0x01,             // rider mesh: on
+    0x0A, 0x01, 0x01,             // odometer page once riding: on
 };
 
 // Field-wise: struct padding is not guaranteed to survive a copy, so memcmp would be flaky.
@@ -28,7 +29,7 @@ static int settings_equal(const terminal_settings_t *a, const terminal_settings_
            a->eta_format == b->eta_format && a->clock_12h == b->clock_12h &&
            a->units == b->units && a->dial_outer == b->dial_outer &&
            a->friends_on_compass == b->friends_on_compass && a->friend_marker == b->friend_marker &&
-           a->mesh_enabled == b->mesh_enabled;
+           a->mesh_enabled == b->mesh_enabled && a->auto_odometer == b->auto_odometer;
 }
 
 static void test_defaults_golden(void) {

@@ -28,6 +28,7 @@ enum {
     SETTINGS_TAG_FRIENDS_ON_COMPASS = 0x07, // len 1: 0 hidden, 1 shown (rider mesh, docs/reference/rider_mesh_v1.md)
     SETTINGS_TAG_FRIEND_MARKER = 0x08,      // len 1: settings_friend_marker_t
     SETTINGS_TAG_MESH_ENABLED = 0x09,       // len 1: 0 radio silent, 1 on
+    SETTINGS_TAG_AUTO_ODOMETER = 0x0A,      // len 1: 1 = the odometer page comes up once riding, off nav
 };
 
 // Avatar values: the default character, a built-in character (1..SETTINGS_AVATAR_PRESET_MAX,
@@ -61,10 +62,11 @@ typedef struct {
     uint8_t friends_on_compass;
     uint8_t friend_marker; // settings_friend_marker_t
     uint8_t mesh_enabled;
+    uint8_t auto_odometer;
 } terminal_settings_t;
 
 // Longest encoding settings_tlv_encode() produces: schema byte + every tag.
-#define SETTINGS_TLV_MAX_LEN (1u + (2u + 3u) + 8u * (2u + 1u))
+#define SETTINGS_TLV_MAX_LEN (1u + (2u + 3u) + 9u * (2u + 1u))
 
 void settings_defaults(terminal_settings_t *out);
 

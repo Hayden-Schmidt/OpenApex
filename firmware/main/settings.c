@@ -14,6 +14,7 @@ static const terminal_settings_t kDefaults = {
     .friends_on_compass = 1,
     .friend_marker = SETTINGS_FRIEND_MARKER_CHARACTER,
     .mesh_enabled = 1,
+    .auto_odometer = 1,
 };
 static terminal_settings_t s_current;
 static bool s_current_init;
@@ -31,6 +32,7 @@ static const uint8_t kByteTagMax[] = {
     [SETTINGS_TAG_FRIENDS_ON_COMPASS] = 1,
     [SETTINGS_TAG_FRIEND_MARKER] = SETTINGS_FRIEND_MARKER_DOT,
     [SETTINGS_TAG_MESH_ENABLED] = 1,
+    [SETTINGS_TAG_AUTO_ODOMETER] = 1,
 };
 
 bool settings_tlv_decode(const uint8_t *buf, size_t len, terminal_settings_t *inout) {
@@ -65,6 +67,7 @@ bool settings_tlv_decode(const uint8_t *buf, size_t len, terminal_settings_t *in
         case SETTINGS_TAG_FRIENDS_ON_COMPASS: s.friends_on_compass = v[0]; break;
         case SETTINGS_TAG_FRIEND_MARKER: s.friend_marker = v[0]; break;
         case SETTINGS_TAG_MESH_ENABLED: s.mesh_enabled = v[0]; break;
+        case SETTINGS_TAG_AUTO_ODOMETER: s.auto_odometer = v[0]; break;
         }
     }
     *inout = s;
@@ -87,6 +90,7 @@ size_t settings_tlv_encode(const terminal_settings_t *s, uint8_t *buf, size_t ca
         {SETTINGS_TAG_FRIENDS_ON_COMPASS, s->friends_on_compass},
         {SETTINGS_TAG_FRIEND_MARKER, s->friend_marker},
         {SETTINGS_TAG_MESH_ENABLED, s->mesh_enabled},
+        {SETTINGS_TAG_AUTO_ODOMETER, s->auto_odometer},
     };
     for (size_t k = 0; k < sizeof(bytes) / sizeof(bytes[0]); k++) {
         buf[i++] = bytes[k][0];

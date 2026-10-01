@@ -23,7 +23,11 @@ extern "C" {
 #define MESH_POS_PERIOD_MS 1000u
 #define MESH_PEER_TIMEOUT_MS 10000u   // no frame for this long: out of range
 #define MESH_OWN_POS_MAX_AGE_MS 5000u // our own fix older than this is neither shared nor compared
-#define MESH_OFFSET_MAX_AGE_MS 5000u  // a friend's offset older than this is not drawn
+#define MESH_OFFSET_MAX_AGE_MS 5000u  // a friend's offset older than this restarts smoothing
+// The compass keeps a friend at their last bearing this long without a fresh offset (lost frames, a
+// stalled phone fix), so a marker never flickers off and on. Out of range still ends it sooner:
+// a friend not heard from at all for MESH_PEER_TIMEOUT_MS leaves the peer table.
+#define MESH_OFFSET_SHOW_MS 30000u
 #define MESH_OWN_FIXES 6u             // own-fix history used to align a friend's fix in time
 #define MESH_OFFSET_TAU_S 3.0f        // time constant of the east/north offset smoothing
 #define MESH_PROMPT_TIMEOUT_MS 20000u // time *on screen* before an unanswered request lapses

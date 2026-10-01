@@ -747,7 +747,7 @@ size_t mesh_core_friends_in_range(const mesh_core_t *c, uint32_t now_ms, mesh_fr
     size_t n = 0;
     for (size_t i = 0; i < MESH_MAX_PEERS && n < cap; i++) {
         const mesh_peer_t *p = &c->peers[i];
-        if (!p->used || !p->has_off || !fresh(now_ms, p->off_ms, MESH_OFFSET_MAX_AGE_MS)) continue;
+        if (!p->used || !p->has_off || !fresh(now_ms, p->off_ms, MESH_OFFSET_SHOW_MS)) continue;
         const uint8_t idx = friend_of(c, p);
         if (idx == MESH_NO_FRIEND) continue;
         out[n].f = &c->friends[idx];

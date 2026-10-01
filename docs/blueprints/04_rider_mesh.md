@@ -83,7 +83,7 @@ owner designs (Figma) and fills in when it is needed. Implementation of a surfac
 
 | # | Surface | Stage | What the firmware provides | Flow (owner) | Design link (owner) |
 |---|---|---|---|---|---|
-| U1 | Enter / leave Add friend | 1 | `mesh_set_menu_open(true/false)`: our look is public only while open. Covers the whole flow (card, waiting, now friends), not just the first page | Double tap on any page but a call, not in or near a turn; leave by double tap (centre), 3 s after "Added!", when a request that opened it lapses, after 60 s idle, or when a turn or call comes | Built 2026-10-01 (`gui/friend_screen.cpp`) |
+| U1 | Enter / leave Add friend | 1 | `mesh_set_menu_open(true/false)`: our look is public only while open. Covers the whole flow (card, waiting, now friends), not just the first page | Hold a finger still for 5 s on any page but a call, not in or near a turn (the hold is cancelled once the menu opens); leave by double tap (centre), 3 s after "Added!", when a request that opened it lapses, after 60 s idle, or when a turn or call comes | Built 2026-10-01 (`gui/friend_screen.cpp`) |
 | U2 | Pair card with swipe (see "Pair card" below) | 1 | `mesh_get_candidates()`: index 0 in the centre, nearest first, riders asking us first, stable order; each with look and a `waiting` flag | "Looking for riders..." with a pulse in our colour until someone arrives, then the card | Built 2026-10-01 (`gui/friend_screen.cpp`) |
 | U3 | Hold to friend | 1 | `mesh_hold_friend(pseudonym)` on a completed hold; the card shows "waiting for Ben" (`mesh_get_prompt` = WAITING) | 2 s hold fills the ring in the centre rider's colour: "Waiting for Ben to accept" | Built 2026-10-01 (`gui/friend_screen.cpp`) |
 | U4 | "Ann is waiting" | 1 | The same card with `waiting` set; holding accepts. An incoming request opens Add friend by itself (always-discoverable riders), through the prompt gate | Snaps to Ann (never under a finger) and wiggles: "Ann is waiting for you to accept"; the hold ring is in Ann's colour | Built 2026-10-01 (`gui/friend_screen.cpp`) |
@@ -115,7 +115,8 @@ friend hold. Review it in the simulator: `sim_lvgl --pair search|hold|noanswer|o
   buffers are allocated when Add friend opens and freed when it closes (measured on the C3: 42.9 KB
   free at rest, 33.7 KB while open).
 - A drag starts after 8 px of movement and cancels the hold, so a swipe never friends anyone.
-- Double tap is detected on the input device (`gui_app.cpp`), not per page.
+- The 5 s hold and double tap are detected on the input device (`gui_app.cpp`), not per page. Double
+  tap outside Add friend toggles the odometer page (owner, 2026-10-01).
 
 ---
 

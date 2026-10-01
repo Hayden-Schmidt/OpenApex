@@ -270,7 +270,9 @@ void apply_call_fixture(terminal_view_state_t *frame, const char *caller, uint32
     }
 }
 
-// --friend: two friends ride nearby throughout, for the compass markers.
+// --friend: friends all round the compass (every 45 degrees), for the markers. SIM_SAME_AVATAR=1 in
+// the environment gives them all the same character, for checking placement.
+bool s_friend_same_avatar = std::getenv("SIM_SAME_AVATAR") != nullptr;
 mesh_look_t sim_look(uint8_t avatar, uint32_t accent, const char *name) {
     mesh_look_t l = {};
     l.avatar = avatar;
@@ -280,9 +282,11 @@ mesh_look_t sim_look(uint8_t avatar, uint32_t accent, const char *name) {
 }
 
 void apply_friend_fixture(terminal_view_state_t *frame) {
-    frame->friend_count = 2;
-    frame->friends[0] = {sim_look(1, 0xFF6A00, "Sam"), 40.0f, 120.0f};
-    frame->friends[1] = {sim_look(2, 0x3FA9F5, "Jo"), 200.0f, 300.0f};
+    static const uint32_t kAccents[] = {0xFF6A00, 0x3FA9F5, 0xE0409A, 0x7ED957, 0xFFD400, 0xB061FF, 0x00FFE8, 0xFF3030};
+    frame->friend_count = 8;
+    for (int i = 0; i < 8; i++) {
+        frame->friends[i] = {sim_look(static_cast<uint8_t>(s_friend_same_avatar ? 8 : 1 + i), kAccents[i], "F"), 45.0f * i, 100.0f};
+    }
 }
 
 // --pair <scenario>: Add friend (blueprint 04 U1-U5) against a scripted mesh. The menu opens at

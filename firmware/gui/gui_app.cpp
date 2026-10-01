@@ -98,10 +98,27 @@ bool s_menu_allowed = false;
 uint32_t s_menu_activity_ms = 0;
 mesh_prompt_state_t s_seen_prompt = MESH_PROMPT_NONE;
 uint8_t s_seen_prompt_id[MESH_RIDER_ID_LEN];
-bool s_double_tap_hooked = false;
+bool s_input_hooked = false;
 volatile bool s_menu_request = false; // gui_app_open_friend_menu, from any task
 
+// A finger held still this long on any page but a call or Add friend itself opens Add friend.
+constexpr uint32_t kMenuHoldMs = 5000;
+constexpr int32_t kMenuHoldSlopPx = 20;
+lv_indev_t *s_hold_indev = nullptr;
+bool s_hold_armed = false;
+uint32_t s_hold_ms = 0;
+lv_point_t s_hold_at = {0, 0};
+
 gui_page_override_t s_page_override = GUI_PAGE_AUTO;
+// Why the odometer page is up: the rider's double tap over navigation (it stays until a turn is
+// near), or speed (it goes back to idle after kAutoOdoStopMs stopped).
+bool s_odo_over_nav = false;
+bool s_odo_auto = false;
+constexpr uint16_t kAutoOdoKmhX10 = 50;      // "riding": over 5 km/h
+constexpr uint32_t kAutoOdoStopMs = 180000;  // stopped this long and the speed-raised page goes
+bool s_was_riding = false;
+bool s_stopped = false;
+uint32_t s_stopped_ms = 0;
 gui_nav_entry_t s_nav_entry = GUI_NAV_ENTRY_ELEMENTS;
 
 IdleScreen &idle_screen(void) {
@@ -119,21 +136,73 @@ CallScreen &call_screen(void) {
     return call;
 }
 
-Screen *screen_for_state(view_state_t state) {
+DialScreen &dial_screen(void) {
     static DialScreen dial;
-    static OdometerScreen odometer;
-    static ArrivedScreen arrived;
+    return dial;
+}
 
-    // A rider-selected page outranks the idle state, but never an active maneuver: being shown the
-    // odometer instead of the turn you are about to miss would be actively dangerous. Navigation
-    // takes the screen back and the selection is dropped.
+OdometerScreen &odometer_screen(void) {
+    static OdometerScreen odometer;
+    return odometer;
+}
+
+void drop_odometer(void) {
+    s_page_override = GUI_PAGE_AUTO;
+    s_odo_over_nav = false;
+    s_odo_auto = false;
+}
+
+// Within this of the next maneuver the nav page takes the screen back from anything the rider chose.
+bool turn_near(const terminal_view_state_t &st) {
+    return st.state == VIEW_ACTIVE && st.distance_meters <= MESH_PROMPT_MIN_TURN_M;
+}
+
+Screen *screen_for_state(const terminal_view_state_t &st) {
+    static ArrivedScreen arrived;
+    const view_state_t state = st.state;
+
+    // The odometer page outranks idle. Over navigation only when the rider asked for it there (double
+    // tap on the nav page), and never near a turn: the nav page takes the screen back and the choice
+    // is dropped. Navigation starting under it drops it too.
     if (s_page_override == GUI_PAGE_ODOMETER) {
-        if (state == VIEW_IDLE) return &odometer;
-        s_page_override = GUI_PAGE_AUTO;
+        if (state == VIEW_IDLE) {
+            s_odo_over_nav = false;
+            return &odometer_screen();
+        }
+        if (state != VIEW_ARRIVED && s_odo_over_nav && !turn_near(st)) return &odometer_screen();
+        drop_odometer();
     }
     if (state == VIEW_ARRIVED) return &arrived;
     return state == VIEW_IDLE ? static_cast<Screen *>(&idle_screen())
-                              : static_cast<Screen *>(&dial);
+                              : static_cast<Screen *>(&dial_screen());
+}
+
+// Setting 0x0A: riding off navigation brings the odometer page up; three minutes stopped puts idle
+// back, but only if speed is what raised it. Rising edge only, so a rider who double taps away from
+// it while moving keeps their choice until the next stop.
+void update_auto_odometer(const terminal_view_state_t &st) {
+    const bool known = st.phone_connected && st.speed_kmh_x10 != NAV_U16_UNKNOWN;
+    const bool riding = known && st.speed_kmh_x10 > kAutoOdoKmhX10;
+    if (riding && !s_was_riding && settings_get()->auto_odometer != 0 && st.state == VIEW_IDLE &&
+        s_page_override == GUI_PAGE_AUTO) {
+        s_page_override = GUI_PAGE_ODOMETER;
+        s_odo_auto = true;
+    }
+    if (known) s_was_riding = riding;
+    if (!s_odo_auto || s_page_override != GUI_PAGE_ODOMETER) {
+        s_odo_auto = false;
+        s_stopped = false;
+        return;
+    }
+    // No speed (phone gone) counts as stopped: a parked bike with the phone in the house goes idle.
+    if (riding) {
+        s_stopped = false;
+    } else if (!s_stopped) {
+        s_stopped = true;
+        s_stopped_ms = lv_tick_get();
+    } else if (lv_tick_elaps(s_stopped_ms) >= kAutoOdoStopMs) {
+        drop_odometer();
+    }
 }
 
 void on_leave_done(void *ctx) {
@@ -149,7 +218,10 @@ void on_leave_done(void *ctx) {
 // moment routing asks, because a late turn instruction is worse than a clipped animation. A ringing
 // phone skips the hold too -- it only rings for so long.
 bool may_leave(const Screen *next) {
-    if (s_active != &idle_screen() || next == &call_screen() || next == &friend_screen()) return true;
+    if (s_active != &idle_screen() || next == &call_screen() || next == &friend_screen() ||
+        next == &odometer_screen()) {
+        return true;
+    }
     if (!s_active->entered()) return false;
     if (!s_entered_seen) {
         s_entered_seen = true;
@@ -166,37 +238,85 @@ void set_friend_menu(bool open, bool by_request) {
     if (s_friend_menu_cb != nullptr) s_friend_menu_cb(open);
 }
 
-// A double tap anywhere opens Add friend (U1), on any page but a call, and closes it again --
-// except on the card's edges, where taps step between riders. Watched on the input device rather
-// than on each page, so pages full of child objects need nothing of their own.
+// Double tap (U-table, owner 2026-10-01): on the idle or nav page it brings up the odometer page, on
+// the odometer page it goes back; in Add friend it closes the menu, except on the card's edges,
+// where taps step between riders. Watched on the input device rather than on each page, so pages
+// full of child objects need nothing of their own.
 void on_double_tap(lv_event_t *e) {
     auto *indev = static_cast<lv_indev_t *>(lv_event_get_current_target(e));
     if (lv_indev_get_short_click_streak(indev) != 2) return;
 #if BOARD_HAS_SPLASH
     if (!s_splash_done) return;
 #endif
-    if (s_active == &call_screen()) return;
-    if (!s_menu_open) {
-        if (s_menu_allowed) set_friend_menu(true, false);
+    if (s_leaving) return;
+    if (s_active == &friend_screen()) {
+        lv_point_t p;
+        lv_indev_get_point(indev, &p);
+        if (!friend_screen().in_step_zone(p.x)) set_friend_menu(false, false);
         return;
     }
-    lv_point_t p;
-    lv_indev_get_point(indev, &p);
-    if (s_active == &friend_screen() && friend_screen().in_step_zone(p.x)) return;
-    set_friend_menu(false, false);
+    if (s_active == &odometer_screen()) {
+        drop_odometer();
+    } else if (s_active == &idle_screen()) {
+        s_page_override = GUI_PAGE_ODOMETER;
+        s_odo_auto = false;
+    } else if (s_active == &dial_screen()) {
+        s_page_override = GUI_PAGE_ODOMETER;
+        s_odo_auto = false;
+        s_odo_over_nav = true;
+    }
 }
 
-void hook_double_tap(void) {
-    if (s_double_tap_hooked) return;
-    s_double_tap_hooked = true;
+// The 5 s hold that opens Add friend (U1). Armed on a press on any page but a call or the menu.
+void on_press(lv_event_t *e) {
+    s_hold_indev = static_cast<lv_indev_t *>(lv_event_get_current_target(e));
+    s_hold_armed = s_active != &call_screen() && s_active != &friend_screen();
+#if BOARD_HAS_SPLASH
+    if (!s_splash_done) s_hold_armed = false;
+#endif
+    s_hold_ms = lv_tick_get();
+    lv_indev_get_point(s_hold_indev, &s_hold_at);
+}
+
+void on_release(lv_event_t *e) {
+    (void)e;
+    s_hold_armed = false;
+}
+
+void hook_input(void) {
+    if (s_input_hooked) return;
+    s_input_hooked = true;
     for (lv_indev_t *i = lv_indev_get_next(nullptr); i != nullptr; i = lv_indev_get_next(i)) {
         lv_indev_add_event_cb(i, on_double_tap, LV_EVENT_SHORT_CLICKED, nullptr);
+        lv_indev_add_event_cb(i, on_press, LV_EVENT_PRESSED, nullptr);
+        lv_indev_add_event_cb(i, on_release, LV_EVENT_RELEASED, nullptr);
     }
+}
+
+// The finger has to stay put for the whole hold. When it opens the menu the press is cancelled and
+// the input device ignores the finger until it lifts: the page under it gets no release (the nav
+// page's ring swap stays unfired) and Add friend sees no press, so the same hold cannot run on
+// into the friend ring.
+void check_menu_hold(void) {
+    if (!s_hold_armed || s_hold_indev == nullptr) return;
+    lv_point_t p;
+    lv_indev_get_point(s_hold_indev, &p);
+    const int32_t dx = p.x - s_hold_at.x, dy = p.y - s_hold_at.y;
+    if (dx * dx + dy * dy > kMenuHoldSlopPx * kMenuHoldSlopPx || s_active == &call_screen()) {
+        s_hold_armed = false;
+        return;
+    }
+    if (lv_tick_elaps(s_hold_ms) < kMenuHoldMs) return;
+    s_hold_armed = false;
+    if (!s_menu_allowed) return;
+    lv_indev_reset(s_hold_indev, nullptr);
+    lv_indev_wait_release(s_hold_indev);
+    set_friend_menu(true, false);
 }
 
 // Opens and closes Add friend on the mesh's prompt edges and the gate.
 void update_friend_menu(const terminal_view_state_t &st) {
-    hook_double_tap();
+    hook_input();
     s_menu_allowed = st.friend_menu_allowed;
     if (s_menu_request) {
         s_menu_request = false;
@@ -300,9 +420,8 @@ void gui_app_set_avatar(const uint8_t *a2) {
 void gui_app_set_page_override(gui_page_override_t page) { s_page_override = page; }
 
 void gui_app_set_dial_outer(gui_dial_outer_t outer) {
-    // Routes through screen_for_state so the DialScreen instance is the same static one the page
-    // routing hands out, rather than a second copy.
-    static_cast<DialScreen *>(screen_for_state(VIEW_ACTIVE))->set_outer(outer);
+    // The same DialScreen instance the page routing hands out.
+    dial_screen().set_outer(outer);
 }
 
 void gui_app_set_nav_entry(gui_nav_entry_t entry) { s_nav_entry = entry; }
@@ -352,9 +471,11 @@ void gui_app_update(const terminal_view_state_t *state) {
     // road. Closing it falls back to whatever the state routes to, so the rider lands back where
     // they were (or on the nav page, if navigation started meanwhile).
     update_friend_menu(*state);
+    check_menu_hold();
+    update_auto_odometer(*state);
     Screen *next = (state->call_ringing || state->call_active) ? static_cast<Screen *>(&call_screen())
                    : s_menu_open                               ? static_cast<Screen *>(&friend_screen())
-                                                               : screen_for_state(state->state);
+                                                               : screen_for_state(*state);
 #if BOARD_HAS_SPLASH
     // Boot always passes through idle, even when navigation is already running on the phone: the
     // phone-connect entry plays out and idle's hold floor applies before the nav page takes over.

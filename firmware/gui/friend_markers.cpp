@@ -1,5 +1,6 @@
 #include "friend_markers.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -11,9 +12,9 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-// Markers sit on the tick ring, their outer edge kRimGapPer240 inside the panel edge, under the north
+// Markers sit on the tick ring, the art's box kRimGapPer240 inside the panel edge, under the north
 // marker (compass_ring.cpp draws ticks, then these, then north).
-constexpr float kRimGapPer240 = 2.0f;
+constexpr float kRimGapPer240 = 0.0f;
 // Character markers are drawn this many times their 1x art per 240px of panel.
 constexpr float kCharScalePer240 = 4.0f;
 constexpr float kDotDiameterPer240 = 10.0f;
@@ -25,7 +26,34 @@ struct Marker {
     uint32_t accent;
     uint8_t buf[avatar_art_bytes(AVATAR_SMALL_W, AVATAR_SMALL_H)];
     lv_image_dsc_t img;
+    // The character's visible pixels inside the 12x8 box, which narrow characters do not fill (they
+    // sit to its left). Placement centres these, not the box.
+    float vis_cx, vis_cy, vis_hw, vis_hh;
 };
+
+// Visible bounds from the alpha plane (RGB565A8: colour plane, then alpha).
+void measure(Marker &m) {
+    const uint8_t *alpha = m.buf + AVATAR_SMALL_W * AVATAR_SMALL_H * 2;
+    int x0 = AVATAR_SMALL_W, y0 = AVATAR_SMALL_H, x1 = -1, y1 = -1;
+    for (int y = 0; y < AVATAR_SMALL_H; ++y) {
+        for (int x = 0; x < AVATAR_SMALL_W; ++x) {
+            if (alpha[y * AVATAR_SMALL_W + x] == 0) continue;
+            x0 = std::min(x0, x);
+            y0 = std::min(y0, y);
+            x1 = std::max(x1, x);
+            y1 = std::max(y1, y);
+        }
+    }
+    if (x1 < 0) {
+        x0 = y0 = 0;
+        x1 = AVATAR_SMALL_W - 1;
+        y1 = AVATAR_SMALL_H - 1;
+    }
+    m.vis_cx = (x0 + x1 + 1) / 2.0f;
+    m.vis_cy = (y0 + y1 + 1) / 2.0f;
+    m.vis_hw = (x1 - x0 + 1) / 2.0f;
+    m.vis_hh = (y1 - y0 + 1) / 2.0f;
+}
 
 Marker s_markers[VIEW_FRIENDS_MAX];
 int s_count = 0;
@@ -61,6 +89,7 @@ bool friend_markers_update(const terminal_view_state_t &state) {
         // Friends carry no custom art in the POC: an uploaded avatar draws as the default preset.
         avatar_art_draw_small(m.buf, m.avatar, nullptr, lv_color_hex(m.accent));
         avatar_art_describe(&m.img, m.buf, AVATAR_SMALL_W, AVATAR_SMALL_H);
+        measure(m);
         changed = true;
     }
     return changed;
@@ -78,10 +107,9 @@ void friend_markers_draw(lv_layer_t *layer, float cx, float cy, float half, floa
         // Heading-up, as the north marker: screen angle is bearing minus heading, clockwise from up.
         const float a = static_cast<float>(m.bearing_deg) * kPi / 180.0f - heading_rad - kPi / 2.0f;
         const float c = std::cos(a), sn = std::sin(a);
-        // The marker stays upright, so how far it reaches toward the rim depends on the angle: its
-        // half-width at three and nine o'clock, its half-height at twelve and six.
-        const float reach = s_dot ? d / 2.0f + o
-                                  : (std::fabs(c) * AVATAR_SMALL_W + std::fabs(sn) * AVATAR_SMALL_H) * zoom / 2.0f;
+        // One radius at every bearing, measured from the character's visible pixels, so every marker
+        // covers the ticks the same way and its widest side just meets the rim.
+        const float reach = s_dot ? d / 2.0f + o : std::max(m.vis_hw, m.vis_hh) * zoom;
         const float r = half - reach - kRimGapPer240 * per240;
         const int32_t x = static_cast<int32_t>(std::lround(cx + c * r));
         const int32_t y = static_cast<int32_t>(std::lround(cy + sn * r));
@@ -103,11 +131,12 @@ void friend_markers_draw(lv_layer_t *layer, float cx, float cy, float half, floa
         lv_draw_image_dsc_init(&dsc);
         dsc.src = &m.img;
         dsc.antialias = false;
-        dsc.pivot = {AVATAR_SMALL_W / 2, AVATAR_SMALL_H / 2};
+        // The visible centre lands on the point; the zoom pivots there too.
+        const int32_t pvx = static_cast<int32_t>(std::lround(m.vis_cx));
+        const int32_t pvy = static_cast<int32_t>(std::lround(m.vis_cy));
+        dsc.pivot = {pvx, pvy};
         dsc.scale_x = dsc.scale_y = static_cast<int32_t>(std::lround(zoom * LV_SCALE_NONE));
-        const lv_area_t area = {x - AVATAR_SMALL_W / 2, y - AVATAR_SMALL_H / 2,
-                                x - AVATAR_SMALL_W / 2 + AVATAR_SMALL_W - 1,
-                                y - AVATAR_SMALL_H / 2 + AVATAR_SMALL_H - 1};
+        const lv_area_t area = {x - pvx, y - pvy, x - pvx + AVATAR_SMALL_W - 1, y - pvy + AVATAR_SMALL_H - 1};
         lv_draw_image(layer, &dsc, &area);
     }
 }

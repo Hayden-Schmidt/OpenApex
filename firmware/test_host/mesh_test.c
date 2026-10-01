@@ -1002,12 +1002,17 @@ static void test_offset_smoothing(void) {
     assert(smooth_worst < raw_worst * 0.6f);
     assert(fabsf(fix[0].dist_m - 10.0f) < 1.5f);
 
-    // An offset older than MESH_OFFSET_MAX_AGE_MS is not drawn, even though the peer is still in range.
+    // A gap in POS (lost frames) keeps the friend at their last bearing rather than blinking them off...
     const uint32_t later = 31000 + MESH_OFFSET_MAX_AGE_MS + 200; // last tick was at 30,900
     put_fix(&a, 0, 0, later);
     mesh_core_tick(&a, later, true, air_send, &aa);
     assert(a.peers[0].used || a.peers[1].used);
-    assert(mesh_core_friends_in_range(&a, later, fix, 2) == 0);
+    assert(mesh_core_friends_in_range(&a, later, fix, 2) == 1);
+    // ...until they are out of range: nothing heard for MESH_PEER_TIMEOUT_MS drops them.
+    const uint32_t gone = 30900 + MESH_PEER_TIMEOUT_MS + 200;
+    put_fix(&a, 0, 0, gone);
+    mesh_core_tick(&a, gone, true, air_send, &aa);
+    assert(mesh_core_friends_in_range(&a, gone, fix, 2) == 0);
 }
 
 int main(void) {
