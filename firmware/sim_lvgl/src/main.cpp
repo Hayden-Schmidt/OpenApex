@@ -162,7 +162,8 @@ namespace {
 void print_usage(const char *exe) {
     std::fprintf(stderr,
                  "usage: %s [width [height]] [--page <name>] [--nav-entry <style>]"
-                 " [--call <caller>] [--friend] [--press <from_ms> <to_ms>] [--shot <ms> <file.png>]\n"
+                 " [--call <caller>] [--friend] [--pair <scenario>] [--press <from_ms> <to_ms>]\n"
+                 " [--drag <from_ms> <to_ms> <dx>] [--shot <ms> <file.png>]\n"
                  " [--shot <ms> <file.png>] [--settings <hex>] [--avatar <hex>]\n"
                  "  width/height   panel resolution override (default: board_profile.h)\n"
                  "  --page         fixture to run: 'all' (default, full state cycle), 'idle' or\n"
@@ -170,8 +171,11 @@ void print_usage(const char *exe) {
                  "  --nav-entry    turn-by-turn page entry: 'elements' (default) or 'fade'\n"
                  "  --call         call from <caller> (\"\" = unknown) over the fixture, every 20s: rings\n"
                  "                 7s, answered for 8s (sooner if the 2s hold accepts), then ends\n"
-                 "  --friend       a friend prompt 1.5s in, two friends on the compass\n"
+                 "  --friend       two friends on the compass\n"
+                 "  --pair         Add friend against a scripted mesh: 'search', 'hold', 'noanswer' or\n"
+                 "                 'offer' (see apply_pair_fixture); combine with --press for the hold\n"
                  "  --press        hold the panel centre over [from_ms, to_ms) of fixture time\n"
+                 "  --drag         as --press, the finger moving <dx> px sideways (a swipe)\n"
                  "  --single       open only this resolution (default opens 240 and 466 side by side)\n"
                  "  --shot         render until <ms> of fixture time, write <file.png>, exit\n"
                  "  --settings     apply a settings TLV write as the phone would, in hex\n"
@@ -266,15 +270,7 @@ void apply_call_fixture(terminal_view_state_t *frame, const char *caller, uint32
     }
 }
 
-// --friend: a rider offers friendship; accepting waits a beat for them, then both are friends. Two
-// friends ride nearby throughout, for the compass markers.
-uint32_t s_friend_accepted_ms = 0;
-
-void on_sim_friend_accept(const uint8_t *) {
-    std::printf("sim_lvgl: accept friend\n");
-    s_friend_accepted_ms = s_elapsed_ms;
-}
-
+// --friend: two friends ride nearby throughout, for the compass markers.
 mesh_look_t sim_look(uint8_t avatar, uint32_t accent, const char *name) {
     mesh_look_t l = {};
     l.avatar = avatar;
@@ -283,30 +279,114 @@ mesh_look_t sim_look(uint8_t avatar, uint32_t accent, const char *name) {
     return l;
 }
 
-void apply_friend_fixture(terminal_view_state_t *frame, uint32_t elapsed) {
+void apply_friend_fixture(terminal_view_state_t *frame) {
     frame->friend_count = 2;
     frame->friends[0] = {sim_look(1, 0xFF6A00, "Sam"), 40.0f, 120.0f};
     frame->friends[1] = {sim_look(2, 0x3FA9F5, "Jo"), 200.0f, 300.0f};
-    if (elapsed < 1500) return;
-    std::memset(frame->friend_prompt_id, 0xA5, sizeof(frame->friend_prompt_id));
-    frame->friend_peer = sim_look(3, 0xE0409A, "Alex");
-    frame->friend_self = sim_look(settings_get()->avatar, settings_get()->accent_rgb, "Me");
-    if (s_friend_accepted_ms == 0) {
-        frame->friend_prompt = MESH_PROMPT_OFFER;
-    } else if (elapsed < s_friend_accepted_ms + 1500) {
-        frame->friend_prompt = MESH_PROMPT_WAITING;
-    } else if (elapsed < s_friend_accepted_ms + 1500 + MESH_PROMPT_DONE_MS) {
-        frame->friend_prompt = MESH_PROMPT_DONE;
+}
+
+// --pair <scenario>: Add friend (blueprint 04 U1-U5) against a scripted mesh. The menu opens at
+// kPairOpenMs (past the splash and idle's hold) as a double tap would, except in 'offer', where a
+// request opens it by itself. Three riders stand around: Alex nearest, then Sam, then Jo.
+//   search    nobody for 2.5 s, then the riders arrive
+//   hold      a hold (--press) asks the centre rider; they accept 2.5 s later
+//   noanswer  as hold, but they never accept: the request lapses 4 s later
+//   offer     Jo asks us at kPairOpenMs; a hold accepts, done 1 s later
+enum PairScenario { PAIR_OFF, PAIR_SEARCH, PAIR_HOLD, PAIR_NOANSWER, PAIR_OFFER };
+constexpr uint32_t kPairOpenMs = 3000;
+PairScenario s_pair = PAIR_OFF;
+bool s_pair_menu = false;
+uint32_t s_pair_held_ms = 0;
+uint8_t s_pair_held_id[MESH_RIDER_ID_LEN];
+
+void on_sim_friend_hold(const uint8_t *id) {
+    std::printf("sim_lvgl: hold on %02x\n", id[0]);
+    s_pair_held_ms = s_elapsed_ms ? s_elapsed_ms : 1;
+    std::memcpy(s_pair_held_id, id, MESH_RIDER_ID_LEN);
+}
+
+void on_sim_friend_menu(bool open) {
+    std::printf("sim_lvgl: Add friend %s\n", open ? "open" : "closed");
+    s_pair_menu = open;
+}
+
+mesh_candidate_t sim_cand(uint8_t tag, uint8_t avatar, uint32_t accent, const char *name, bool waiting) {
+    mesh_candidate_t c = {};
+    std::memset(c.id, tag, sizeof(c.id));
+    c.look = sim_look(avatar, accent, name);
+    c.waiting = waiting;
+    c.rssi_dbm = -55;
+    return c;
+}
+
+void apply_pair_fixture(terminal_view_state_t *frame, uint32_t elapsed) {
+    static bool opened = false;
+    frame->friend_menu_allowed = true;
+    if (!opened && s_pair != PAIR_OFFER && elapsed >= kPairOpenMs) {
+        opened = true;
+        gui_app_open_friend_menu();
+    }
+    mesh_candidate_t riders[3] = {sim_cand(0xA1, 3, 0xE0409A, "Alex", false),
+                                  sim_cand(0xA2, 1, 0xFF6A00, "Sam", false),
+                                  sim_cand(0xA3, 2, 0x3FA9F5, "Jo", false)};
+    const mesh_candidate_t *asker = nullptr;
+    if (s_pair == PAIR_OFFER && elapsed >= kPairOpenMs) {
+        // Jo asks: listed first, whatever the signal.
+        riders[2].waiting = true;
+        const mesh_candidate_t jo = riders[2];
+        riders[2] = riders[1];
+        riders[1] = riders[0];
+        riders[0] = jo;
+        asker = &riders[0];
+    }
+    // The handshake, as the mesh would report it.
+    const mesh_candidate_t *peer = asker;
+    if (s_pair_held_ms != 0) {
+        for (const mesh_candidate_t &r : riders) {
+            if (std::memcmp(r.id, s_pair_held_id, MESH_RIDER_ID_LEN) == 0) peer = &r;
+        }
+    }
+    bool friends_now = false;
+    if (peer != nullptr) {
+        std::memcpy(frame->friend_prompt_id, peer->id, MESH_RIDER_ID_LEN);
+        frame->friend_peer = peer->look;
+        frame->friend_self = sim_look(settings_get()->avatar, settings_get()->accent_rgb, "Me");
+        const uint32_t answer_ms = s_pair == PAIR_OFFER ? 1000 : 2500;
+        if (s_pair_held_ms == 0) {
+            frame->friend_prompt = MESH_PROMPT_OFFER;
+        } else if (s_pair == PAIR_NOANSWER) {
+            frame->friend_prompt = elapsed < s_pair_held_ms + 4000 ? MESH_PROMPT_WAITING : MESH_PROMPT_NONE;
+        } else if (elapsed < s_pair_held_ms + answer_ms) {
+            frame->friend_prompt = MESH_PROMPT_WAITING;
+        } else if (elapsed < s_pair_held_ms + answer_ms + MESH_PROMPT_DONE_MS) {
+            frame->friend_prompt = MESH_PROMPT_DONE;
+            friends_now = true;
+        } else {
+            friends_now = true;
+        }
+    }
+    // Riders show on the card only while we are in Add friend (they are in theirs throughout).
+    if (!s_pair_menu || (s_pair == PAIR_SEARCH && elapsed < kPairOpenMs + 2500)) return;
+    for (const mesh_candidate_t &r : riders) {
+        if (friends_now && &r == peer) continue;
+        frame->friend_cands[frame->friend_cand_count++] = r;
     }
 }
 
-// --press: a scripted finger on the panel centre, so the hold can be screenshotted.
+// --press: a scripted finger on the panel centre, so the hold can be screenshotted. --drag moves it
+// <dx> px sideways over the press (a swipe).
 uint32_t s_press_from_ms = 0;
 uint32_t s_press_to_ms = 0;
+int32_t s_drag_dx = 0;
 
 void scripted_press_read(lv_indev_t *indev, lv_indev_data_t *data) {
     lv_display_t *disp = lv_indev_get_display(indev);
-    data->point.x = lv_display_get_horizontal_resolution(disp) / 2;
+    float t = s_press_to_ms > s_press_from_ms
+                  ? static_cast<float>(static_cast<int32_t>(s_elapsed_ms - s_press_from_ms)) /
+                        static_cast<float>(s_press_to_ms - s_press_from_ms)
+                  : 0.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    data->point.x = lv_display_get_horizontal_resolution(disp) / 2 + static_cast<int32_t>(s_drag_dx * t);
     data->point.y = lv_display_get_vertical_resolution(disp) / 2;
     data->state = s_elapsed_ms >= s_press_from_ms && s_elapsed_ms < s_press_to_ms
                       ? LV_INDEV_STATE_PRESSED
@@ -390,6 +470,27 @@ int main(int argc, char *argv[]) {
             call_caller = argv[++i];
         } else if (std::strcmp(argv[i], "--friend") == 0) {
             friend_prompt = true;
+        } else if (std::strcmp(argv[i], "--pair") == 0) {
+            const char *sc = i + 1 < argc ? argv[++i] : "";
+            s_pair = std::strcmp(sc, "search") == 0     ? PAIR_SEARCH
+                     : std::strcmp(sc, "hold") == 0     ? PAIR_HOLD
+                     : std::strcmp(sc, "noanswer") == 0 ? PAIR_NOANSWER
+                     : std::strcmp(sc, "offer") == 0    ? PAIR_OFFER
+                                                        : PAIR_OFF;
+            if (s_pair == PAIR_OFF) {
+                std::fprintf(stderr, "sim_lvgl: unknown pair scenario '%s'\n", sc);
+                print_usage(argv[0]);
+                return 1;
+            }
+        } else if (std::strcmp(argv[i], "--drag") == 0) {
+            if (i + 3 >= argc) {
+                print_usage(argv[0]);
+                return 1;
+            }
+            s_press_from_ms = static_cast<uint32_t>(std::atol(argv[i + 1]));
+            s_press_to_ms = static_cast<uint32_t>(std::atol(argv[i + 2]));
+            s_drag_dx = static_cast<int32_t>(std::atol(argv[i + 3]));
+            i += 3;
         } else if (std::strcmp(argv[i], "--press") == 0) {
             if (i + 2 >= argc) {
                 print_usage(argv[0]);
@@ -510,7 +611,7 @@ int main(int argc, char *argv[]) {
     if (trip_page) gui_app_set_dial_outer(GUI_DIAL_OUTER_TRIP_ARC);
     if (fade_nav_entry) gui_app_set_nav_entry(GUI_NAV_ENTRY_FADE);
     if (call_caller != nullptr) gui_app_set_call_accept_handler(on_sim_call_accept);
-    if (friend_prompt) gui_app_set_friend_accept_handler(on_sim_friend_accept);
+    if (s_pair != PAIR_OFF) gui_app_set_friend_handlers(on_sim_friend_hold, on_sim_friend_menu);
     if (s_press_to_ms > s_press_from_ms) {
         lv_indev_t *press = lv_indev_create();
         lv_indev_set_type(press, LV_INDEV_TYPE_POINTER);
@@ -548,7 +649,8 @@ int main(int argc, char *argv[]) {
                                       : idle_page     ? make_idle_fixture_frame(elapsed)
                                                       : make_fixture_frame(elapsed);
         s_elapsed_ms = elapsed;
-        if (friend_prompt) apply_friend_fixture(&frame, elapsed);
+        if (friend_prompt) apply_friend_fixture(&frame);
+        if (s_pair != PAIR_OFF) apply_pair_fixture(&frame, elapsed);
         if (call_caller != nullptr) apply_call_fixture(&frame, call_caller, elapsed);
         gui_app_update(&frame);
 

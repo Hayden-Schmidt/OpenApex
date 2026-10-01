@@ -472,6 +472,31 @@ static void test_hold_switches_and_accepts(void) {
 
 // The request carries the requester's look, so the other card can show them even if none of their
 // public HELLOs has landed.
+// Leaving Add friend withdraws our unanswered request and passes over a rider asking us.
+static void test_leaving_menu_withdraws(void) {
+    static mesh_core_t a, b;
+    air_t aa = {0}, ba = {0};
+    setup(&a, 1, "Ann", 1);
+    setup(&b, 2, "Ben", 2);
+    mesh_core_set_menu_open(&a, true);
+    mesh_core_set_menu_open(&b, true);
+    uint32_t now = 1000;
+    tick_both(&a, &aa, &b, &ba, now);
+    assert(mesh_core_hold(&a, b.pseud, now, air_send, &aa));
+    deliver(&aa, &b, &ba, now);
+    uint8_t pid[8];
+    assert(mesh_core_prompt(&b, pid, NULL) == MESH_PROMPT_OFFER);
+    // Ben leaves: Ann's offer is passed over.
+    mesh_core_set_menu_open(&b, false);
+    assert(b.prompt == MESH_PROMPT_NONE);
+    // Ann leaves: her request is withdrawn and no longer retried.
+    mesh_core_set_menu_open(&a, false);
+    assert(a.prompt == MESH_PROMPT_NONE);
+    settle(&a, &aa, &b, &ba, &now, 5000);
+    assert(!mesh_core_friend_find(&a, b.self.id) && !mesh_core_friend_find(&b, a.self.id));
+    assert(b.prompt == MESH_PROMPT_NONE);
+}
+
 static void test_request_carries_look(void) {
     static mesh_core_t a, b;
     air_t aa = {0}, ba = {0};
@@ -758,11 +783,10 @@ static void test_late_keys_ignored_after_changing_mind(void) {
 }
 
 static void test_gate_holds_prompt_and_timeout(void) {
-    assert(mesh_core_prompt_gate(false, 0, 1000));
-    assert(mesh_core_prompt_gate(true, 51, 1000));
-    assert(mesh_core_prompt_gate(true, 10, 199));
-    assert(!mesh_core_prompt_gate(true, 50, 200));
-    assert(!mesh_core_prompt_gate(true, 10, 0xFFFF)); // unknown speed near a turn: hold back
+    assert(mesh_core_prompt_gate(false, 0));
+    assert(mesh_core_prompt_gate(true, 51));   // on a straight, at any speed
+    assert(!mesh_core_prompt_gate(true, 50));  // in or near a corner
+    assert(!mesh_core_prompt_gate(true, 10));
 
     static mesh_core_t a, b;
     air_t aa = {0}, ba = {0};
@@ -1001,6 +1025,7 @@ int main(void) {
     test_pair_card_order();
     test_hold_switches_and_accepts();
     test_request_carries_look();
+    test_leaving_menu_withdraws();
     test_friending_from_menu();
     test_request_lapses_and_retries();
     test_mutual_request();

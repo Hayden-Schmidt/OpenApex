@@ -113,13 +113,13 @@ static void apply_pipeline_settings(void) {
 // Rider mesh prompt and friend markers into the view. Under view_mutex.
 static void fill_mesh_view(terminal_view_state_t *v) {
     v->friend_prompt = mesh_get_prompt(v->friend_prompt_id, &v->friend_peer, &v->friend_self);
+    v->friend_cand_count = (uint8_t)mesh_get_candidates(v->friend_cands, VIEW_CANDIDATES_MAX);
     v->friend_count = (uint8_t)mesh_get_friends_in_range(v->friends, VIEW_FRIENDS_MAX);
 }
 
-// gui_app's friend-accept seam. Runs on gui_task; mesh_request_accept only queues.
-static void on_friend_accept(const uint8_t id[MESH_RIDER_ID_LEN]) {
-    mesh_request_accept(id);
-}
+// gui_app's Add friend seams. Run on gui_task; both only queue or set a flag.
+static void on_friend_hold(const uint8_t *id) { mesh_hold_friend(id); }
+static void on_friend_menu(bool open) { mesh_set_menu_open(open); }
 
 // Our fix for the rider mesh, from a v5 packet that carries one.
 static void feed_mesh_pos(const raw_notif_t *raw) {
@@ -207,10 +207,10 @@ static void countdown_task(void *argument) {
             shared_view.phone_connected = ble_link_is_connected();
             call_state_fill(&shared_view, now);
             // A call covers the prompt, so its on-screen timeout must not run underneath.
-            mesh_set_prompt_allowed(!shared_view.call_ringing && !shared_view.call_active &&
-                                    mesh_core_prompt_gate(shared_view.state == VIEW_ACTIVE,
-                                                          shared_view.distance_meters,
-                                                          shared_view.speed_kmh_x10));
+            shared_view.friend_menu_allowed = !shared_view.call_ringing && !shared_view.call_active &&
+                                              mesh_core_prompt_gate(shared_view.state == VIEW_ACTIVE,
+                                                                    shared_view.distance_meters);
+            mesh_set_prompt_allowed(shared_view.friend_menu_allowed);
             fill_mesh_view(&shared_view);
             // A link that is delivering writes we cannot decode is NOT the same as no link and
             // NOT the same as "not navigating", but the terminal used to render all three
@@ -262,7 +262,7 @@ static void gui_task(void *argument) {
     gui_app_init();
     HEAPMARK("gui_app_init");
     gui_app_set_call_accept_handler(on_call_accept);
-    gui_app_set_friend_accept_handler(on_friend_accept);
+    gui_app_set_friend_handlers(on_friend_hold, on_friend_menu);
 
     // Paint the boot screen fully, *then* light the panel. lv_refr_now blocks until every pending
     // partial-flush area has been transferred (flush_cb is DMA-async), so the first thing the rider

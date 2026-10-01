@@ -88,6 +88,19 @@ const void *selected_avatar(void) {
     return &kAvatarPresets[SETTINGS_AVATAR_DEFAULT_PRESET - 1];
 }
 
+// Add friend (gui_app.hpp). Open is the GUI's own state; the mesh hears about it through the
+// menu callback. `auto` = opened by an incoming request rather than the rider.
+constexpr uint32_t kMenuIdleMs = 60000;
+gui_friend_menu_cb_t s_friend_menu_cb = nullptr;
+bool s_menu_open = false;
+bool s_menu_auto = false;
+bool s_menu_allowed = false;
+uint32_t s_menu_activity_ms = 0;
+mesh_prompt_state_t s_seen_prompt = MESH_PROMPT_NONE;
+uint8_t s_seen_prompt_id[MESH_RIDER_ID_LEN];
+bool s_double_tap_hooked = false;
+volatile bool s_menu_request = false; // gui_app_open_friend_menu, from any task
+
 gui_page_override_t s_page_override = GUI_PAGE_AUTO;
 gui_nav_entry_t s_nav_entry = GUI_NAV_ENTRY_ELEMENTS;
 
@@ -143,6 +156,83 @@ bool may_leave(const Screen *next) {
         s_entered_ms = lv_tick_get();
     }
     return lv_tick_elaps(s_entered_ms) >= kIdleLeaveHoldMs;
+}
+
+void set_friend_menu(bool open, bool by_request) {
+    if (open == s_menu_open) return;
+    s_menu_open = open;
+    s_menu_auto = open && by_request;
+    s_menu_activity_ms = lv_tick_get();
+    if (s_friend_menu_cb != nullptr) s_friend_menu_cb(open);
+}
+
+// A double tap anywhere opens Add friend (U1), on any page but a call, and closes it again --
+// except on the card's edges, where taps step between riders. Watched on the input device rather
+// than on each page, so pages full of child objects need nothing of their own.
+void on_double_tap(lv_event_t *e) {
+    auto *indev = static_cast<lv_indev_t *>(lv_event_get_current_target(e));
+    if (lv_indev_get_short_click_streak(indev) != 2) return;
+#if BOARD_HAS_SPLASH
+    if (!s_splash_done) return;
+#endif
+    if (s_active == &call_screen()) return;
+    if (!s_menu_open) {
+        if (s_menu_allowed) set_friend_menu(true, false);
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    if (s_active == &friend_screen() && friend_screen().in_step_zone(p.x)) return;
+    set_friend_menu(false, false);
+}
+
+void hook_double_tap(void) {
+    if (s_double_tap_hooked) return;
+    s_double_tap_hooked = true;
+    for (lv_indev_t *i = lv_indev_get_next(nullptr); i != nullptr; i = lv_indev_get_next(i)) {
+        lv_indev_add_event_cb(i, on_double_tap, LV_EVENT_SHORT_CLICKED, nullptr);
+    }
+}
+
+// Opens and closes Add friend on the mesh's prompt edges and the gate.
+void update_friend_menu(const terminal_view_state_t &st) {
+    hook_double_tap();
+    s_menu_allowed = st.friend_menu_allowed;
+    if (s_menu_request) {
+        s_menu_request = false;
+        if (s_menu_allowed) set_friend_menu(true, false);
+    }
+    const mesh_prompt_state_t was = s_seen_prompt;
+    const bool changed = st.friend_prompt != s_seen_prompt ||
+                         std::memcmp(st.friend_prompt_id, s_seen_prompt_id, MESH_RIDER_ID_LEN) != 0;
+    if (changed) {
+        s_seen_prompt = st.friend_prompt;
+        std::memcpy(s_seen_prompt_id, st.friend_prompt_id, MESH_RIDER_ID_LEN);
+        s_menu_activity_ms = lv_tick_get();
+    }
+    if (!st.friend_menu_allowed) {
+        set_friend_menu(false, false); // a call, or a turn coming up
+        return;
+    }
+    // Someone asked us (always discoverable), or a handshake surfaced again after a turn.
+    if (changed && st.friend_prompt != MESH_PROMPT_NONE && !s_menu_open) set_friend_menu(true, true);
+    if (!s_menu_open) return;
+    if (changed && st.friend_prompt == MESH_PROMPT_NONE) {
+        // "Added!" has had its 3 s: back to whatever was up before.
+        if (was == MESH_PROMPT_DONE) {
+            set_friend_menu(false, false);
+            return;
+        }
+        // A request that opened the menu by itself went unanswered.
+        if (was == MESH_PROMPT_OFFER && s_menu_auto) {
+            set_friend_menu(false, false);
+            return;
+        }
+    }
+    if (st.friend_prompt == MESH_PROMPT_NONE && lv_tick_elaps(s_menu_activity_ms) >= kMenuIdleMs &&
+        lv_tick_elaps(friend_screen().last_touch_ms()) >= kMenuIdleMs) {
+        set_friend_menu(false, false);
+    }
 }
 
 // The splash is the only page showing the logo, and only for the first seconds after boot; a change
@@ -219,7 +309,12 @@ void gui_app_set_nav_entry(gui_nav_entry_t entry) { s_nav_entry = entry; }
 
 void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb) { call_screen().set_accept_handler(cb); }
 
-void gui_app_set_friend_accept_handler(gui_friend_accept_cb_t cb) { friend_screen().set_accept_handler(cb); }
+void gui_app_set_friend_handlers(gui_friend_hold_cb_t hold, gui_friend_menu_cb_t menu) {
+    friend_screen().set_hold_handler(hold);
+    s_friend_menu_cb = menu;
+}
+
+void gui_app_open_friend_menu(void) { s_menu_request = true; }
 
 gui_nav_entry_t gui_app_nav_entry(void) { return s_nav_entry; }
 
@@ -253,10 +348,12 @@ void gui_app_update(const terminal_view_state_t *state) {
     // runs every frame, leaving or not, so nothing is ever frozen behind a tween.
     // A call, ringing or answered, outranks every page, including a live maneuver: the rider
     // chose to take calls on the terminal, and the nav page is back the moment it clears.
-    // A friend prompt comes next: mesh_core only raises one while the gate says the rider can look.
-    Screen *next = (state->call_ringing || state->call_active)
-                       ? static_cast<Screen *>(&call_screen())
-                   : state->friend_prompt != MESH_PROMPT_NONE ? static_cast<Screen *>(&friend_screen())
+    // Add friend comes next: it is only open while the gate says the rider can look away from the
+    // road. Closing it falls back to whatever the state routes to, so the rider lands back where
+    // they were (or on the nav page, if navigation started meanwhile).
+    update_friend_menu(*state);
+    Screen *next = (state->call_ringing || state->call_active) ? static_cast<Screen *>(&call_screen())
+                   : s_menu_open                               ? static_cast<Screen *>(&friend_screen())
                                                                : screen_for_state(state->state);
 #if BOARD_HAS_SPLASH
     // Boot always passes through idle, even when navigation is already running on the phone: the

@@ -47,9 +47,10 @@ friendship completes on a terminal only once it has both held locally and receiv
 accept. So one rider cannot add another unilaterally, and a rider who declines simply never
 holds. A peer that has not been heard from for 10 s drops out of range.
 
-The prompt may cover the nav page only when it cannot hide a turn the rider needs: under
-20 km/h, or the next maneuver more than 50 m away, or not navigating at all
-(`mesh_core.h`). An unanswered prompt lapses after 20 s on screen.
+Add friend and its prompts may cover the nav page only when they cannot hide a turn the rider
+needs: the next maneuver more than 50 m away, or not navigating at all (`mesh_core.h`). Speed does
+not matter; friending on a straight is fine. An unanswered prompt lapses after 20 s on screen.
+Leaving Add friend withdraws an unanswered request and passes over a rider asking us.
 
 **Position privacy.** POS frames are AES-128-CCM (RFC 3610, 13-byte nonce, 8-byte tag) under the
 *sender's own* key, which only riders it has friended hold. A non-friend hears the ciphertext and

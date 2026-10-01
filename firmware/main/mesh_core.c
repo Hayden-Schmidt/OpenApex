@@ -60,7 +60,14 @@ void mesh_core_set_own_pos(mesh_core_t *c, const mesh_pos_t *pos, uint32_t now_m
 
 // -- discovery -----------------------------------------------------------------------------------
 
+static void close_prompt(mesh_core_t *c);
+static mesh_peer_t *peer_find(mesh_core_t *c, const uint8_t id[MESH_RIDER_ID_LEN]);
+
 void mesh_core_set_menu_open(mesh_core_t *c, bool open) {
+    if (c->menu_open && !open && (c->prompt == MESH_PROMPT_OFFER || c->prompt == MESH_PROMPT_WAITING)) {
+        const mesh_peer_t *p = peer_find(c, c->prompt_id);
+        if (p == NULL || p->hs == MESH_HS_REQ_SENT || p->hs == MESH_HS_REQ_RECV) close_prompt(c);
+    }
     c->menu_open = open;
     if (!open) c->cand_n = 0;
 }
@@ -621,10 +628,8 @@ void mesh_core_accept(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN]
 
 // -- tick ----------------------------------------------------------------------------------------
 
-bool mesh_core_prompt_gate(bool navigating, uint32_t turn_distance_m, uint16_t speed_kmh_x10) {
-    if (!navigating) return true;
-    if (turn_distance_m > MESH_PROMPT_MIN_TURN_M) return true;
-    return speed_kmh_x10 != 0xFFFF && speed_kmh_x10 < MESH_PROMPT_MAX_SPEED_KMH_X10;
+bool mesh_core_prompt_gate(bool navigating, uint32_t turn_distance_m) {
+    return !navigating || turn_distance_m > MESH_PROMPT_MIN_TURN_M;
 }
 
 static void run_prompt(mesh_core_t *c, uint32_t now_ms, uint32_t dt_ms, bool allowed) {

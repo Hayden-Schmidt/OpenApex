@@ -64,10 +64,20 @@ gui_nav_entry_t gui_app_nav_entry(void);
 typedef void (*gui_call_accept_cb_t)(uint16_t call_id);
 void gui_app_set_call_accept_handler(gui_call_accept_cb_t cb);
 
-// Called on gui_task when the rider fills the ring on the friend prompt, with the view state's
-// friend_prompt_id. As with calls, main.c hands it to the mesh task; the GUI never touches a radio.
-typedef void (*gui_friend_accept_cb_t)(const uint8_t *rider_id);
-void gui_app_set_friend_accept_handler(gui_friend_accept_cb_t cb);
+// Add friend (docs/blueprints/04_rider_mesh.md U1-U5). The GUI owns whether the menu is open: a
+// double tap opens it (not in or near a turn: terminal_view_state_t::friend_menu_allowed), an
+// incoming request opens it, and it closes on a double tap, 3 s after "Added!", when a request that
+// opened it lapses, or after a minute with nothing happening. Both callbacks run on gui_task; as with
+// calls, main.c hands them to the mesh task and the GUI never touches a radio.
+//   hold: the rider filled the ring on a rider's card (mesh_hold_friend).
+//   menu: Add friend opened or closed (mesh_set_menu_open).
+typedef void (*gui_friend_hold_cb_t)(const uint8_t *rider_id);
+typedef void (*gui_friend_menu_cb_t)(bool open);
+void gui_app_set_friend_handlers(gui_friend_hold_cb_t hold, gui_friend_menu_cb_t menu);
+
+// Opens Add friend as a double tap would (simulator, dev console), on the next frame. Safe from any
+// task. Ignored while the gate is closed.
+void gui_app_open_friend_menu(void);
 
 // The rider's uploaded avatar (firmware/main/avatar_store.h): GUI_AVATAR_BYTES of A2 art, 16x16
 // then 8x8 (the 8x8 is not drawn yet), shown in place of the boot logo in the accent.

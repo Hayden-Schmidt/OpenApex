@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "hal/usb_serial_jtag_ll.h"
+#include "gui_app.hpp"
 #include "mesh.h"
 #include "settings.h"
 #include "esp_heap_caps.h"
@@ -29,7 +30,7 @@ static void log_heap(void) {
 
 // Stand-ins for the terminal UI (U1-U5), so a board with no screen can drive the radio side of each
 // flow. One command per line:
-//   heap | menu on|off | nearby | req|hold <n> | ok | rssi <dBm> | status | friends | forget | id |
+//   add (open Add friend on screen) | heap | menu on|off | nearby | req|hold <n> | ok | rssi <dBm> | status | friends | forget | id |
 //   pos <n> <e> | pos off | accent <hex>
 static void hex4(const uint8_t *id, char out[9]) {
     static const char *kHex = "0123456789abcdef";
@@ -88,7 +89,10 @@ static void cmd_status(void) {
 }
 
 static void run_command(const char *line) {
-    if (strcmp(line, "heap") == 0) {
+    if (strcmp(line, "add") == 0) {
+        gui_app_open_friend_menu();
+        ESP_LOGI(TAG, "Add friend opened on screen (double tap to close)");
+    } else if (strcmp(line, "heap") == 0) {
         log_heap();
     } else if (strcmp(line, "menu on") == 0 || strcmp(line, "menu off") == 0) {
         mesh_set_menu_open(line[6] == 'n');

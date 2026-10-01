@@ -58,9 +58,9 @@ extern "C" {
 #define MESH_ALWAYS_DISCOVERABLE 0
 #endif
 
-// Prompt gate: a friend prompt may cover the nav page only when it cannot hide a turn the rider
-// needs: slow (under 20 km/h), or the next maneuver more than 50 m out, or not navigating.
-#define MESH_PROMPT_MAX_SPEED_KMH_X10 200u
+// Prompt gate: Add friend (and a prompt in it) may cover the nav page only when it cannot hide a turn
+// the rider needs: not navigating, or the next maneuver more than 50 m out. Speed does not matter;
+// friending on a straight is fine (owner, 2026-10-01).
 #define MESH_PROMPT_MIN_TURN_M 50u
 
 typedef void (*mesh_send_fn)(const uint8_t *frame, size_t len, void *ctx);
@@ -184,7 +184,8 @@ void mesh_core_set_identity(mesh_core_t *c, const mesh_identity_t *id); // NULL:
 void mesh_core_set_look(mesh_core_t *c, const mesh_look_t *look);
 void mesh_core_set_own_pos(mesh_core_t *c, const mesh_pos_t *pos, uint32_t now_ms);
 
-// Add friend is open (U1): our look is public only while it is.
+// Add friend is open (U1): our look is public only while it is. Leaving it withdraws our unanswered
+// request and passes over a rider asking us; a handshake whose keys are already moving completes.
 void mesh_core_set_menu_open(mesh_core_t *c, bool open);
 void mesh_core_set_always_discoverable(mesh_core_t *c, bool on);
 void mesh_core_set_pair_min_rssi(mesh_core_t *c, int8_t dbm);
@@ -224,7 +225,7 @@ bool mesh_core_request(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN
 void mesh_core_accept(mesh_core_t *c, const uint8_t pseudonym[MESH_RIDER_ID_LEN], uint32_t now_ms,
                       mesh_send_fn send, void *ctx);
 
-bool mesh_core_prompt_gate(bool navigating, uint32_t turn_distance_m, uint16_t speed_kmh_x10);
+bool mesh_core_prompt_gate(bool navigating, uint32_t turn_distance_m);
 
 // The prompt to draw right now, if any (NONE while the gate holds it back).
 mesh_prompt_state_t mesh_core_prompt(const mesh_core_t *c, uint8_t id[MESH_RIDER_ID_LEN], mesh_look_t *look);

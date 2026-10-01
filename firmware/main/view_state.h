@@ -18,6 +18,8 @@ typedef enum {
 
 // Friends drawn on the compass at most; more in range than this is not a real ride.
 #define VIEW_FRIENDS_MAX 8
+// Riders on the Add friend card at most (one in the centre, the rest a swipe away).
+#define VIEW_CANDIDATES_MAX 6
 
 typedef struct {
     view_state_t state;
@@ -63,4 +65,9 @@ typedef struct {
     mesh_look_t friend_self;                       // us, as they see us
     mesh_friend_marker_t friends[VIEW_FRIENDS_MAX];  // in range with a fresh fix, true bearings
     uint8_t friend_count;
+    // Add friend (blueprint 04 U1-U5): the pair card, and whether the menu may show at all (no call,
+    // not in or near a turn). The GUI owns whether the menu is open (gui_app_set_friend_handlers).
+    mesh_candidate_t friend_cands[VIEW_CANDIDATES_MAX];
+    uint8_t friend_cand_count;
+    bool friend_menu_allowed;
 } terminal_view_state_t;

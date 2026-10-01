@@ -83,11 +83,11 @@ owner designs (Figma) and fills in when it is needed. Implementation of a surfac
 
 | # | Surface | Stage | What the firmware provides | Flow (owner) | Design link (owner) |
 |---|---|---|---|---|---|
-| U1 | Enter / leave Add friend | 1 | `mesh_set_menu_open(true/false)`: our look is public only while open. Covers the whole flow (card, waiting, now friends), not just the first page | TBD | TBD |
-| U2 | Pair card with swipe (see "Pair card" below) | 1 | `mesh_get_candidates()`: index 0 in the centre, nearest first, riders asking us first, stable order; each with look and a `waiting` flag | TBD | TBD |
-| U3 | Hold to friend | 1 | `mesh_hold_friend(pseudonym)` on a completed hold; the card shows "waiting for Ben" (`mesh_get_prompt` = WAITING) | TBD | TBD |
-| U4 | "Ann is waiting" | 1 | The same card with `waiting` set; holding accepts. Outside Add friend (always-discoverable riders) the old prompt page still raises through the prompt gate | TBD (hold ring today) | TBD |
-| U5 | "Now friends" / request lapsed | 1 | Handshake outcome (`mesh_get_prompt` = DONE, or NONE when an unanswered request lapses) | TBD | TBD |
+| U1 | Enter / leave Add friend | 1 | `mesh_set_menu_open(true/false)`: our look is public only while open. Covers the whole flow (card, waiting, now friends), not just the first page | Double tap on any page but a call, not in or near a turn; leave by double tap (centre), 3 s after "Added!", when a request that opened it lapses, after 60 s idle, or when a turn or call comes | Built 2026-10-01 (`gui/friend_screen.cpp`) |
+| U2 | Pair card with swipe (see "Pair card" below) | 1 | `mesh_get_candidates()`: index 0 in the centre, nearest first, riders asking us first, stable order; each with look and a `waiting` flag | "Looking for riders..." with a pulse in our colour until someone arrives, then the card | Built 2026-10-01 (`gui/friend_screen.cpp`) |
+| U3 | Hold to friend | 1 | `mesh_hold_friend(pseudonym)` on a completed hold; the card shows "waiting for Ben" (`mesh_get_prompt` = WAITING) | 2 s hold fills the ring in the centre rider's colour: "Waiting for Ben to accept" | Built 2026-10-01 (`gui/friend_screen.cpp`) |
+| U4 | "Ann is waiting" | 1 | The same card with `waiting` set; holding accepts. An incoming request opens Add friend by itself (always-discoverable riders), through the prompt gate | Snaps to Ann (never under a finger) and wiggles: "Ann is waiting for you to accept"; the hold ring is in Ann's colour | Built 2026-10-01 (`gui/friend_screen.cpp`) |
+| U5 | "Now friends" / request lapsed | 1 | Handshake outcome (`mesh_get_prompt` = DONE, or NONE when an unanswered request lapses) | "Added!", our character slides in beside theirs, 3 s, then back to the routed page; lapsed: "Ben didn't answer" for 2 s | Built 2026-10-01 (`gui/friend_screen.cpp`) |
 | U6 | Start a ride, choose policy | 2 | `mesh_core_ride_start(policy)` | TBD | TBD |
 | U7 | Rides nearby / join | 2 | Ride adverts heard in range | TBD | TBD |
 | U8 | Approve a join (request policy) | 2 | Incoming join request, first approver wins | TBD | TBD |
@@ -99,17 +99,23 @@ owner designs (Figma) and fills in when it is needed. Implementation of a surfac
 Designs live under `design/screens/07-rider-mesh/`, one file or subfolder per U-number. Today's
 friend prompt is in `design/screens/06-add-friend/`.
 
-**Pair card (U2-U4), agreed 2026-09-30.** One rider in the centre at full size and opacity, the
-next rider on either side smaller and faded. Swiping moves the centre rider to the side (fading)
-and brings the next one to the centre (full opacity); a hold on the centre rider is the friend hold.
+**Pair card (U2-U4), agreed 2026-09-30, built 2026-10-01.** One rider in the centre at full size and
+opacity, the next rider on either side smaller and faded. Swiping moves the centre rider to the side
+(fading) and brings the next one to the centre (full opacity); a hold on the centre rider is the
+friend hold. Review it in the simulator: `sim_lvgl --pair search|hold|noanswer|offer` (with
+`--press` or `--drag`).
 
-- One flick per step (LVGL `LV_EVENT_GESTURE`), a 0.3 s transition on an S-curve (`ease.hpp`).
-  Tapping the left or right edge steps one rider too, for gloves.
-- Sizes are integer multiples of the 32×32 art so pixel art stays crisp, e.g. 96 px centre, 64 px
-  sides; in-between sizes only appear during the 0.3 s motion.
-- At most 3 riders drawn at once (centre and one each side), buffers recycled as the card moves.
-  Fade per image and per label, never a whole container (that needs a layer buffer every frame).
-- A flick is movement and a hold is stationary, so the two do not conflict.
+- The card follows the finger; letting go snaps to the nearest rider on a 0.3 s S-curve, and a
+  flick past 30 px steps one. Tapping the left or right fifth steps one too, for gloves (so a double
+  tap there does not close the menu).
+- 64 px centre and 32 px sides on the 240 px C3 (2x and 1x the 32x32 art; 96 px centre did not fit
+  the round panel beside two sides). Sizes scale with the panel, still whole multiples; in-between
+  sizes only appear mid-motion.
+- At most 3 riders drawn at once, buffers following the rider rather than the index. The 3 x 3 KB
+  buffers are allocated when Add friend opens and freed when it closes (measured on the C3: 42.9 KB
+  free at rest, 33.7 KB while open).
+- A drag starts after 8 px of movement and cancels the hold, so a swipe never friends anyone.
+- Double tap is detected on the input device (`gui_app.cpp`), not per page.
 
 ---
 
@@ -176,8 +182,8 @@ the rotating pseudonym.
   `mesh_core_set_always_discoverable`). While it is on, the pseudonym still changes on
   boot (§04.1.3), but the public look makes that moot for that rider; the toggle's description must say so.
   With pair mode it matters only for passive features and for being found without opening Add
-  friend: an always-discoverable rider can appear on someone's card, and their hold raises the
-  normal prompt (U4) on that rider's terminal through the prompt gate.
+  friend: an always-discoverable rider can appear on someone's card, and their hold opens Add friend
+  on that rider's terminal by itself (U4) through the prompt gate, closing again if it lapses.
 
 **Rejected: a shared rolling key published in GitHub releases.** This is an open-source project,
 so the key would be public. It stops nobody who wants to sniff, and it breaks discovery on any
